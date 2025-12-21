@@ -1,13 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.Linq;
-using System.Threading.Tasks;
+﻿using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using DockerDiagram.Helpers;
 using DockerDiagram.Models;
+using System.Runtime.InteropServices;
 
 namespace DockerDiagram.ViewModels
 {
@@ -86,6 +83,8 @@ namespace DockerDiagram.ViewModels
                 }
             }
         }
+
+        private bool _isSyncing = false;
 
         public bool IsDetailPanelOpen => _selectedElement != null;
 
@@ -190,10 +189,10 @@ namespace DockerDiagram.ViewModels
             // 템플릿 초기화 (기본값)
             RefreshTemplates();
 
-            // 자동 동기화 타이머 시작 (3초 간격)
+            // 자동 동기화 타이머 시작 15초 간격
             _autoSyncTimer = new DispatcherTimer();
-            _autoSyncTimer.Interval = TimeSpan.FromSeconds(3);
-            _autoSyncTimer.Tick += async (s, e) => await SyncWithDockerEngine();
+            _autoSyncTimer.Interval = TimeSpan.FromSeconds(15);
+            _autoSyncTimer.Tick += AutoSync_Tick;
             _autoSyncTimer.Start();
 
             // 앱 시작 시 1회 실행
@@ -231,11 +230,36 @@ namespace DockerDiagram.ViewModels
             foreach (var item in frequents) Templates.Add(item);
         }
 
+        private async void AutoSync_Tick(object? sender, EventArgs e)
+        {
+            // 1. 이미 갱신 작업 중이라면? 이번 턴은 무시하고 돌아감 (Skip)
+            if (_isSyncing) return;
+
+            try
+            {
+                // 2. 작업 시작 표시 (깃발 올림)
+                _isSyncing = true;
+
+                // 3. 실제 Docker 갱신 요청
+                await SyncWithDockerEngine();
+            }
+            catch (Exception ex)
+            {
+                // 에러 로그 (필요 시)
+                System.Diagnostics.Debug.WriteLine($"AutoSync Error: {ex.Message}");
+            }
+            finally
+            {
+                // 4. 작업이 끝나면 무조건 깃발 내림 (다음 턴을 위해)
+                _isSyncing = false;
+            }
+        }
+
         private async void DeleteContainerItem(object? param)
         {
             if (param is DockerContainer c && MessageBox.Show($"컨테이너 '{c.Name}'을 영구 삭제하시겠습니까?", "확인", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
             {
-                try { await new DockerApiService().RemoveContainerAsync(c.Id); await SyncWithDockerEngine(); }
+                try { await DockerApiService.Instance.RemoveContainerAsync(c.Id); await SyncWithDockerEngine(); }
                 catch (Exception ex) { MessageBox.Show($"삭제 실패: {ex.Message}"); }
             }
         }
@@ -245,7 +269,7 @@ namespace DockerDiagram.ViewModels
             if (param is DockerContainer v && MessageBox.Show($"볼륨 '{v.Name}'을 영구 삭제하시겠습니까?", "확인", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
             {
                 // DockerApiService에 RemoveVolumeAsync 구현 필요 (아래 참조)
-                /* await new DockerApiService().RemoveVolumeAsync(v.Name); */
+                /* await DockerApiService.Instance.RemoveVolumeAsync(v.Name); */
                 // 임시: 
                 try { /* API 호출 */ await SyncWithDockerEngine(); } catch { }
             }
@@ -255,7 +279,7 @@ namespace DockerDiagram.ViewModels
         {
             if (param is DockerContainer n && MessageBox.Show($"네트워크 '{n.Name}'을 영구 삭제하시겠습니까?", "확인", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
             {
-                try { await new DockerApiService().RemoveNetworkAsync(n.Id); await SyncWithDockerEngine(); }
+                try { await DockerApiService.Instance.RemoveNetworkAsync(n.Id); await SyncWithDockerEngine(); }
                 catch (Exception ex) { MessageBox.Show($"삭제 실패: {ex.Message}"); }
             }
         }
@@ -277,28 +301,25 @@ namespace DockerDiagram.ViewModels
 
         private async Task SyncWithDockerEngine()
         {
-            if (!DockerServiceHelper.IsDockerRunning()) { LastSyncTime = "Docker stopped"; return; }
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                if (!DockerServiceHelper.IsDockerRunning())
+                {
+                    LastSyncTime = "Docker stopped";
+                    return;
+                }
+            }
 
             try
             {
-                var api = new DockerApiService();
+                var api = DockerApiService.Instance;
                 if (!await api.PingAsync()) return;
 
                 // 1. 원본 데이터 가져오기
-                var containers = await api.GetContainersAsync();
-                var volumes = await api.GetVolumesAsync(); // 볼륨은 ID가 없으므로 그대로 둠
-                var networks = await api.GetNetworksAsync();
-                var images = await api.GetImagesAsync();
-
-                // 가져온 데이터의 ID를 즉시 12자리로 자릅니다
-                foreach (var c in containers) if (c.Id.Length > 12) c.Id = c.Id.Substring(0, 12);
-                foreach (var n in networks) if (n.Id.Length > 12) n.Id = n.Id.Substring(0, 12);
-                foreach (var i in images) if (i.Id.Length > 12) i.Id = i.Id.Substring(0, 12);
-
-                _rawContainers = containers;
-                _rawVolumes = volumes;
-                _rawNetworks = networks;
-                _rawImages = images;
+                _rawContainers = await api.GetContainersAsync();
+                _rawVolumes = await api.GetVolumesAsync();
+                _rawNetworks = await api.GetNetworksAsync();
+                _rawImages = await api.GetImagesAsync();
 
                 // 2. 필터링 및 UI 갱신 호출
                 UpdateAvailableItems();
@@ -358,7 +379,7 @@ namespace DockerDiagram.ViewModels
             {
                 if (MessageBox.Show($"이미지 '{img.Repository}'를 삭제하시겠습니까?", "이미지 삭제", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
                 {
-                    var api = new DockerApiService();
+                    var api = DockerApiService.Instance;
                     try
                     {
                         // 정상 삭제 시도
@@ -417,7 +438,7 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                var api = new DockerApiService();
+                var api = DockerApiService.Instance;
                 await api.PullImageAsync(image, tag);
 
                 // 2. 컨테이너 생성 및 실행
@@ -427,11 +448,7 @@ namespace DockerDiagram.ViewModels
                 // 3. 완료 처리
                 node.Name = name;
 
-                // ★ [핵심] ID 길이 보정 (목록의 ID가 12자리이므로 맞춰줌)
-                if (containerId.Length >= 12)
-                    node.ContainerId = containerId.Substring(0, 12);
-                else
-                    node.ContainerId = containerId;
+                node.ContainerId = containerId;
 
                 node.PortInfo = string.Join(", ", ports);
                 node.IsCreating = false;
@@ -478,7 +495,7 @@ namespace DockerDiagram.ViewModels
             {
                 try
                 {
-                    var api = new DockerApiService();
+                    var api = DockerApiService.Instance;
                     var info = await api.InspectContainerAsync(container.Id);
 
                     if (info.Mounts != null)
@@ -651,7 +668,7 @@ namespace DockerDiagram.ViewModels
             {
                 try
                 {
-                    var api = new DockerApiService();
+                    var api = DockerApiService.Instance;
 
                     // 물리적 연결 시도 (docker network connect)
                     await api.ConnectNetworkAsync(finalTarget.ContainerId, finalSource.ContainerId);
@@ -743,7 +760,7 @@ namespace DockerDiagram.ViewModels
                     {
                         try
                         {
-                            var api = new DockerApiService();
+                            var api = DockerApiService.Instance;
                             // 물리적 해제 시도 (docker network disconnect)
                             await api.DisconnectNetworkAsync(conn.Target.ContainerId, conn.Source.ContainerId);
 
@@ -818,7 +835,7 @@ namespace DockerDiagram.ViewModels
                     {
                         try
                         {
-                            var api = new DockerApiService();
+                            var api = DockerApiService.Instance;
                             await Task.Run(async () =>
                             {
                                 if (node.Type == NodeType.Container)
@@ -861,7 +878,7 @@ namespace DockerDiagram.ViewModels
 
         private async Task<bool> UnmountVolumeFromContainerAsync(NodeViewModel containerNode, NodeViewModel volumeNode)
         {
-            var api = new DockerApiService();
+            var api = DockerApiService.Instance;
             string containerId = containerNode.ContainerId;
             string volumeNameToRemove = volumeNode.Name;
 
@@ -941,8 +958,6 @@ namespace DockerDiagram.ViewModels
                     oldHostConfig.RestartPolicy.Name.ToString(), 0, 0
                 );
 
-                // 9. UI 갱신 (ID 변경)
-                if (newId.Length > 12) newId = newId.Substring(0, 12);
                 containerNode.ContainerId = newId;
                 await containerNode.RefreshDetailsAsync();
 
@@ -978,7 +993,7 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                var api = new DockerApiService();
+                var api = DockerApiService.Instance;
                 await api.CreateVolumeAsync(name, driver);
 
                 // 완료
@@ -1019,13 +1034,13 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                var api = new DockerApiService();
+                var api = DockerApiService.Instance;
                 string netId = await api.CreateNetworkAsync(name, driver);
 
                 // 완료
                 node.Name = name;
                 // ID 12자리 자르기 (컨테이너와 동일 규칙)
-                node.ContainerId = netId.Length >= 12 ? netId.Substring(0, 12) : netId;
+                node.ContainerId = netId;
 
                 node.IsCreating = false;
                 node.StatusColor = "#9B59B6"; // 보라색
@@ -1097,7 +1112,7 @@ namespace DockerDiagram.ViewModels
             string mountPath = dlg.MountPath; // 예: /var/lib/mysql
             string owner = dlg.VolumeOwner;   // 예: mysql:mysql
 
-            var api = new DockerApiService();
+            var api = DockerApiService.Instance;
             string containerId = containerNode.ContainerId;
             string volumeName = volumeNode.Name;
 
@@ -1243,8 +1258,7 @@ namespace DockerDiagram.ViewModels
                 // ---------------------------------------------------------
                 // [STEP 7] UI 갱신 및 마무리
                 // ---------------------------------------------------------
-                // 새 ID로 교체 (12자리 Short ID 사용)
-                if (newId.Length > 12) newId = newId.Substring(0, 12);
+
                 containerNode.ContainerId = newId;
 
                 // 상태 표시 갱신 (Running 등)

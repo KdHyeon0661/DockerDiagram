@@ -77,7 +77,7 @@ namespace DockerDiagram.Helpers
         private static async Task WaitForDockerReadyAsync()
         {
             // DockerApiService는 같은 네임스페이스(DockerDiagram.Helpers)에 있어 바로 사용 가능
-            var api = new DockerApiService();
+            var api = DockerApiService.Instance;
             int timeoutSeconds = 60; // 최대 60초 대기
 
             for (int i = 0; i < timeoutSeconds; i++)

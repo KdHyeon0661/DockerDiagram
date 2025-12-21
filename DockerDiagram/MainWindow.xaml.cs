@@ -1,12 +1,13 @@
-﻿using System.Windows;
+﻿using DockerDiagram.Helpers;
+using DockerDiagram.Models;
+using DockerDiagram.ViewModels;
+using System.Runtime.Versioning;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using DockerDiagram.Models;
-using DockerDiagram.ViewModels;
-using DockerDiagram.Helpers;
 
 namespace DockerDiagram
 {
@@ -212,6 +213,7 @@ namespace DockerDiagram
         }
 
         // 공통 체크 로직 (시작 시 + 감시 중 사용)
+        [SupportedOSPlatform("windows")]
         private async Task CheckDockerStateAsync()
         {
             // 도커가 이미 켜져 있다면 패스
@@ -246,45 +248,6 @@ namespace DockerDiagram
                 Application.Current.Shutdown();
             }
         }
-
-        /*private async Task CheckDockerOnStartup()
-        {
-            // 도커가 꺼져있는 경우에만 실행
-            if (!DockerServiceHelper.IsDockerRunning())
-            {
-                // 모달창 띄우기 (Yes/No 버튼)
-                var result = MessageBox.Show(
-                    "Docker가 현재 꺼져있습니다.\nDocker를 실행하시겠습니까?",
-                    "Docker 확인",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
-
-                if (result == MessageBoxResult.Yes)
-                {
-                    try
-                    {
-                        // 도커 실행 (비동기 대기)
-                        await DockerServiceHelper.StartDockerAsync();
-
-                        // (선택 사항) 도커가 켜진 후 데이터를 바로 불러오고 싶다면 아래 주석 해제
-                        // var vm = DataContext as MainViewModel;
-                        // if (vm != null) vm.SyncDockerCommand.Execute(null);
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"Docker 실행 중 오류가 발생했습니다: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                    }
-                }
-            }
-            else
-            {
-                // 도커가 이미 켜져있으면 아무것도 띄우지 않음 (요청하신 대로)
-
-                // (선택 사항) 켜져있을 때 자동으로 데이터를 불러오고 싶다면 아래 주석 해제
-                // 단, MainViewModel의 Sync 로직에서 완료 메시지박스를 띄우지 않도록 수정해야 조용히 로드됩니다.
-                // (DataContext as MainViewModel)?.SyncDockerCommand.Execute(null);
-            }
-        }*/
 
         // --- 스크롤 로직 ---
         private void ScrollLeft_Click(object sender, RoutedEventArgs e)
@@ -1067,7 +1030,7 @@ namespace DockerDiagram
             // [CASE A] ID가 없음 = 템플릿 드래그 (단, 볼륨은 예외 처리 필요)
             if (string.IsNullOrEmpty(d.Id))
             {
-                var api = new DockerDiagram.Helpers.DockerApiService();
+                var api = DockerApiService.Instance;
 
                 // 1. 컨테이너 템플릿
                 if (d.Type == NodeType.Container)

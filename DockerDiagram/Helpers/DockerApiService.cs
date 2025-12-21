@@ -1,25 +1,31 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
-using Docker.DotNet;
+﻿using Docker.DotNet;
 using Docker.DotNet.Models;
 using DockerDiagram.Models;
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Formats.Tar;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace DockerDiagram.Helpers
 {
     public class DockerApiService
     {
-        private readonly DockerClient _client; // 도커 데몬과 통신하는 클라이언트
+        private static readonly Lazy<DockerApiService> _instance = new Lazy<DockerApiService>(() => new DockerApiService());
 
-        public DockerApiService()
+        public static DockerApiService Instance => _instance.Value;
+
+        private readonly DockerClient _client;
+
+        private DockerApiService()
         {
-            // 윈도우 기본 Named Pipe 연결
-            _client = new DockerClientConfiguration(new Uri("npipe://./pipe/docker_engine")).CreateClient();
+            var dockerUri = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? new Uri("npipe://./pipe/docker_engine") : new Uri("unix:///var/run/docker.sock");
+            var config = new DockerClientConfiguration(dockerUri);
+            _client = config.CreateClient();
         }
 
         // 1. 기본 조회 및 연결 확인
@@ -71,7 +77,7 @@ namespace DockerDiagram.Helpers
 
                 result.Add(new DockerContainer // 도커 컨테이너 정보를 커스텀 모델로 매핑
                 {
-                    Id = c.ID.Substring(0, 12),
+                    Id = c.ID,
                     Name = c.Names[0].TrimStart('/'),
                     Image = c.Image,
                     State = c.State,

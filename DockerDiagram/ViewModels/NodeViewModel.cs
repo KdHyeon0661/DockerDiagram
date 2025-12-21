@@ -21,7 +21,32 @@ namespace DockerDiagram.ViewModels
         private NodeType _type;
 
         public string Id { get; } = Guid.NewGuid().ToString();
-        public string ContainerId { get; set; } = string.Empty; // 실제 Docker ID
+        private string _containerId;
+
+        public string ContainerId
+        {
+            get => _containerId;
+            set
+            {
+                if (_containerId != value)
+                {
+                    _containerId = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(ShortContainerId)); // <-- 중요!
+                }
+            }
+        }
+        public string ShortContainerId
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(ContainerId)) return "N/A";
+                return ContainerId.Length > 12
+                       ? ContainerId.Substring(0, 12)
+                       : ContainerId;
+            }
+        }
+
         public Dictionary<string, string> NetworkIpMap { get; private set; } = new Dictionary<string, string>();
 
         public List<string> PortBindings { get; set; } = new List<string>();
@@ -225,7 +250,7 @@ namespace DockerDiagram.ViewModels
             // 이름이 없으면 중단 (볼륨은 Name이 식별자, 컨테이너는 ContainerId가 식별자지만 기본적으로 Name은 있음)
             if (string.IsNullOrEmpty(Name)) return;
 
-            var api = new DockerApiService();
+            var api = DockerApiService.Instance;
 
             try
             {
@@ -379,7 +404,7 @@ namespace DockerDiagram.ViewModels
         {
             if (string.IsNullOrEmpty(ContainerId)) return;
 
-            var api = new DockerApiService();
+            var api = DockerApiService.Instance;
             try
             {
                 switch (action)
@@ -404,7 +429,7 @@ namespace DockerDiagram.ViewModels
         private void OpenTerminal()
         {
             if (string.IsNullOrEmpty(ContainerId)) return;
-            var api = new DockerApiService();
+            var api = DockerApiService.Instance;
             try
             {
                 api.OpenTerminal(ContainerId);

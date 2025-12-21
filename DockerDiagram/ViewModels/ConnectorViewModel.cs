@@ -132,7 +132,7 @@ namespace DockerDiagram.ViewModels
             // 안전장치: 네트워크 연결 타입이 아니면 무시
             if (RelationType != RelationType.NetworkAttach) return;
 
-            var api = new DockerApiService();
+            var api = DockerApiService.Instance;
             try
             {
                 // 1. 기존 연결 끊기 (Disconnect)
