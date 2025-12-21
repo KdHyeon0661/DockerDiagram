@@ -290,7 +290,7 @@ namespace DockerDiagram.ViewModels
                 var networks = await api.GetNetworksAsync();
                 var images = await api.GetImagesAsync();
 
-                // ★★★ [핵심 수정] 가져온 데이터의 ID를 즉시 12자리로 자릅니다 ★★★
+                // 가져온 데이터의 ID를 즉시 12자리로 자릅니다
                 foreach (var c in containers) if (c.Id.Length > 12) c.Id = c.Id.Substring(0, 12);
                 foreach (var n in networks) if (n.Id.Length > 12) n.Id = n.Id.Substring(0, 12);
                 foreach (var i in images) if (i.Id.Length > 12) i.Id = i.Id.Substring(0, 12);
@@ -391,9 +391,9 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        // --- 7. 노드 생성 및 관리 ---
+        // 7. 노드 생성 및 관리
 
-        // ★ [FIXED] 비동기 컨테이너 생성 (모달 입력 처리용)
+        // 비동기 컨테이너 생성 (모달 입력 처리용)
         public async Task CreateNewContainerNodeAsync(
             string name, string image, string tag,
             List<string> ports, List<string> envs, List<string> volumes, string restartPolicy,
@@ -884,11 +884,22 @@ namespace DockerDiagram.ViewModels
                 string imageName = oldConfig.Image;
                 string imgRepo = imageName;
                 string imgTag = "latest";
-                if (imageName.Contains(":"))
+                int lastColonIndex = imageName.LastIndexOf(':');
+
+                // 콜론이 존재하고, 맨 앞자리(0번 인덱스)가 아닌 경우 (예: ":latest" 방지)
+                if (lastColonIndex > 0)
                 {
-                    var parts = imageName.Split(new[] { ':' }, 2);
-                    imgRepo = parts[0];
-                    imgTag = parts[1];
+                    // 마지막 콜론 앞부분 전체 (예: localhost:5000/my-image)
+                    imgRepo = imageName.Substring(0, lastColonIndex);
+
+                    // 마지막 콜론 뒷부분 (예: latest)
+                    imgTag = imageName.Substring(lastColonIndex + 1);
+                }
+                else
+                {
+                    // 콜론이 없는 경우 (예: nginx)
+                    imgRepo = imageName;
+                    imgTag = "latest";
                 }
 
                 // 4. 포트 복구
@@ -1126,11 +1137,22 @@ namespace DockerDiagram.ViewModels
                 string imgRepo = imageName;
                 string imgTag = "latest";
 
-                if (imageName.Contains(":"))
+                int lastColonIndex = imageName.LastIndexOf(':');
+
+                // 콜론이 존재하고, 맨 앞자리(0번 인덱스)가 아닌 경우 (예: ":latest" 방지)
+                if (lastColonIndex > 0)
                 {
-                    var parts = imageName.Split(new[] { ':' }, 2);
-                    imgRepo = parts[0];
-                    imgTag = parts[1];
+                    // 마지막 콜론 앞부분 전체 (예: localhost:5000/my-image)
+                    imgRepo = imageName[..lastColonIndex];
+
+                    // 마지막 콜론 뒷부분 (예: latest)
+                    imgTag = imageName[(lastColonIndex + 1)..];
+                }
+                else
+                {
+                    // 콜론이 없는 경우 (예: nginx)
+                    imgRepo = imageName;
+                    imgTag = "latest";
                 }
 
                 // 2-2. 환경변수 복사
@@ -1191,7 +1213,19 @@ namespace DockerDiagram.ViewModels
                 // ---------------------------------------------------------
                 // 호스트 임시 폴더의 데이터를 새로 만든 컨테이너로 복사
                 // (이때 데이터는 컨테이너 내부가 아닌, 마운트된 볼륨으로 들어갑니다)
-                await api.CopyToContainerAsync(newId, tempHostPath, mountPath);
+                string folderName = System.IO.Path.GetFileName(mountPath.TrimEnd('/'));
+                string actualSourcePath = System.IO.Path.Combine(tempHostPath, folderName);
+
+                // 하위 폴더가 실제로 존재하면 그 안의 내용물을 복사하고, 아니면(파일 단위 복사 등 예외) 기존 경로 사용
+                if (System.IO.Directory.Exists(actualSourcePath))
+                {
+                    await api.CopyToContainerAsync(newId, actualSourcePath, mountPath);
+                }
+                else
+                {
+                    // 만약 Docker가 폴더 없이 내용물만 줬거나 경로가 달랐을 경우에 대한 대비
+                    await api.CopyToContainerAsync(newId, tempHostPath, mountPath);
+                }
 
 
                 // ---------------------------------------------------------

@@ -28,6 +28,13 @@ namespace DockerDiagram.ViewModels
 
         public List<string> EnvironmentVariables { get; set; } = new List<string>();
 
+        private string _restartPolicy = "no";
+        public string RestartPolicy
+        {
+            get => _restartPolicy;
+            set { _restartPolicy = value; OnPropertyChanged(); }
+        }
+
         public NodeType Type
         {
             get => _type;
@@ -239,6 +246,19 @@ namespace DockerDiagram.ViewModels
                     // 시간 파싱
                     StartedAt = DateTime.TryParse(info.State.StartedAt, out var sTime) ? sTime.ToString("yyyy-MM-dd HH:mm:ss") : info.State.StartedAt;
                     FinishedAt = DateTime.TryParse(info.State.FinishedAt, out var fTime) ? fTime.ToString("yyyy-MM-dd HH:mm:ss") : info.State.FinishedAt;
+
+                    // Docker에서 실제 재시작 정책 가져오기
+                    if (info.HostConfig?.RestartPolicy != null)
+                    {
+                        // Docker.DotNet의 Enum 값을 문자열로 변환
+                        string policy = info.HostConfig.RestartPolicy.Name.ToString().ToLower();
+
+                        // YAML 포맷에 맞게 변환 (UnlessStopped -> unless-stopped)
+                        if (policy == "unlessstopped") policy = "unless-stopped";
+                        else if (policy == "onfailure") policy = "on-failure";
+
+                        RestartPolicy = policy;
+                    }
 
                     // 네트워크 파싱
                     var nets = new List<string>();

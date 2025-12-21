@@ -12,15 +12,16 @@ namespace DockerDiagram.Helpers
 {
     public static class ComposeExportService
     {
+        // compose로 파일 내보내기
         public static void ExportToCompose(SheetViewModel sheet)
         {
-            if (sheet == null || sheet.Nodes.Count == 0)
+            if (sheet == null || sheet.Nodes.Count == 0) // 아무것도 없으면
             {
                 MessageBox.Show("내보낼 노드가 없습니다.", "알림");
                 return;
             }
 
-            var dlg = new SaveFileDialog
+            var dlg = new SaveFileDialog // 저장 대화상자
             {
                 Filter = "Docker Compose File (*.yml)|*.yml|All Files (*.*)|*.*",
                 FileName = "docker-compose.yml",
@@ -46,11 +47,11 @@ namespace DockerDiagram.Helpers
         {
             var sb = new StringBuilder();
 
-            // 1. Header
+            // 헤더
             sb.AppendLine("version: '3.8'");
             sb.AppendLine();
 
-            // 2. Services (Containers)
+            // 컨테이너
             var containers = sheet.Nodes.Where(n => n.Type == NodeType.Container).ToList();
             if (containers.Any())
             {
@@ -63,10 +64,12 @@ namespace DockerDiagram.Helpers
                     sb.AppendLine($"  {serviceName}:");
                     sb.AppendLine($"    container_name: {node.Name}");
                     sb.AppendLine($"    image: {node.ImageName}");
-                    sb.AppendLine($"    restart: always");
 
-                    // 2-1. Ports
-                    // (NodeViewModel에 PortBindings가 List<string> 형태인 "8080:80" 등으로 있다고 가정)
+                    // 재시작 정책
+                    string policy = !string.IsNullOrWhiteSpace(node.RestartPolicy) ? node.RestartPolicy : "no";
+                    sb.AppendLine($"    restart: {policy}");
+
+                    // 포트. NodeViewModel에 PortBindings가 List<string> 형태인 "8080:80" 등으로 있다고 가정
                     if (node.PortBindings != null && node.PortBindings.Count > 0)
                     {
                         sb.AppendLine("    ports:");
@@ -76,7 +79,7 @@ namespace DockerDiagram.Helpers
                         }
                     }
 
-                    // 2-2. Environment Variables
+                    // 환경 변수
                     if (node.EnvironmentVariables != null && node.EnvironmentVariables.Count > 0)
                     {
                         sb.AppendLine("    environment:");
@@ -86,12 +89,8 @@ namespace DockerDiagram.Helpers
                         }
                     }
 
-                    // 2-3. Volumes (Connected Volumes)
-                    // 현재 컨테이너와 연결된 VolumeMount 커넥터 찾기
-                    var volConns = sheet.Connectors.Where(c =>
-                        (c.Source == node && c.Target.Type == NodeType.Volume) ||
-                        (c.Target == node && c.Source.Type == NodeType.Volume)
-                    ).ToList();
+                    // 연결된 볼륨
+                    var volConns = sheet.Connectors.Where(c => c.Source == node && c.Target.Type == NodeType.Volume).ToList(); // MainViewModel에서 container->volume 연결만 생성
 
                     if (volConns.Count > 0)
                     {
@@ -99,16 +98,12 @@ namespace DockerDiagram.Helpers
                         foreach (var conn in volConns)
                         {
                             var volNode = conn.Source == node ? conn.Target : conn.Source;
-                            // 주의: 볼륨 마운트 경로는 Connector나 별도 속성에 저장되어 있어야 함.
-                            // 여기서는 기본적으로 "/data" 등으로 예시를 들거나, 
-                            // 만약 ConnectorViewModel에 마운트 경로 속성이 있다면 그걸 써야 함.
-                            // 현재는 단순하게 "볼륨이름:/app/data" 형식으로 가정합니다.
-                            string path = !string.IsNullOrWhiteSpace(conn.MountPath) ? conn.MountPath : "/app/data";
+                            string path = !string.IsNullOrWhiteSpace(conn.MountPath) ? conn.MountPath : "FIXME_MISSING_PATH";
                             sb.AppendLine($"      - {volNode.Name}:{path}");
                         }
                     }
 
-                    // 2-4. Networks (Connected Networks)
+                    // 연결된 네트워크
                     var netConns = sheet.Connectors.Where(c =>
                         (c.Source == node && c.Target.Type == NodeType.Network)
                     ).ToList();
@@ -118,7 +113,7 @@ namespace DockerDiagram.Helpers
                         sb.AppendLine("    networks:");
                         foreach (var conn in netConns)
                         {
-                            var netNode = conn.Target; // Network
+                            var netNode = conn.Target;
 
                             //  고정 IP 요청이 있는가?
                             if (!string.IsNullOrWhiteSpace(conn.IpAddress))
@@ -133,7 +128,7 @@ namespace DockerDiagram.Helpers
                         }
                     }
 
-                    // 2-5. Depends_on (순서 연결선)
+                    // 연결선 - 의존
                     var depConns = sheet.Connectors.Where(c => c.Target == node && c.RelationType == DockerDiagram.ViewModels.RelationType.Dependency).ToList();
                     if (depConns.Count > 0)
                     {
@@ -149,7 +144,7 @@ namespace DockerDiagram.Helpers
                 }
             }
 
-            // 3. Top-level Networks
+            // 네트워크
             var networks = sheet.Nodes.Where(n => n.Type == NodeType.Network).ToList();
             if (networks.Any())
             {
@@ -157,13 +152,15 @@ namespace DockerDiagram.Helpers
                 foreach (var net in networks)
                 {
                     sb.AppendLine($"  {net.Name}:");
-                    sb.AppendLine("    driver: bridge");
+                    // 네트워크 드라이버
+                    string driver = !string.IsNullOrWhiteSpace(net.ImageName) ? net.ImageName : "bridge";
+                    sb.AppendLine($"    driver: {driver}");
 
                 }
                 sb.AppendLine();
             }
 
-            // 4. Top-level Volumes
+            // 볼륨
             var volumes = sheet.Nodes.Where(n => n.Type == NodeType.Volume).ToList();
             if (volumes.Any())
             {
