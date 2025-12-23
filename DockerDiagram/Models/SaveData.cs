@@ -1,6 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using DockerDiagram.Helpers; // PortDirection 사용을 위해 필요
+using DockerDiagram.Helpers;
 
 namespace DockerDiagram.Models
 {

@@ -1,8 +1,6 @@
-﻿using System;
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 using System.Windows.Input;
-using System.Threading.Tasks;
 using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 

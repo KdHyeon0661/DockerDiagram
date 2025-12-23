@@ -1,15 +1,10 @@
 ﻿using Docker.DotNet;
 using Docker.DotNet.Models;
 using DockerDiagram.Models;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace DockerDiagram.Helpers
 {

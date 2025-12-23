@@ -1,11 +1,7 @@
 ﻿using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 using DockerDiagram.Views;
-using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Linq;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 
