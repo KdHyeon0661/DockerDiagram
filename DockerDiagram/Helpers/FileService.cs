@@ -2,6 +2,7 @@
 using System.Text.Json;
 using System.Windows;
 using Microsoft.Win32;
+using System.Diagnostics;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
@@ -107,8 +108,7 @@ namespace DockerDiagram.Helpers
             }
             catch (Exception ex)
             {
-                // 자동 저장 중 에러
-                System.Diagnostics.Debug.WriteLine($"AutoSave Error: {ex.Message}");
+                Debug.WriteLine($"[DockerDiscovery] AutoSave Error: {ex.Message}");
                 return false;
             }
         }
@@ -132,7 +132,10 @@ namespace DockerDiagram.Helpers
                     Properties.Settings.Default.LastFilePath = dlg.FileName;
                     Properties.Settings.Default.Save();
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[Settings] Failed to save LastFilePath='{dlg.FileName}'. {ex}");
+                }
             }
         }
 

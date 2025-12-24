@@ -443,8 +443,7 @@ namespace DockerDiagram.Helpers
             }
             catch (Exception ex)
             {
-                // 에러 처리 (로그 등)
-                Console.WriteLine($"ExecuteCommandAsync Error: {ex.Message}");
+                Console.WriteLine($"[DockerDiscovery] ExecuteCommandAsync 에러: {ex.Message}");
             }
         }
 

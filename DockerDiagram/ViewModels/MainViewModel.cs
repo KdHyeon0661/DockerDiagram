@@ -1,10 +1,12 @@
-﻿using System.Collections.ObjectModel;
+﻿using DockerDiagram.Helpers;
+using DockerDiagram.Models;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
-using DockerDiagram.Helpers;
-using DockerDiagram.Models;
-using System.Runtime.InteropServices;
 
 namespace DockerDiagram.ViewModels
 {
@@ -165,15 +167,15 @@ namespace DockerDiagram.ViewModels
 
             // 명령 초기화
             AddSheetCommand = new RelayCommand(_ => AddSheet());
-            DeleteCommand = new RelayCommand(_ => DeleteSelected());
+            DeleteCommand = new AsyncRelayCommand(_ => DeleteSelectedAsync());
             ClosePanelCommand = new RelayCommand(_ => SelectedElement = null);
             PrevSheetCommand = new RelayCommand(_ => NavigateSheet(-1));
             NextSheetCommand = new RelayCommand(_ => NavigateSheet(1));
-            DeleteImageCommand = new RelayCommand(DeleteImage);
+            DeleteImageCommand = new AsyncRelayCommand(DeleteImageAsync);
 
-            DeleteContainerItemCommand = new RelayCommand(DeleteContainerItem);
-            DeleteVolumeItemCommand = new RelayCommand(DeleteVolumeItem);
-            DeleteNetworkItemCommand = new RelayCommand(DeleteNetworkItem);
+            DeleteContainerItemCommand = new AsyncRelayCommand(DeleteContainerItemAsync);
+            DeleteVolumeItemCommand = new AsyncRelayCommand(DeleteVolumeItemAsync);
+            DeleteNetworkItemCommand = new AsyncRelayCommand(DeleteNetworkItemAsync);
             SaveCommand = new RelayCommand(_ => FileService.SaveDiagram(this));
 
             if (ActiveSheet != null) AttachSheetEvents();
@@ -246,7 +248,7 @@ namespace DockerDiagram.ViewModels
             catch (Exception ex)
             {
                 // 에러 로그 (필요 시)
-                System.Diagnostics.Debug.WriteLine($"AutoSync Error: {ex.Message}");
+                Debug.WriteLine($"[DockerDiscovery] AutoSync Error: {ex.Message}");
             }
             finally
             {
@@ -255,36 +257,52 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        private async void DeleteContainerItem(object? param)
+        private async Task DeleteContainerItemAsync(object? param)
         {
             if (param is DockerContainer c && MessageBox.Show($"컨테이너 '{c.Name}'을 영구 삭제하시겠습니까?", "확인", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
             {
-                try { await DockerApiService.Instance.RemoveContainerAsync(c.Id); await SyncWithDockerEngine(); }
-                catch (Exception ex) { MessageBox.Show($"삭제 실패: {ex.Message}"); }
+                try {
+                    await DockerApiService.Instance.RemoveContainerAsync(c.Id);
+                    await SyncWithDockerEngine();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"삭제 실패: {ex.Message}");
+                }
             }
         }
 
-        private async void DeleteVolumeItem(object? param)
+        private async Task DeleteVolumeItemAsync(object? param)
         {
             if (param is DockerContainer v && MessageBox.Show($"볼륨 '{v.Name}'을 영구 삭제하시겠습니까?", "확인", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
             {
-                // DockerApiService에 RemoveVolumeAsync 구현 필요 (아래 참조)
-                /* await DockerApiService.Instance.RemoveVolumeAsync(v.Name); */
-                // 임시: 
-                try { /* API 호출 */ await SyncWithDockerEngine(); } catch { }
+                try
+                {
+                    await DockerApiService.Instance.RemoveVolumeAsync(v.Name);
+                    await SyncWithDockerEngine(); // 목록 갱신
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"볼륨 삭제 실패: {ex.Message}");
+                }
             }
         }
 
-        private async void DeleteNetworkItem(object? param)
+        private async Task DeleteNetworkItemAsync(object? param)
         {
             if (param is DockerContainer n && MessageBox.Show($"네트워크 '{n.Name}'을 영구 삭제하시겠습니까?", "확인", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
             {
-                try { await DockerApiService.Instance.RemoveNetworkAsync(n.Id); await SyncWithDockerEngine(); }
-                catch (Exception ex) { MessageBox.Show($"삭제 실패: {ex.Message}"); }
+                try {
+                    await DockerApiService.Instance.RemoveNetworkAsync(n.Id);
+                    await SyncWithDockerEngine();
+                }
+                catch (Exception ex) {
+                    MessageBox.Show($"네트워크 삭제 실패: {ex.Message}");
+                }
             }
         }
 
-        // [NEW] 통계만 기록하는 헬퍼 함수
+        // 통계만 기록하는 헬퍼 함수
         private void RegisterTemplateUsage(string imageName)
         {
             if (string.IsNullOrEmpty(imageName)) return;
@@ -326,7 +344,11 @@ namespace DockerDiagram.ViewModels
 
                 LastSyncTime = $"Last updated: {DateTime.Now:HH:mm:ss}";
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LastSyncTime = $"Sync failed: {DateTime.Now:HH:mm:ss}";
+                Debug.WriteLine($"[DockerDiscovery] {ex}");
+            }
         }
 
         // 싱글톤 로직: 모든 시트를 검사하여 이미 배치된 컨테이너는 리스트에서 제외
@@ -373,7 +395,7 @@ namespace DockerDiagram.ViewModels
         }
 
         // 이미지 삭제 로직
-        private async void DeleteImage(object? parameter)
+        private async Task DeleteImageAsync(object? parameter)
         {
             if (parameter is DockerImage img)
             {
@@ -565,7 +587,7 @@ namespace DockerDiagram.ViewModels
                 catch (Exception ex)
                 {
                     // 볼륨 자동 연결 실패해도 컨테이너 생성은 유지
-                    System.Diagnostics.Debug.WriteLine($"Auto-discovery failed: {ex.Message}");
+                    Debug.WriteLine($"자동 탐색 실패 : {ex.Message}");
                 }
             }
         }
@@ -678,7 +700,7 @@ namespace DockerDiagram.ViewModels
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"네트워크 연결 실패: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show($"네트워크 연결 실패 : {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                     return; // 실패하면 선을 긋지 않음
                 }
             }
@@ -730,7 +752,7 @@ namespace DockerDiagram.ViewModels
 
         public void ClearSelection() => SelectedElement = null;
 
-        public async void DeleteSelected()
+        public async Task DeleteSelectedAsync()
         {
             if (SelectedElement == null || ActiveSheet == null) return;
 
@@ -1116,6 +1138,8 @@ namespace DockerDiagram.ViewModels
             string containerId = containerNode.ContainerId;
             string volumeName = volumeNode.Name;
 
+            bool keepBackup = false;
+
             // 호스트 임시 백업 폴더 경로 생성
             string tempHostPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "docker_backup_" + Guid.NewGuid());
 
@@ -1270,20 +1294,37 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                // 실패 시 에러 메시지 표시하고 false 반환 (선 그리기 취소)
-                MessageBox.Show($"작업 중 오류 발생: {ex.Message}\n\n(백업 데이터는 '{tempHostPath}'에 보존되었습니다.)", "오류", MessageBoxButton.OK, MessageBoxImage.Error);
+                keepBackup = true;
+
+                Debug.WriteLine($"[ConnectVolume] ERROR: {ex}");
+                Debug.WriteLine($"[ConnectVolume] Backup preserved at: {tempHostPath}");
+
+                MessageBox.Show(
+                    $"작업 중 오류 발생: {ex.Message}\n\n(백업 데이터는 '{tempHostPath}'에 보존되었습니다.)",
+                    "오류", MessageBoxButton.OK, MessageBoxImage.Error);
+
                 return false;
             }
             finally
             {
                 Mouse.OverrideCursor = null;
 
-                // (성공/실패 상관없이) 작업이 끝났으므로 임시 폴더 삭제 시도
-                // 단, 디버깅을 위해 실패 시에는 삭제하지 않으려면 위 catch 블록에서 return 해버리면 됨.
-                // 여기서는 깔끔하게 삭제 시도.
-                if (System.IO.Directory.Exists(tempHostPath))
+                if (!keepBackup && Directory.Exists(tempHostPath))
                 {
-                    try { System.IO.Directory.Delete(tempHostPath, true); } catch { /* 삭제 실패는 무시 */ }
+                    try
+                    {
+                        Directory.Delete(tempHostPath, true);
+                        Debug.WriteLine($"[DockerDiscovery] Deleted temp backup folder: {tempHostPath}");
+                    }
+                    catch (Exception delEx)
+                    {
+                        Debug.WriteLine($"[DockerDiscovery] Failed to delete temp backup folder: {tempHostPath}");
+                        Debug.WriteLine($"[Cleanup] Delete exception: {delEx}");
+                    }
+                }
+                else if (keepBackup)
+                {
+                    Debug.WriteLine($"[DockerDiscovery] Keeping temp backup folder (due to failure): {tempHostPath}");
                 }
             }
         }

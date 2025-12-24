@@ -21,7 +21,7 @@ namespace DockerDiagram.ViewModels
         private NodeType _type;
 
         public string Id { get; } = Guid.NewGuid().ToString();
-        private string _containerId;
+        private string _containerId = string.Empty;
 
         public string ContainerId
         {
@@ -228,16 +228,16 @@ namespace DockerDiagram.ViewModels
             // Command 초기화 (조건부 활성화 로직 포함)
 
             // Start: 실행 중이 아닐 때만
-            StartCommand = new RelayCommand(async _ => await ControlAction("start"), _ => !IsRunning);
+            StartCommand = new AsyncRelayCommand(_ => ControlAction("start"), _ => !IsRunning);
 
             // Stop: 실행 중일 때만
-            StopCommand = new RelayCommand(async _ => await ControlAction("stop"), _ => IsRunning);
+            StopCommand = new AsyncRelayCommand(_ => ControlAction("stop"), _ => IsRunning);
 
             // Pause: 실행 중이거나 일시정지 상태일 때
-            PauseCommand = new RelayCommand(async _ => await ControlAction("pause"), _ => IsRunning || IsPaused);
+            PauseCommand = new AsyncRelayCommand(_ => ControlAction("pause"), _ => IsRunning || IsPaused);
 
             // Restart: 실행 중이거나 멈춰있을 때 (항상 가능)
-            RestartCommand = new RelayCommand(async _ => await ControlAction("restart"), _ => true);
+            RestartCommand = new AsyncRelayCommand(_ => ControlAction("restart"), _ => true);
 
             // Terminal: 실행 중일 때만 접속 가능
             TerminalCommand = new RelayCommand(_ => OpenTerminal(), _ => IsRunning);
@@ -422,7 +422,7 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Action Failed: {ex.Message}");
+                MessageBox.Show($"동작 실패 : {ex.Message}");
             }
         }
 
@@ -436,7 +436,7 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Terminal Error: {ex.Message}");
+                MessageBox.Show($"터미널 오류 : {ex.Message}");
             }
         }
     }

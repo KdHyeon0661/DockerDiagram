@@ -117,15 +117,18 @@ namespace DockerDiagram.Helpers
                     }
                 }
             }
-            catch { /* 레지스트리 접근 권한 없음 등 무시 */ }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[DockerDiscovery] 레지스트리 허용 실패 : {ex.Message}");
+            }
 
             // 환경변수 이용
             try
             {
                 foreach (var root in new[]
                 {
-                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),     // 보통 C:\Program Files
-                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),  // 보통 C:\Program Files (x86)
+                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),     // C:\Program Files
+                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),  // C:\Program Files (x86)
                     Environment.GetEnvironmentVariable("ProgramW6432")                     // 32bit 프로세스에서도 64bit Program Files
                 }
                 .Where(p => !string.IsNullOrWhiteSpace(p))
@@ -136,7 +139,10 @@ namespace DockerDiagram.Helpers
                         return candidate;
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[DockerDiscovery] 환경변수 경로 찾기 실패: {ex.Message}");
+            }
 
             // 기본 C드라이브 경로, 최후의 수단
             path = @"C:\Program Files\Docker\Docker\Docker Desktop.exe";

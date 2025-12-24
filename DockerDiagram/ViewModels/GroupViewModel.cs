@@ -39,8 +39,8 @@ namespace DockerDiagram.ViewModels
             X = x; Y = y; Width = w; Height = h; Title = title;
 
             ArrangeCommand = new RelayCommand(_ => ArrangeNodes());
-            StartAllCommand = new RelayCommand(async _ => await StartAllContainers());
-            StopAllCommand = new RelayCommand(async _ => await StopAllContainers());
+            StartAllCommand = new AsyncRelayCommand(StartAllContainers);
+            StopAllCommand = new AsyncRelayCommand(StopAllContainers);
         }
 
         // 기능 1: 정렬

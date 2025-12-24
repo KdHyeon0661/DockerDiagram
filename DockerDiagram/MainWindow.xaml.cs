@@ -64,6 +64,7 @@ namespace DockerDiagram
         private DispatcherTimer _dockerMonitorTimer;
         private DispatcherTimer _autoSaveTimer;
 
+        [SupportedOSPlatform("windows")]
         public MainWindow()
         {
             InitializeComponent();
@@ -177,6 +178,7 @@ namespace DockerDiagram
             }
         }
 
+        [SupportedOSPlatform("windows")]
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
             UpdateScrollButtonsState();
@@ -195,6 +197,7 @@ namespace DockerDiagram
         }
 
         // 타이머가 째깍거릴 때마다 실행되는 로직
+        [SupportedOSPlatform("windows")]
         private async void DockerMonitorTimer_Tick(object? sender, EventArgs e)
         {
             // 도커가 실행 중이면 아무것도 안 함
@@ -239,7 +242,6 @@ namespace DockerDiagram
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Docker 실행 실패: {ex.Message}");
-                    // 실행 실패 시에도 종료하고 싶다면 여기에 Application.Current.Shutdown(); 추가
                 }
             }
             else
@@ -292,7 +294,11 @@ namespace DockerDiagram
         // --- 키보드 입력 ---
         private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
         {
-            if (e.Key == Key.Delete) (DataContext as MainViewModel)?.DeleteSelected();
+            if (e.Key == Key.Delete)
+            {
+                (DataContext as MainViewModel)?.DeleteCommand.Execute(null);
+                e.Handled = true;
+            }
         }
 
         // --- 옵션 팝업 및 기능 버튼 ---
@@ -1055,8 +1061,14 @@ namespace DockerDiagram
 
                             await vm.CreateNodeAtAsync(new DockerContainer { Id = newId, Name = dlg.ContainerName, Image = dlg.ImageName, Type = NodeType.Container, State = "running", StateColor = "#28a745" }, snapX, snapY);
                         }
-                        catch (Exception ex) { MessageBox.Show($"Error: {ex.Message}"); }
-                        finally { Mouse.OverrideCursor = null; }
+                        catch (Exception ex)
+                        {
+                            MessageBox.Show($"에러 : {ex.Message}");
+                        }
+                        finally
+                        {
+                            Mouse.OverrideCursor = null;
+                        }
                     }
                 }
                 // 2. 볼륨 템플릿
@@ -1076,7 +1088,10 @@ namespace DockerDiagram
                                 await api.CreateVolumeAsync(dlg.VolumeName, dlg.Driver);
                                 vm.ActiveSheet.CreateNodeAt(new DockerContainer { Name = dlg.VolumeName, Type = NodeType.Volume, Image = dlg.Driver }, snapX, snapY);
                             }
-                            catch (Exception ex) { MessageBox.Show($"Error: {ex.Message}"); }
+                            catch (Exception ex)
+                            {
+                                MessageBox.Show($"에러 : {ex.Message}");
+                            }
                         }
                     }
                     else
@@ -1100,7 +1115,10 @@ namespace DockerDiagram
 
                             vm.ActiveSheet.CreateNodeAt(new DockerContainer { Id = netId, Name = dlg.NetworkName, Type = NodeType.Network, Image = dlg.Driver }, snapX, snapY);
                         }
-                        catch (Exception ex) { MessageBox.Show($"Error: {ex.Message}"); }
+                        catch (Exception ex)
+                        {
+                            MessageBox.Show($"에러 : {ex.Message}");
+                        }
                     }
                 }
             }
