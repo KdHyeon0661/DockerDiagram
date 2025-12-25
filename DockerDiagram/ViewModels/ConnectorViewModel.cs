@@ -6,13 +6,6 @@ using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
-    public enum RelationType
-    {
-        Dependency,     // Container <-> Container
-        VolumeMount,    // Container <-> Volume
-        NetworkAttach   // Container <-> Network
-    }
-
     public class ConnectorViewModel : ViewModelBase
     {
         public NodeViewModel Source { get; private set; }
@@ -151,15 +144,15 @@ namespace DockerDiagram.ViewModels
         }
 
         // (IpAddress, MountPath 등의 속성 및 ApplyStaticIpAsync 메서드는 기존 코드 유지)
-        private string _mountPath = "";
-        public string MountPath
+        private string? _mountPath;
+        public string? MountPath
         {
             get => _mountPath;
             set { _mountPath = value; OnPropertyChanged(); }
         }
 
-        private string _ipAddress = "";
-        public string IpAddress
+        private string? _ipAddress;
+        public string? IpAddress
         {
             get => _ipAddress;
             set { _ipAddress = value; OnPropertyChanged(); }

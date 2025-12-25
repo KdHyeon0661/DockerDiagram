@@ -54,8 +54,6 @@ namespace DockerDiagram.Helpers
         {
             try
             {
-                // ★ [가장 중요] 저장할 때마다 반드시 '새 상자(new)'를 꺼내야 합니다!
-                // 만약 이 변수가 메서드 밖(static)에 있거나, 여기서 new를 안 하면 내용이 계속 쌓입니다.
                 var fileData = new DiagramFile();
 
                 // 1. 현재 활성화된 시트 번호 저장
@@ -76,32 +74,39 @@ namespace DockerDiagram.Helpers
                     };
 
                     // 노드들 옮기기
-                    foreach (var node in sheetVm.Nodes)
+                    foreach (var nodeVm in sheetVm.Nodes)
                     {
                         sheetData.Nodes.Add(new NodeData
                         {
-                            Id = node.Id,
-                            DockerId = node.ContainerId,
-                            Name = node.Name,
-                            ImageName = node.ImageName,
-                            Type = node.Type,
-                            X = node.X,
-                            Y = node.Y,
-                            Width = node.Width,
-                            Height = node.Height
+                            Id = nodeVm.Id,
+                            DockerId = nodeVm.ContainerId, // 매핑 주의: ContainerId -> DockerId
+                            Name = nodeVm.Name,
+                            ImageName = nodeVm.ImageName,
+                            Type = nodeVm.Type,
+                            X = nodeVm.X,
+                            Y = nodeVm.Y,
+                            Width = nodeVm.Width,
+                            Height = nodeVm.Height,
+
+                            PortBindings = nodeVm.PortBindings ?? new List<string>(),
+                            EnvironmentVariables = nodeVm.EnvironmentVariables ?? new List<string>(),
+                            RestartPolicy = nodeVm.RestartPolicy ?? "no"
                         });
                     }
 
                     // 연결선들 옮기기
-                    foreach (var conn in sheetVm.Connectors)
+                    foreach (var connVm in sheetVm.Connectors)
                     {
                         sheetData.Connections.Add(new ConnectionData
                         {
-                            SourceNodeId = conn.Source.Id,
-                            TargetNodeId = conn.Target.Id,
-                            SourceDir = conn.SourceDir,
-                            TargetDir = conn.TargetDir,
-                            RelationType = (DockerDiagram.Models.RelationType)conn.RelationType
+                            SourceNodeId = connVm.Source.Id,
+                            TargetNodeId = connVm.Target.Id,
+                            SourceDir = connVm.SourceDir,
+                            TargetDir = connVm.TargetDir,
+                            RelationType = connVm.RelationType,
+
+                            MountPath = connVm.MountPath,
+                            IpAddress = connVm.IpAddress
                         });
                     }
 
@@ -157,73 +162,96 @@ namespace DockerDiagram.Helpers
         {
             try
             {
-                if (!File.Exists(filePath)) return; // 프로퍼티에 저장되어 있는 경로가 없을 수도 있으니 체크
+                if (!File.Exists(filePath)) return;
 
-                string jsonString = await File.ReadAllTextAsync(filePath);
-                var fileData = JsonSerializer.Deserialize<DiagramFile>(jsonString); // json 역직렬화
+                // 1. 비동기로 파일 읽기
+                string json = await File.ReadAllTextAsync(filePath);
 
-                if (fileData == null) throw new Exception("파일 형식이 올바르지 않습니다.");
+                // 2. JSON 역직렬화
+                var fileData = JsonSerializer.Deserialize<DiagramFile>(json);
 
-                // 기존 시트 클리어()
+                if (fileData == null) return;
+
+                // 3. 기존 데이터 초기화 (새로 불러오기)
                 mainVm.Sheets.Clear();
 
-                foreach (var sheetData in fileData.Sheets) // 파일에 있는 시트 수만큼 반복
+                foreach (var sheetData in fileData.Sheets)
                 {
-                    var sheetVm = new SheetViewModel(sheetData.Title) // 시트 뷰모델 생성
-                    {
-                        MapWidth = sheetData.MapWidth,
-                        MapHeight = sheetData.MapHeight,
-                        OffsetX = sheetData.OffsetX,
-                        OffsetY = sheetData.OffsetY,
-                        Scale = sheetData.Scale
-                    };
+                    var sheetVm = new SheetViewModel(sheetData.Title);
 
+                    // 맵 뷰포트 상태 복원
+                    sheetVm.MapWidth = sheetData.MapWidth;
+                    sheetVm.MapHeight = sheetData.MapHeight;
+                    sheetVm.OffsetX = sheetData.OffsetX;
+                    sheetVm.OffsetY = sheetData.OffsetY;
+                    sheetVm.Scale = sheetData.Scale;
+
+                    // ID 매핑용 딕셔너리 (파일에 저장된 ID -> 새로 만든 객체)
+                    // 연결선이나 그룹을 복원할 때 필요합니다.
                     var nodeMap = new Dictionary<string, NodeViewModel>();
 
-                    // 노드 복구
-                    foreach (var nData in sheetData.Nodes)
+                    // 4. 노드 복원
+                    foreach (var nodeData in sheetData.Nodes)
                     {
                         var nodeVm = new NodeViewModel
                         {
-                            ContainerId = nData.DockerId, // Docker ID 복구
-                            Name = nData.Name,
-                            ImageName = nData.ImageName,
-                            Type = nData.Type,
-                            X = nData.X,
-                            Y = nData.Y,
-                            Width = nData.Width,
-                            Height = nData.Height
+                            // [중요] 저장된 ID를 그대로 복원해야 연결선이 끊기지 않습니다.
+                            // (NodeViewModel.cs의 Id 프로퍼티에 'set;' 접근자가 필요합니다)
+                            Id = nodeData.Id,
+
+                            ContainerId = nodeData.DockerId, // Docker ID 복원
+                            Name = nodeData.Name,
+                            ImageName = nodeData.ImageName,
+                            Type = nodeData.Type,
+                            X = nodeData.X,
+                            Y = nodeData.Y,
+                            Width = nodeData.Width,
+                            Height = nodeData.Height,
+
+                            // [추가됨] 오프라인 설정 복원 (Compose 내보내기용 핵심 데이터)
+                            PortBindings = nodeData.PortBindings ?? new List<string>(),
+                            EnvironmentVariables = nodeData.EnvironmentVariables ?? new List<string>(),
+                            RestartPolicy = nodeData.RestartPolicy ?? "no",
+
+                            // 로드 직후에는 '오프라인' 상태로 간주 (회색)
+                            // (실제 Docker와 동기화되면 MainViewModel의 로직에 의해 초록/빨강으로 바뀜)
+                            StatusColor = "#808080"
                         };
 
-                        // Docker 상태 동기화
-                        await nodeVm.RefreshDetailsAsync();
-
                         sheetVm.Nodes.Add(nodeVm);
-                        nodeMap[nData.Id] = nodeVm;
+                        nodeMap[nodeVm.Id] = nodeVm;
                     }
 
-                    // 연결선 복구
-                    foreach (var cData in sheetData.Connections)
+                    // 5. 연결선 복원
+                    foreach (var connData in sheetData.Connections)
                     {
-                        if (nodeMap.TryGetValue(cData.SourceNodeId, out var source) &&
-                            nodeMap.TryGetValue(cData.TargetNodeId, out var target))
+                        // Source와 Target 노드가 모두 존재할 때만 연결
+                        if (nodeMap.TryGetValue(connData.SourceNodeId, out var source) &&
+                            nodeMap.TryGetValue(connData.TargetNodeId, out var target))
                         {
-                            var connVm = new ConnectorViewModel(source, target, cData.SourceDir, cData.TargetDir)
-                            {
-                                RelationType = (DockerDiagram.ViewModels.RelationType)cData.RelationType
-                            };
+                            var connVm = new ConnectorViewModel(source, target, connData.SourceDir, connData.TargetDir);
+
+                            connVm.RelationType = connData.RelationType;
+
+                            connVm.MountPath = connData.MountPath; // 볼륨 마운트 경로
+                            connVm.IpAddress = connData.IpAddress; // 네트워크 고정 IP
+
                             sheetVm.Connectors.Add(connVm);
                         }
                     }
 
-                    // 그룹 복구
-                    foreach (var gData in sheetData.Groups)
+                    // 6. 그룹 복원
+                    foreach (var groupData in sheetData.Groups)
                     {
-                        var groupVm = new GroupViewModel(gData.X, gData.Y, gData.Width, gData.Height, gData.Title);
-                        groupVm.ParentSheet = sheetVm;
-                        foreach (var nodeId in gData.ContainedNodeIds)
+                        var groupVm = new GroupViewModel(groupData.X, groupData.Y, groupData.Width, groupData.Height, groupData.Title);
+                        groupVm.ParentSheet = sheetVm; // 부모 시트 연결 필수
+
+                        foreach (var nodeId in groupData.ContainedNodeIds)
                         {
-                            if (nodeMap.TryGetValue(nodeId, out var node)) groupVm.AddNode(node);
+                            if (nodeMap.TryGetValue(nodeId, out var node))
+                            {
+                                groupVm.AddNode(node);
+                            }
                         }
                         sheetVm.Groups.Add(groupVm);
                     }
@@ -231,6 +259,7 @@ namespace DockerDiagram.Helpers
                     mainVm.Sheets.Add(sheetVm);
                 }
 
+                // 7. 활성 시트 설정
                 if (mainVm.Sheets.Count > 0 && fileData.ActiveSheetIndex < mainVm.Sheets.Count)
                 {
                     mainVm.ActiveSheet = mainVm.Sheets[fileData.ActiveSheetIndex];

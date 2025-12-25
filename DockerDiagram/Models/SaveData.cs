@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using DockerDiagram.Helpers;
 
 namespace DockerDiagram.Models
@@ -34,17 +35,20 @@ namespace DockerDiagram.Models
     // 노드 데이터 (컨테이너, 볼륨, 네트워크)
     public class NodeData
     {
-        public string Id { get; set; } = string.Empty; // 다이어그램 내부 식별자 (Guid)
-        public string DockerId { get; set; } = string.Empty; // 실제 Docker ID (매핑용)
+        public string Id { get; set; } = string.Empty;
+        public string DockerId { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string ImageName { get; set; } = string.Empty;
         public NodeType Type { get; set; }
 
-        // 레이아웃 정보
         public double X { get; set; }
         public double Y { get; set; }
         public double Width { get; set; }
         public double Height { get; set; }
+
+        public List<string> PortBindings { get; set; } = new List<string>();
+        public List<string> EnvironmentVariables { get; set; } = new List<string>();
+        public string RestartPolicy { get; set; } = "no";
     }
 
     // 연결선 데이터
@@ -54,9 +58,10 @@ namespace DockerDiagram.Models
         public string TargetNodeId { get; set; } = string.Empty;
         public PortDirection SourceDir { get; set; }
         public PortDirection TargetDir { get; set; }
-
-        // 관계 타입
         public RelationType RelationType { get; set; }
+
+        public string? MountPath { get; set; } // 볼륨 마운트 경로 (예: /var/lib/mysql)
+        public string? IpAddress { get; set; } // 네트워크 고정 IP
     }
 
     // 그룹 데이터
@@ -70,14 +75,5 @@ namespace DockerDiagram.Models
 
         // 그룹에 속한 노드들의 다이어그램 ID 목록
         public List<string> ContainedNodeIds { get; set; } = new List<string>();
-    }
-
-    // RelationType 정의
-    // ConnectorViewModel.cs에 있는 것과 동일한 구조입니다.
-    public enum RelationType
-    {
-        Dependency,     // Container <-> Container
-        VolumeMount,    // Container <-> Volume
-        NetworkAttach   // Container <-> Network
     }
 }

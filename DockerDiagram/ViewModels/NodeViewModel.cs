@@ -1,8 +1,10 @@
 ﻿using System.Windows;
 using System.Windows.Input;
+using System.Collections.Generic;
+using System.Linq; 
+using System.Threading.Tasks;
 using DockerDiagram.Helpers;
 using DockerDiagram.Models;
-using Docker.DotNet.Models;
 
 namespace DockerDiagram.ViewModels
 {
@@ -20,7 +22,7 @@ namespace DockerDiagram.ViewModels
         private string _name = string.Empty;
         private NodeType _type;
 
-        public string Id { get; } = Guid.NewGuid().ToString();
+        public string Id { get; set; } = Guid.NewGuid().ToString();
         private string _containerId = string.Empty;
 
         public string ContainerId
@@ -49,9 +51,20 @@ namespace DockerDiagram.ViewModels
 
         public Dictionary<string, string> NetworkIpMap { get; private set; } = new Dictionary<string, string>();
 
-        public List<string> PortBindings { get; set; } = new List<string>();
+        private List<string> _portBindings = new List<string>();
+        public List<string> PortBindings
+        {
+            get => _portBindings;
+            set { _portBindings = value; OnPropertyChanged(); }
+        }
 
-        public List<string> EnvironmentVariables { get; set; } = new List<string>();
+        // 2. 환경 변수 (UI 알림 지원)
+        private List<string> _environmentVariables = new List<string>();
+        public List<string> EnvironmentVariables
+        {
+            get => _environmentVariables;
+            set { _environmentVariables = value; OnPropertyChanged(); }
+        }
 
         private string _restartPolicy = "no";
         public string RestartPolicy
@@ -247,7 +260,7 @@ namespace DockerDiagram.ViewModels
         // 4. 상세 정보 로드
         public async Task RefreshDetailsAsync()
         {
-            // 이름이 없으면 중단 (볼륨은 Name이 식별자, 컨테이너는 ContainerId가 식별자지만 기본적으로 Name은 있음)
+            // 이름이 없으면 중단
             if (string.IsNullOrEmpty(Name)) return;
 
             var api = DockerApiService.Instance;
@@ -261,47 +274,69 @@ namespace DockerDiagram.ViewModels
 
                     var info = await api.InspectContainerAsync(ContainerId);
 
-                    // 텍스트 상태
-                    DetailStatus = info.State.Status; // running, exited, paused...
-
-                    // 버튼 제어용 플래그
+                    // 1. 텍스트 상태 및 제어 플래그
+                    DetailStatus = info.State.Status; // running, exited...
                     IsRunning = info.State.Running;
                     IsPaused = info.State.Paused;
 
-                    // 시간 파싱
+                    // 2. 시간 파싱
                     StartedAt = DateTime.TryParse(info.State.StartedAt, out var sTime) ? sTime.ToString("yyyy-MM-dd HH:mm:ss") : info.State.StartedAt;
                     FinishedAt = DateTime.TryParse(info.State.FinishedAt, out var fTime) ? fTime.ToString("yyyy-MM-dd HH:mm:ss") : info.State.FinishedAt;
 
-                    // Docker에서 실제 재시작 정책 가져오기
+                    // 3. 재시작 정책 (Restart Policy) - 사용자 코드 유지
                     if (info.HostConfig?.RestartPolicy != null)
                     {
-                        // Docker.DotNet의 Enum 값을 문자열로 변환
                         string policy = info.HostConfig.RestartPolicy.Name.ToString().ToLower();
-
-                        // YAML 포맷에 맞게 변환 (UnlessStopped -> unless-stopped)
                         if (policy == "unlessstopped") policy = "unless-stopped";
                         else if (policy == "onfailure") policy = "on-failure";
-
                         RestartPolicy = policy;
                     }
 
-                    // 네트워크 파싱
+                    // 4. [추가됨] 환경 변수 파싱 (Docker Compose Export용)
+                    if (info.Config?.Env != null)
+                    {
+                        this.EnvironmentVariables = info.Config.Env.ToList();
+                    }
+                    else
+                    {
+                        this.EnvironmentVariables = new List<string>();
+                    }
+
+                    // 5. [추가됨] 포트 바인딩 파싱 (Docker Compose Export용)
+                    // 포맷: "HostPort:ContainerPort" (예: "8080:80")
+                    var portsList = new List<string>();
+                    if (info.HostConfig?.PortBindings != null)
+                    {
+                        foreach (var kvp in info.HostConfig.PortBindings)
+                        {
+                            string containerPort = kvp.Key.Replace("/tcp", "").Replace("/udp", ""); // "80/tcp" -> "80"
+                            foreach (var binding in kvp.Value)
+                            {
+                                if (!string.IsNullOrEmpty(binding.HostPort))
+                                {
+                                    portsList.Add($"{binding.HostPort}:{containerPort}");
+                                }
+                            }
+                        }
+                    }
+                    this.PortBindings = portsList;
+
+                    // 6. 네트워크 파싱 (IP 맵 등)
                     var nets = new List<string>();
                     var ips = new List<string>();
 
+                    if (NetworkIpMap == null) NetworkIpMap = new Dictionary<string, string>(); // 안전장치
                     NetworkIpMap.Clear();
 
                     if (info.NetworkSettings?.Networks != null)
                     {
                         foreach (var net in info.NetworkSettings.Networks)
                         {
-                            nets.Add(net.Key); // 네트워크 이름
-
+                            nets.Add(net.Key);
                             string ip = net.Value.IPAddress;
                             if (!string.IsNullOrEmpty(ip))
                             {
                                 ips.Add(ip);
-                                // 맵에 저장 (Key: 네트워크이름, Value: IP주소)
                                 NetworkIpMap[net.Key] = ip;
                             }
                         }
@@ -309,7 +344,7 @@ namespace DockerDiagram.ViewModels
                     ConnectedNetworks = nets.Count > 0 ? string.Join(", ", nets) : "None";
                     IpAddresses = ips.Count > 0 ? string.Join(", ", ips) : "-";
 
-                    // 볼륨 마운트 파싱
+                    // 7. 볼륨 마운트 파싱
                     var vols = new List<string>();
                     if (info.Mounts != null)
                     {
@@ -320,7 +355,7 @@ namespace DockerDiagram.ViewModels
                     }
                     MountedVolumes = vols.Count > 0 ? string.Join("\n", vols) : "None";
 
-                    // 상태 색상 갱신
+                    // 8. 상태 색상 갱신
                     if (IsRunning) StatusColor = "#28a745";
                     else if (IsPaused) StatusColor = "#ffc107";
                     else StatusColor = "#dc3545";
@@ -330,34 +365,30 @@ namespace DockerDiagram.ViewModels
                 // [CASE 2] 볼륨 상세 조회
                 else if (Type == NodeType.Volume)
                 {
-                    var vol = await api.InspectVolumeAsync(Name); // 볼륨은 Name으로 조회
+                    var vol = await api.InspectVolumeAsync(Name);
 
-                    DetailStatus = "Created"; // 볼륨은 Running 상태 없음
+                    DetailStatus = "Created";
                     Driver = vol.Driver;
                     Mountpoint = vol.Mountpoint;
                     CreatedDate = DateTime.TryParse(vol.CreatedAt, out var cTime) ? cTime.ToString("yyyy-MM-dd HH:mm:ss") : vol.CreatedAt;
 
-                    // 
                     var usedList = await api.GetContainersUsingVolumeAsync(Name);
                     UsedByContainers = usedList.Count > 0 ? string.Join(", ", usedList) : "None";
 
-                    // 버튼 비활성화
                     IsRunning = false;
                     IsPaused = false;
-                    StatusColor = "#E67E22"; // 주황색 유지
+                    StatusColor = "#E67E22";
                 }
-                // [CASE 3] 네트워크 (NEW)
+                // [CASE 3] 네트워크 상세 조회
                 else if (Type == NodeType.Network)
                 {
-                    // 네트워크는 ID로 조회하는 것이 가장 정확함
                     if (string.IsNullOrEmpty(ContainerId)) return;
 
                     var net = await api.InspectNetworkAsync(ContainerId);
 
-                    DetailStatus = "Active"; // 네트워크는 보통 상태값이 따로 없으므로 Active로 표시
+                    DetailStatus = "Active";
                     NetworkDriver = net.Driver;
 
-                    // 서브넷 & 게이트웨이 파싱 (IPAM Config 확인)
                     if (net.IPAM?.Config != null && net.IPAM.Config.Count > 0)
                     {
                         Subnet = net.IPAM.Config[0].Subnet ?? "-";
@@ -369,8 +400,6 @@ namespace DockerDiagram.ViewModels
                         Gateway = "-";
                     }
 
-                    // 연결된 컨테이너 목록 파싱
-                    // net.Containers는 Dictionary<string, NetworkContainer> 형태임
                     if (net.Containers != null && net.Containers.Count > 0)
                     {
                         var names = net.Containers.Values.Select(c => c.Name).ToList();
@@ -381,18 +410,18 @@ namespace DockerDiagram.ViewModels
                         NetworkContainers = "None";
                     }
 
-                    // 버튼 비활성화
                     IsRunning = false;
                     IsPaused = false;
-                    StatusColor = "#9B59B6"; // 보라색 유지
+                    StatusColor = "#9B59B6";
                 }
 
-                // UI(버튼 Enable/Disable) 강제 갱신 요청
+                // UI 갱신 강제
                 CommandManager.InvalidateRequerySuggested();
             }
-            catch
+            catch (Exception ex)
             {
-                DetailStatus = "Error loading details";
+                System.Diagnostics.Debug.WriteLine($"Refresh Error: {ex.Message}");
+                DetailStatus = "Error";
                 IsRunning = false;
                 IsPaused = false;
                 CommandManager.InvalidateRequerySuggested();

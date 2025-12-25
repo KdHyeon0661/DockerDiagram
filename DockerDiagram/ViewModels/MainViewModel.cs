@@ -489,6 +489,11 @@ namespace DockerDiagram.ViewModels
                 node.ContainerId = containerId;
 
                 node.PortInfo = string.Join(", ", ports);
+
+                node.PortBindings = ports;
+                node.EnvironmentVariables = envs;
+                node.RestartPolicy = restartPolicy;
+
                 node.IsCreating = false;
                 node.StatusColor = "#28a745";
 
