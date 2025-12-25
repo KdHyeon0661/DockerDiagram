@@ -1032,9 +1032,6 @@ namespace DockerDiagram
                             string newId = await api.CreateAndStartContainerAsync(
                                 dlg.ContainerName, parts[0], parts[1], dlg.Ports, dlg.EnvVars, dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount);
 
-                            // ID 12자리로 자르기
-                            if (newId.Length > 12) newId = newId.Substring(0, 12);
-
                             await vm.CreateNodeAtAsync(new DockerContainer { Id = newId, Name = dlg.ContainerName, Image = dlg.ImageName, Type = NodeType.Container, State = "running", StateColor = "#28a745" }, snapX, snapY);
                         }
                         catch (Exception ex)
@@ -1087,7 +1084,6 @@ namespace DockerDiagram
                         {
                             string netId = await api.CreateNetworkAsync(dlg.NetworkName, dlg.Driver);
                             // 네트워크 ID 12자리로 자르기
-                            if (netId.Length > 12) netId = netId.Substring(0, 12);
 
                             vm.ActiveSheet.CreateNodeAt(new DockerContainer { Id = netId, Name = dlg.NetworkName, Type = NodeType.Network, Image = dlg.Driver }, snapX, snapY);
                         }

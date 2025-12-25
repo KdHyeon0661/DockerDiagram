@@ -38,16 +38,15 @@ namespace DockerDiagram.ViewModels
                 }
             }
         }
-        public string ShortContainerId
+
+        private static string ShortenId(string? id, int len = 12)
         {
-            get
-            {
-                if (string.IsNullOrEmpty(ContainerId)) return "N/A";
-                return ContainerId.Length > 12
-                       ? ContainerId.Substring(0, 12)
-                       : ContainerId;
-            }
+            if (string.IsNullOrWhiteSpace(id)) return "";
+            return id.Length <= len ? id : id.Substring(0, len);
         }
+
+        // 컨테이너용 ShortId
+        public string ShortContainerId => (Type == NodeType.Container) ? ShortenId(ContainerId) : "";
 
         public Dictionary<string, string> NetworkIpMap { get; private set; } = new Dictionary<string, string>();
 
