@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using System.Diagnostics;
 
 namespace DockerDiagram
 {
@@ -72,69 +73,22 @@ namespace DockerDiagram
             _dockerMonitorTimer = new DispatcherTimer();
             _dockerMonitorTimer.Interval = TimeSpan.FromSeconds(5);
             _dockerMonitorTimer.Tick += DockerMonitorTimer_Tick;
-            _dockerMonitorTimer.Start();
 
             _autoSaveTimer = new DispatcherTimer();
             _autoSaveTimer.Interval = TimeSpan.FromMinutes(1);
             _autoSaveTimer.Tick += AutoSaveTimer_Tick!;
-
-            // 3. [기존] 프로그램 켜질 때 자동 로드
-            this.Loaded += async (s, e) =>
-            {
-                string lastFile = Properties.Settings.Default.LastFilePath;
-
-                if (!string.IsNullOrEmpty(lastFile) && System.IO.File.Exists(lastFile))
-                {
-                    var vm = this.DataContext as MainViewModel;
-                    // 자동 로드 (다이얼로그 없이 바로 열기)
-                    await Helpers.FileService.LoadDiagramFromPathAsync(vm!, lastFile);
-                }
-            };
-        }
-
-        private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
-        {
-            string lastFile = Properties.Settings.Default.LastFilePath;
-            var vm = this.DataContext as MainViewModel;
-
-            // 경로가 비어있지 않은데
-            if (!string.IsNullOrEmpty(lastFile))
-            {
-                // 실제 파일이 존재하면 -> 로드
-                if (System.IO.File.Exists(lastFile))
-                {
-                    if (vm != null)
-                    {
-                        await FileService.LoadDiagramFromPathAsync(vm, lastFile);
-                        vm.IsModified = false; // 불러온 직후는 변경사항 없음 처리
-                    }
-                }
-                else
-                {
-                    // 파일이 없다(삭제됨) -> 기억(Setting)을 확실하게 지워버림
-                    Properties.Settings.Default.LastFilePath = "";
-                    Properties.Settings.Default.Save(); // 즉시 반영
-
-                    // 디버깅용: 확실히 지워졌는지 확인
-                    System.Diagnostics.Debug.WriteLine("설정 초기화됨: 파일이 없어 경로를 지웠습니다.");
-                }
-            }
-
-            _autoSaveTimer.Start();
         }
 
         // 2. 종료 시 (변경사항 있을 때만 묻기)
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            var vm = this.DataContext as MainViewModel;
+            if (this.DataContext is not MainViewModel vm) return;
 
-            // 변경된 게 없으면(IsModified == false) 묻지 않고 바로 종료
-            if (vm != null && !vm.IsModified)
+            if (!vm.IsModified)
             {
-                return; // 그냥 꺼짐
+                return;
             }
 
-            // 변경사항이 있을 때만 물어봄
             var result = MessageBox.Show("변경 사항이 저장되지 않았습니다.\n저장하고 종료하시겠습니까?",
                                          "종료 확인",
                                          MessageBoxButton.YesNoCancel,
@@ -142,21 +96,24 @@ namespace DockerDiagram
 
             if (result == MessageBoxResult.Cancel)
             {
-                e.Cancel = true; // 종료 취소
+                e.Cancel = true;
             }
             else if (result == MessageBoxResult.Yes)
             {
-                // 저장 로직 (경로 있으면 덮어쓰기, 없으면 다이얼로그)
-                string lastFile = Properties.Settings.Default.LastFilePath;
-                if (!string.IsNullOrEmpty(lastFile) && System.IO.File.Exists(lastFile))
+                if (!string.IsNullOrEmpty(vm.CurrentFilePath))
                 {
-                    Helpers.FileService.QuickSave(vm!, lastFile);
+                    bool saved = Helpers.FileService.QuickSave(vm, vm.CurrentFilePath);
+
+                    if (!saved) e.Cancel = true;
                 }
                 else
                 {
-                    Helpers.FileService.SaveDiagram(vm!);
-                    // 만약 저장창에서 취소하면 그냥 꺼지는데, 이를 막으려면 SaveDiagram 반환값 체크 필요
-                    // 여기선 일단 진행
+                    string? savedPath = Helpers.FileService.SaveDiagramAs(vm);
+
+                    if (string.IsNullOrEmpty(savedPath))
+                    {
+                        e.Cancel = true;
+                    }
                 }
             }
         }
@@ -173,7 +130,7 @@ namespace DockerDiagram
                 bool success = FileService.QuickSave(vm, lastFile);
                 if (success)
                 {
-                    System.Diagnostics.Debug.WriteLine($"Auto-saved at {DateTime.Now}");
+                    Debug.WriteLine($"Auto-saved at {DateTime.Now}");
                 }
             }
         }
@@ -182,18 +139,37 @@ namespace DockerDiagram
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
             UpdateScrollButtonsState();
-            var vm = DataContext as MainViewModel;
-            if (vm != null && ViewportCanvas.ActualWidth > 0)
+            var vm = this.DataContext as MainViewModel;
+            if (vm == null) return;
+
+            // 1. 마지막으로 저장했던 파일 경로 가져오기
+            string lastFile = Properties.Settings.Default.LastFilePath;
+
+            // 2. 파일이 실제로 존재하면 불러오기
+            if (!string.IsNullOrEmpty(lastFile) && System.IO.File.Exists(lastFile))
             {
-                if (vm.MapWidth < 1000) vm.MapWidth = 1000;
-                if (vm.MapHeight < 700) vm.MapHeight = 700;
+                // 파일을 로드함 (화면에 그림)
+                await Helpers.FileService.LoadDiagramFromPathAsync(vm, lastFile);
+
+                // ★ [가장 중요] 로드한 파일 경로를 뷰모델에 "현재 파일"로 등록해야 함!
+                // 이걸 안 하면, 불러오긴 했는데 저장을 누르면 "새 파일"로 인식해서 저장창이 또 뜹니다.
+                vm.CurrentFilePath = lastFile;
+
+                // 불러온 직후엔 변경사항 없음 처리
+                vm.IsModified = false;
+            }
+            else
+            {
+                // 파일이 없으면 그냥 새 작업 (경로 없음)
+                vm.CurrentFilePath = null;
             }
 
-            // 1. 앱 켜질 때 최초 1회 즉시 체크
-            await CheckDockerStateAsync();
+            // 3. (선택 사항) 창 제목에 파일명 표시
+            UpdateTitle();
 
             // 2. 이후 타이머 시작 (지속 감시)
-            _dockerMonitorTimer.Start();
+            if (!_dockerMonitorTimer.IsEnabled) _dockerMonitorTimer.Start();
+            if (!_autoSaveTimer.IsEnabled) _autoSaveTimer.Start();
         }
 
         // 타이머가 째깍거릴 때마다 실행되는 로직
@@ -1364,6 +1340,19 @@ namespace DockerDiagram
                         _isToolDragging = false;
                     }
                 }
+            }
+        }
+
+        private void UpdateTitle()
+        {
+            var vm = this.DataContext as MainViewModel;
+            if (vm?.CurrentFilePath != null)
+            {
+                this.Title = $"Visual Docker Manager - {System.IO.Path.GetFileName(vm.CurrentFilePath)}";
+            }
+            else
+            {
+                this.Title = "Visual Docker Manager - New File";
             }
         }
     }

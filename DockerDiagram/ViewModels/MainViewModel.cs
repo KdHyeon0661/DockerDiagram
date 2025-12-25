@@ -33,6 +33,17 @@ namespace DockerDiagram.ViewModels
             set { if (ActiveSheet != null) { ActiveSheet.MapHeight = value; OnPropertyChanged(); } }
         }
 
+        private string? _currentFilePath;
+        public string? CurrentFilePath
+        {
+            get => _currentFilePath;
+            set
+            {
+                _currentFilePath = value;
+                OnPropertyChanged();
+            }
+        }
+
         // --- 2. 시트 및 선택 관리 ---
         public ObservableCollection<SheetViewModel> Sheets { get; set; } = new();
 
@@ -157,12 +168,14 @@ namespace DockerDiagram.ViewModels
         public ICommand DeleteNetworkItemCommand { get; }
 
         public ICommand SaveCommand { get; }
+        public ICommand SaveAsCommand { get; }
+        public ICommand LoadCommand { get; }
 
         // --- 생성자 ---
         public MainViewModel()
         {
             // 기본 시트 추가
-            Sheets.Add(new SheetViewModel("Dev Environment"));
+            Sheets.Add(new SheetViewModel("Sheet 1"));
             ActiveSheet = Sheets.First();
 
             // 명령 초기화
@@ -176,7 +189,10 @@ namespace DockerDiagram.ViewModels
             DeleteContainerItemCommand = new AsyncRelayCommand(DeleteContainerItemAsync);
             DeleteVolumeItemCommand = new AsyncRelayCommand(DeleteVolumeItemAsync);
             DeleteNetworkItemCommand = new AsyncRelayCommand(DeleteNetworkItemAsync);
-            SaveCommand = new RelayCommand(_ => FileService.SaveDiagram(this));
+
+            SaveCommand = new RelayCommand(SaveAction);
+            SaveAsCommand = new RelayCommand(SaveAsAction);
+            LoadCommand = new AsyncRelayCommand(LoadActionAsync);
 
             if (ActiveSheet != null) AttachSheetEvents();
 
@@ -1326,6 +1342,58 @@ namespace DockerDiagram.ViewModels
                 {
                     Debug.WriteLine($"[DockerDiscovery] Keeping temp backup folder (due to failure): {tempHostPath}");
                 }
+            }
+        }
+
+        private void SaveAction(object? obj)
+        {
+            // 경로가 이미 잡혀있으면 -> 덮어쓰기 (QuickSave)
+            if (!string.IsNullOrEmpty(CurrentFilePath))
+            {
+                bool success = FileService.QuickSave(this, CurrentFilePath);
+                if (success)
+                {
+                    MessageBox.Show("저장되었습니다.", "알림", MessageBoxButton.OK, MessageBoxImage.Information);
+                    IsModified = false;
+                }
+            }
+            else
+            {
+                // 경로가 없으면 -> 다른 이름으로 저장 로직 수행
+                SaveAsAction(obj);
+            }
+        }
+
+        private void SaveAsAction(object? obj)
+        {
+            // FileService에서 대화상자를 띄우고, 저장한 경로를 받아옴
+            string? savedPath = FileService.SaveDiagramAs(this);
+
+            // 저장을 성공적으로 했으면, 현재 경로 업데이트
+            if (!string.IsNullOrEmpty(savedPath))
+            {
+                CurrentFilePath = savedPath;
+                IsModified = false;
+            }
+        }
+
+        private async Task LoadActionAsync(object? obj)
+        {
+            // 변경사항이 있다면 물어보기 (선택 사항)
+            if (IsModified)
+            {
+                var res = MessageBox.Show("변경 사항이 저장되지 않았습니다. 계속하시겠습니까?", "확인", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                if (res == MessageBoxResult.No) return;
+            }
+
+            // 파일 불러오기 시도
+            string? loadedPath = await FileService.LoadDiagramWithDialogAsync(this);
+
+            // 성공적으로 불러왔다면 경로 업데이트
+            if (!string.IsNullOrEmpty(loadedPath))
+            {
+                CurrentFilePath = loadedPath;
+                IsModified = false;
             }
         }
     }

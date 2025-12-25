@@ -175,14 +175,31 @@ namespace DockerDiagram.ViewModels
         private async Task ApplyStaticIpAsync()
         {
             if (RelationType != RelationType.NetworkAttach) return;
-            if (string.IsNullOrEmpty(Target.Id) || string.IsNullOrEmpty(Source.ContainerId)) return;
+
+            // 방향이 뒤집혀도 안전하게 판별
+            var containerNode = Source.Type == NodeType.Container ? Source :
+                                Target.Type == NodeType.Container ? Target : null;
+
+            var networkNode = Source.Type == NodeType.Network ? Source :
+                              Target.Type == NodeType.Network ? Target : null;
+
+            if (containerNode == null || networkNode == null) return;
+            if (string.IsNullOrEmpty(containerNode.ContainerId)) return; // Docker container id
+            if (string.IsNullOrEmpty(networkNode.ContainerId)) return;   // Docker network id
 
             try
             {
                 var api = DockerApiService.Instance;
-                // 기존 연결 해제 후 재연결
-                await api.DisconnectNetworkAsync(Target.Id, Source.ContainerId);
-                await api.ConnectNetworkAsync(Target.Id, Source.ContainerId, string.IsNullOrWhiteSpace(IpAddress) ? null : IpAddress);
+
+                string networkId = networkNode.ContainerId;
+                string containerId = containerNode.ContainerId;
+
+                await api.DisconnectNetworkAsync(networkId, containerId);
+                await api.ConnectNetworkAsync(
+                    networkId,
+                    containerId,
+                    string.IsNullOrWhiteSpace(IpAddress) ? null : IpAddress
+                );
 
                 CurrentAssignedIp = string.IsNullOrWhiteSpace(IpAddress) ? "Auto (Reassigned)" : IpAddress;
                 MessageBox.Show($"네트워크 설정이 적용되었습니다.\nIP: {CurrentAssignedIp}", "성공");

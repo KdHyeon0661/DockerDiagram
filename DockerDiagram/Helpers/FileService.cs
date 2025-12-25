@@ -11,29 +11,42 @@ namespace DockerDiagram.Helpers
     public static class FileService
     {
         // 다이어그램 저장.
-        public static void SaveDiagram(MainViewModel mainVm)
+        public static string? SaveDiagramAs(MainViewModel mainVm)
         {
             var dlg = new SaveFileDialog
             {
                 Filter = "Docker Diagram (*.vdm)|*.vdm",
                 DefaultExt = ".vdm",
-                FileName = "MyDockerLayout"
+                // 기존 경로가 있다면 파일명 칸에 미리 채워주기 (사용자 편의)
+                FileName = !string.IsNullOrEmpty(mainVm.CurrentFilePath)
+                           ? Path.GetFileName(mainVm.CurrentFilePath)
+                           : "MyDockerLayout"
             };
 
             if (dlg.ShowDialog() == true)
             {
                 if (InternalSave(mainVm, dlg.FileName))
                 {
+                    // Properties.Settings 업데이트 (최근 파일 갱신)
+                    SaveLastFilePath(dlg.FileName);
+
                     MessageBox.Show($"저장되었습니다.\n{dlg.FileName}", "완료", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                    return dlg.FileName;
                 }
             }
+            // 취소하거나 실패하면 null 리턴
+            return null;
         }
 
         // 경로만 주면 저장
         public static bool QuickSave(MainViewModel mainVm, string path)
         {
             if (string.IsNullOrWhiteSpace(path)) return false;
-            return InternalSave(mainVm, path);
+
+            bool result = InternalSave(mainVm, path);
+            if (result) SaveLastFilePath(path); // 최근 파일 갱신
+            return result;
         }
 
         // 3. 실제 저장
@@ -41,23 +54,29 @@ namespace DockerDiagram.Helpers
         {
             try
             {
-                var fileData = new DiagramFile(); // 저장용 객체
+                // ★ [가장 중요] 저장할 때마다 반드시 '새 상자(new)'를 꺼내야 합니다!
+                // 만약 이 변수가 메서드 밖(static)에 있거나, 여기서 new를 안 하면 내용이 계속 쌓입니다.
+                var fileData = new DiagramFile();
+
+                // 1. 현재 활성화된 시트 번호 저장
                 if (mainVm.ActiveSheet != null)
                     fileData.ActiveSheetIndex = mainVm.Sheets.IndexOf(mainVm.ActiveSheet);
 
-                foreach (var sheetVm in mainVm.Sheets) // 뷰모델에 있는 시트 수만큼 반복
+                // 2. 뷰모델(화면)에 있는 내용을 저장용 객체로 옮겨 담기
+                foreach (var sheetVm in mainVm.Sheets)
                 {
-                    var sheetData = new SheetData // 시트의 정보
+                    var sheetData = new SheetData
                     {
-                        Title = sheetVm.Title, // 시트 제목
-                        MapWidth = sheetVm.MapWidth, // 시트 맵 너비
-                        MapHeight = sheetVm.MapHeight, // 시트 맵 높이
-                        OffsetX = sheetVm.OffsetX, // 시트 오프셋 X(내 시점 좌표)
-                        OffsetY = sheetVm.OffsetY, // 시트 오프셋 Y(내 시점 좌표)
-                        Scale = sheetVm.Scale // 시트 스케일(내가 몇 배율 확대, 축소를 했는가)
+                        Title = sheetVm.Title,
+                        MapWidth = sheetVm.MapWidth,
+                        MapHeight = sheetVm.MapHeight,
+                        OffsetX = sheetVm.OffsetX,
+                        OffsetY = sheetVm.OffsetY,
+                        Scale = sheetVm.Scale
                     };
 
-                    foreach (var node in sheetVm.Nodes) // 시트에 있는 노드들
+                    // 노드들 옮기기
+                    foreach (var node in sheetVm.Nodes)
                     {
                         sheetData.Nodes.Add(new NodeData
                         {
@@ -73,7 +92,8 @@ namespace DockerDiagram.Helpers
                         });
                     }
 
-                    foreach (var conn in sheetVm.Connectors) // 시트에 있는 노드간 연결선들
+                    // 연결선들 옮기기
+                    foreach (var conn in sheetVm.Connectors)
                     {
                         sheetData.Connections.Add(new ConnectionData
                         {
@@ -85,36 +105,38 @@ namespace DockerDiagram.Helpers
                         });
                     }
 
-                    foreach (var group in sheetVm.Groups) // 시트에 있는 그룹들 grouping 기능
+                    // 그룹들 옮기기
+                    foreach (var group in sheetVm.Groups)
                     {
                         var gData = new GroupData { Title = group.Title, X = group.X, Y = group.Y, Width = group.Width, Height = group.Height };
                         gData.ContainedNodeIds = group.ContainedNodes.Select(n => n.Id).ToList();
                         sheetData.Groups.Add(gData);
                     }
+
+                    // 다 채운 시트 데이터를 파일 객체에 추가
                     fileData.Sheets.Add(sheetData);
                 }
 
-                var options = new JsonSerializerOptions { WriteIndented = true }; // json 직렬화
+                // 3. 파일로 쓰기 (덮어쓰기 모드)
+                var options = new JsonSerializerOptions { WriteIndented = true };
                 string jsonString = JsonSerializer.Serialize(fileData, options);
-                File.WriteAllText(filePath, jsonString); // 쓰기
+                File.WriteAllText(filePath, jsonString); // Append가 아니라 WriteAllText여야 함
 
-                // 마지막 경로 기억
-                Properties.Settings.Default.LastFilePath = filePath;
-                Properties.Settings.Default.Save();
+                // 4. 최근 파일 경로 갱신
+                SaveLastFilePath(filePath);
 
                 mainVm.IsModified = false;
-
                 return true;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[DockerDiscovery] AutoSave Error: {ex.Message}");
+                Debug.WriteLine($"[FileService] Save Error: {ex.Message}");
                 return false;
             }
         }
 
         // [불러오기 기능 1] 사용자가 버튼 눌렀을 때 (다이얼로그 띄움) 아직 쓰지 않음. 까먹었네
-        public static async Task LoadDiagramWithDialogAsync(MainViewModel mainVm)
+        public static async Task<string?> LoadDiagramWithDialogAsync(MainViewModel mainVm)
         {
             var dlg = new OpenFileDialog
             {
@@ -123,20 +145,11 @@ namespace DockerDiagram.Helpers
 
             if (dlg.ShowDialog() == true)
             {
-                // 아래의 '경로로 불러오기' 메서드를 재사용합니다.
                 await LoadDiagramFromPathAsync(mainVm, dlg.FileName);
-
-                // 불러온 경로를 다시 기억 (최근 파일 갱신)
-                try
-                {
-                    Properties.Settings.Default.LastFilePath = dlg.FileName;
-                    Properties.Settings.Default.Save();
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[Settings] Failed to save LastFilePath='{dlg.FileName}'. {ex}");
-                }
+                SaveLastFilePath(dlg.FileName); // 최근 파일 갱신
+                return dlg.FileName;
             }
+            return null;
         }
 
         // [불러오기 기능 2] 경로를 알 때 바로 로드
@@ -226,6 +239,19 @@ namespace DockerDiagram.Helpers
             catch (Exception ex)
             {
                 MessageBox.Show($"파일 불러오기 실패 ({filePath}):\n{ex.Message}", "오류", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private static void SaveLastFilePath(string path)
+        {
+            try
+            {
+                Properties.Settings.Default.LastFilePath = path;
+                Properties.Settings.Default.Save();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[DockerDiscovery] Failed to save LastFilePath='{path}'. {ex}");
             }
         }
     }

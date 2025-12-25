@@ -741,7 +741,23 @@
                         </Border.Effect>
 
                         <StackPanel Width="200" Background="White">
-                            <Button Command="{Binding SaveCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="현재 시트를 파일로 저장합니다">
+
+                            <Button Command="{Binding LoadCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="파일 불러오기">
+                                <Button.ContentTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="25"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="📂" HorizontalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Text="Open..."/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
+
+                            <Button Command="{Binding SaveCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="저장 (덮어쓰기)">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -750,7 +766,22 @@
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="💾" HorizontalAlignment="Center"/>
-                                            <TextBlock Grid.Column="1" Text="Save Diagram..."/>
+                                            <TextBlock Grid.Column="1" Text="Save"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
+
+                            <Button Command="{Binding SaveAsCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="다른 이름으로 저장">
+                                <Button.ContentTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="25"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="📝" HorizontalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Text="Save As..."/>
                                         </Grid>
                                     </DataTemplate>
                                 </Button.ContentTemplate>
