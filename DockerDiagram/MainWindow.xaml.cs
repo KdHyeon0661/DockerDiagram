@@ -1083,7 +1083,6 @@ namespace DockerDiagram
                         try
                         {
                             string netId = await api.CreateNetworkAsync(dlg.NetworkName, dlg.Driver);
-                            // 네트워크 ID 12자리로 자르기
 
                             vm.ActiveSheet.CreateNodeAt(new DockerContainer { Id = netId, Name = dlg.NetworkName, Type = NodeType.Network, Image = dlg.Driver }, snapX, snapY);
                         }

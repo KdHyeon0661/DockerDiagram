@@ -389,7 +389,7 @@ namespace DockerDiagram.ViewModels
 
             // 4. 볼륨 필터링 (이름 기준)
             var filteredVolumes = _rawVolumes
-                .Where(v => !usedVolumeNames.Contains(v.Name)) // ★ 시트에 있는 이름이면 제외
+                .Where(v => !usedVolumeNames.Contains(v.Name)) // 시트에 있는 이름이면 제외
                 .Where(v => string.IsNullOrEmpty(VolumeSearchText) || v.Name.Contains(VolumeSearchText, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             SyncCollection(ExistingVolumes, filteredVolumes, v => v.Name);
@@ -397,7 +397,7 @@ namespace DockerDiagram.ViewModels
             // 5. 네트워크 필터링 (ID 기준 + 기본 네트워크 숨김)
             var defaultNetworks = new HashSet<string> { "bridge", "host", "none" };
             var filteredNetworks = _rawNetworks
-                .Where(n => !usedNetworkIds.Contains(n.Id)) // ★ 시트에 있는 ID면 제외 (Canvas_Drop 수정 필수)
+                .Where(n => !usedNetworkIds.Contains(n.Id)) // 시트에 있는 ID면 제외 (Canvas_Drop 수정 필수)
                 .Where(n => !defaultNetworks.Contains(n.Name)) // 기본 네트워크 제외
                 .Where(n => string.IsNullOrEmpty(NetworkSearchText) || n.Name.Contains(NetworkSearchText, StringComparison.OrdinalIgnoreCase))
                 .ToList();
@@ -824,7 +824,7 @@ namespace DockerDiagram.ViewModels
                 }
 
                 // 3. 컨테이너 ↔ 볼륨 (Volume Mount)
-                // -> ★ [선택권 부여] 재생성(물리적) vs 선삭제(논리적)
+                // -> [선택권 부여] 재생성(물리적) vs 선삭제(논리적)
                 else if (conn.RelationType == RelationType.VolumeMount)
                 {
                     var result = MessageBox.Show(
@@ -977,7 +977,7 @@ namespace DockerDiagram.ViewModels
                 // 5. 환경변수 복구
                 var envs = oldConfig.Env != null ? oldConfig.Env.ToList() : new List<string>();
 
-                // ★★★ 6. 볼륨 필터링 (제거할 볼륨만 뺌) ★★★
+                // 6. 볼륨 필터링 (제거할 볼륨만 뺌)
                 var newVolumes = new List<string>();
                 if (oldHostConfig.Binds != null)
                 {

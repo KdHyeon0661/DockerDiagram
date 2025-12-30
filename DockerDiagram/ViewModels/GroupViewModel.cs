@@ -97,7 +97,7 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        // 기능 2: 모두 실행)
+        // 기능 2: 모두 실행
         private async Task StartAllContainers()
         {
             var executionOrder = GetExecutionOrder(); // 순서 계산 로직 분리

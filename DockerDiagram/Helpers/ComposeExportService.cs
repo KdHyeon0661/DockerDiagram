@@ -48,7 +48,7 @@ namespace DockerDiagram.Helpers
             sb.AppendLine("version: '3.8'");
             sb.AppendLine("services:");
 
-            // [Pass 1] 서비스 이름 확정 (중복 방지 매핑)
+            // 서비스 이름 확정 (중복 방지 매핑)
             var nodeIdToServiceName = new Dictionary<string, string>();
             var usedServiceNames = new HashSet<string>();
 
@@ -63,7 +63,7 @@ namespace DockerDiagram.Helpers
                 nodeIdToServiceName[node.Id] = uniqueName;
             }
 
-            // [Pass 2] YAML 생성
+            // YAML 생성
             foreach (var node in containerNodes)
             {
                 string serviceName = nodeIdToServiceName[node.Id];
@@ -102,7 +102,6 @@ namespace DockerDiagram.Helpers
                         sb.AppendLine($"      - \"{vol}\"");
                 }
 
-                // ★ RelationType 사용 부분 (이제 깔끔하게 Dependency 사용)
                 var depConns = sheet.Connectors
                     .Where(c => c.Target == node
                              && c.Source.Type == NodeType.Container
@@ -177,7 +176,6 @@ namespace DockerDiagram.Helpers
             return sb.ToString();
         }
 
-        // --- Helper Methods ---
         private static string SanitizeServiceName(string rawName)
         {
             if (string.IsNullOrWhiteSpace(rawName)) return "service";

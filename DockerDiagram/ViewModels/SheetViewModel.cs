@@ -15,7 +15,7 @@ namespace DockerDiagram.ViewModels
         }
 
         // --- 맵 데이터 ---
-        public ObservableCollection<NodeViewModel> Nodes { get; set; } = new();
+        public ObservableCollection<NodeViewModel> Nodes { get; set; } = new(); 
         public ObservableCollection<ConnectorViewModel> Connectors { get; set; } = new();
         public ObservableCollection<GroupViewModel> Groups { get; set; } = new();
 
