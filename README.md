@@ -1,9 +1,7 @@
 # Visual Docker Manager (DockerDiagram)
 
-Windows + WPF(.NET 9)로 만든 **Docker 시각화/관리 도구**입니다.  
-Docker Desktop(Windows)과 연결해서 **컨테이너/볼륨/네트워크/이미지**를 목록으로 보고, 캔버스에 **노드(Node)**로 배치해 **관계(Connector)**를 그린 뒤 **레이아웃을 저장(.vdm)** 하거나 **docker-compose.yml로 내보내기** 할 수 있습니다.
-
-> 이 저장소는 `net9.0-windows` / `UseWPF=true` 기반이며, Docker 엔진 연결은 `npipe://./pipe/docker_engine`(Windows Named Pipe)를 사용합니다.
+**Visual Docker Manager**는 Windows 환경에서 Docker 리소스를 시각적으로 관리하고 설계할 수 있는 WPF 기반 데스크톱 애플리케이션입니다.
+복잡한 CLI 명령어 대신 캔버스 위에 노드를 배치하고 관계를 그려나가는 방식으로 Docker 환경을 구축하고 파일로 관리할 수 있습니다.
 
 ---
 
@@ -161,13 +159,6 @@ DockerDiagram/
 
 - Docker.DotNet
 - System.ServiceProcess.ServiceController
-
----
-
-## 기술적 특징 (Advanced Features)
-- **Zero-Loss 볼륨 연결**: 실행 중인 컨테이너에 볼륨을 추가할 때, 내부 데이터를 호스트로 백업 후 재생성된 컨테이너로 복원하는 마이그레이션 로직을 구현하여 데이터 무결성을 보장합니다.
-- **스마트 그룹 제어**: DAG(유향 비순환 그래프) 분석을 통해 컨테이너 간 의존성을 파악하고, 올바른 순서대로 시작(Start All) 및 종료(Stop All)를 수행합니다.
-- **실시간 양방향 동기화**: `DispatcherTimer`와 `Docker API`를 활용해 외부에서의 변경 사항(생성/삭제)을 UI에 즉시 반영하고, UI 조작을 Docker 엔진 명령으로 실시간 변환합니다.
 
 ---
 
