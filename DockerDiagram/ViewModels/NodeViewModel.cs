@@ -1,7 +1,7 @@
-﻿using System.Windows;
+﻿using System;
 using System.Windows.Input;
 using System.Collections.Generic;
-using System.Linq; 
+using System.Linq;
 using System.Threading.Tasks;
 using DockerDiagram.Helpers;
 using DockerDiagram.Models;
@@ -12,6 +12,10 @@ namespace DockerDiagram.ViewModels
     {
         private const int GRID_SIZE = 10;
         private const double MIN_SIZE = 50;
+
+        // ★ [DI] 서비스 필드들
+        private readonly IDockerService _dockerService;
+        private readonly IDialogService _dialogService;
 
         // --- 1. 기본 레이아웃 속성 ---
         private double _x;
@@ -34,7 +38,7 @@ namespace DockerDiagram.ViewModels
                 {
                     _containerId = value;
                     OnPropertyChanged();
-                    OnPropertyChanged(nameof(ShortContainerId)); // <-- 중요!
+                    OnPropertyChanged(nameof(ShortContainerId));
                 }
             }
         }
@@ -45,7 +49,6 @@ namespace DockerDiagram.ViewModels
             return id.Length <= len ? id : id.Substring(0, len);
         }
 
-        // 컨테이너용 ShortId
         public string ShortContainerId => (Type == NodeType.Container) ? ShortenId(ContainerId) : "";
 
         public Dictionary<string, string> NetworkIpMap { get; private set; } = new Dictionary<string, string>();
@@ -57,7 +60,7 @@ namespace DockerDiagram.ViewModels
             set { _portBindings = value; OnPropertyChanged(); }
         }
 
-        // 2. 환경 변수 (UI 알림 지원)
+        // 2. 환경 변수
         private List<string> _environmentVariables = new List<string>();
         public List<string> EnvironmentVariables
         {
@@ -164,8 +167,6 @@ namespace DockerDiagram.ViewModels
 
 
         // 2. 상세 정보 및 상태 제어 속성
-
-        // 상태 플래그 (버튼 활성화용)
         private bool _isRunning;
         public bool IsRunning
         {
@@ -180,14 +181,12 @@ namespace DockerDiagram.ViewModels
             set { _isPaused = value; OnPropertyChanged(); }
         }
 
-        // 공통 정보
         private string _detailStatus = "Unknown";
         public string DetailStatus { get => _detailStatus; set { _detailStatus = value; OnPropertyChanged(); } }
 
-        private string _createdDate = "-"; // 볼륨/네트워크용 생성일
+        private string _createdDate = "-";
         public string CreatedDate { get => _createdDate; set { _createdDate = value; OnPropertyChanged(); } }
 
-        // 컨테이너 전용
         private string _startedAt = "-";
         public string StartedAt { get => _startedAt; set { _startedAt = value; OnPropertyChanged(); } }
 
@@ -203,7 +202,6 @@ namespace DockerDiagram.ViewModels
         private string _mountedVolumes = "None";
         public string MountedVolumes { get => _mountedVolumes; set { _mountedVolumes = value; OnPropertyChanged(); } }
 
-        // 볼륨 전용
         private string _driver = "-";
         public string Driver { get => _driver; set { _driver = value; OnPropertyChanged(); } }
 
@@ -222,7 +220,7 @@ namespace DockerDiagram.ViewModels
         private string _gateway = "-";
         public string Gateway { get => _gateway; set { _gateway = value; OnPropertyChanged(); } }
 
-        private string _networkContainers = "-"; // 연결된 컨테이너 목록
+        private string _networkContainers = "-";
         public string NetworkContainers { get => _networkContainers; set { _networkContainers = value; OnPropertyChanged(); } }
 
 
@@ -234,24 +232,16 @@ namespace DockerDiagram.ViewModels
         public ICommand TerminalCommand { get; }
 
 
-        // --- 생성자 ---
-        public NodeViewModel()
+        // ★ [DI] 생성자 수정: IDockerService, IDialogService 주입
+        public NodeViewModel(IDockerService dockerService, IDialogService dialogService)
         {
-            // Command 초기화 (조건부 활성화 로직 포함)
+            _dockerService = dockerService ?? throw new ArgumentNullException(nameof(dockerService));
+            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
 
-            // Start: 실행 중이 아닐 때만
             StartCommand = new AsyncRelayCommand(_ => ControlAction("start"), _ => !IsRunning);
-
-            // Stop: 실행 중일 때만
             StopCommand = new AsyncRelayCommand(_ => ControlAction("stop"), _ => IsRunning);
-
-            // Pause: 실행 중이거나 일시정지 상태일 때
             PauseCommand = new AsyncRelayCommand(_ => ControlAction("pause"), _ => IsRunning || IsPaused);
-
-            // Restart: 실행 중이거나 멈춰있을 때 (항상 가능)
             RestartCommand = new AsyncRelayCommand(_ => ControlAction("restart"), _ => true);
-
-            // Terminal: 실행 중일 때만 접속 가능
             TerminalCommand = new RelayCommand(_ => OpenTerminal(), _ => IsRunning);
         }
 
@@ -259,30 +249,23 @@ namespace DockerDiagram.ViewModels
         // 4. 상세 정보 로드
         public async Task RefreshDetailsAsync()
         {
-            // 이름이 없으면 중단
             if (string.IsNullOrEmpty(Name)) return;
-
-            var api = DockerApiService.Instance;
 
             try
             {
-                // [CASE 1] 컨테이너 상세 조회
                 if (Type == NodeType.Container)
                 {
                     if (string.IsNullOrEmpty(ContainerId)) return;
 
-                    var info = await api.InspectContainerAsync(ContainerId);
+                    var info = await _dockerService.InspectContainerAsync(ContainerId);
 
-                    // 1. 텍스트 상태 및 제어 플래그
-                    DetailStatus = info.State.Status; // running, exited...
+                    DetailStatus = info.State.Status;
                     IsRunning = info.State.Running;
                     IsPaused = info.State.Paused;
 
-                    // 2. 시간 파싱
                     StartedAt = DateTime.TryParse(info.State.StartedAt, out var sTime) ? sTime.ToString("yyyy-MM-dd HH:mm:ss") : info.State.StartedAt;
                     FinishedAt = DateTime.TryParse(info.State.FinishedAt, out var fTime) ? fTime.ToString("yyyy-MM-dd HH:mm:ss") : info.State.FinishedAt;
 
-                    // 3. 재시작 정책 (Restart Policy) - 사용자 코드 유지
                     if (info.HostConfig?.RestartPolicy != null)
                     {
                         string policy = info.HostConfig.RestartPolicy.Name.ToString().ToLower();
@@ -291,40 +274,30 @@ namespace DockerDiagram.ViewModels
                         RestartPolicy = policy;
                     }
 
-                    // 4. [추가됨] 환경 변수 파싱 (Docker Compose Export용)
                     if (info.Config?.Env != null)
-                    {
                         this.EnvironmentVariables = info.Config.Env.ToList();
-                    }
                     else
-                    {
                         this.EnvironmentVariables = new List<string>();
-                    }
 
-                    // 5. [추가됨] 포트 바인딩 파싱 (Docker Compose Export용)
-                    // 포맷: "HostPort:ContainerPort" (예: "8080:80")
                     var portsList = new List<string>();
                     if (info.HostConfig?.PortBindings != null)
                     {
                         foreach (var kvp in info.HostConfig.PortBindings)
                         {
-                            string containerPort = kvp.Key.Replace("/tcp", "").Replace("/udp", ""); // "80/tcp" -> "80"
+                            string containerPort = kvp.Key.Replace("/tcp", "").Replace("/udp", "");
                             foreach (var binding in kvp.Value)
                             {
                                 if (!string.IsNullOrEmpty(binding.HostPort))
-                                {
                                     portsList.Add($"{binding.HostPort}:{containerPort}");
-                                }
                             }
                         }
                     }
                     this.PortBindings = portsList;
 
-                    // 6. 네트워크 파싱 (IP 맵 등)
                     var nets = new List<string>();
                     var ips = new List<string>();
 
-                    if (NetworkIpMap == null) NetworkIpMap = new Dictionary<string, string>(); // 안전장치
+                    if (NetworkIpMap == null) NetworkIpMap = new Dictionary<string, string>();
                     NetworkIpMap.Clear();
 
                     if (info.NetworkSettings?.Networks != null)
@@ -343,7 +316,6 @@ namespace DockerDiagram.ViewModels
                     ConnectedNetworks = nets.Count > 0 ? string.Join(", ", nets) : "None";
                     IpAddresses = ips.Count > 0 ? string.Join(", ", ips) : "-";
 
-                    // 7. 볼륨 마운트 파싱
                     var vols = new List<string>();
                     if (info.Mounts != null)
                     {
@@ -354,36 +326,33 @@ namespace DockerDiagram.ViewModels
                     }
                     MountedVolumes = vols.Count > 0 ? string.Join("\n", vols) : "None";
 
-                    // 8. 상태 색상 갱신
                     if (IsRunning) StatusColor = "#28a745";
                     else if (IsPaused) StatusColor = "#ffc107";
                     else StatusColor = "#dc3545";
 
                     OnPropertyChanged(nameof(NetworkIpMap));
                 }
-                // [CASE 2] 볼륨 상세 조회
                 else if (Type == NodeType.Volume)
                 {
-                    var vol = await api.InspectVolumeAsync(Name);
+                    var vol = await _dockerService.InspectVolumeAsync(Name);
 
                     DetailStatus = "Created";
                     Driver = vol.Driver;
                     Mountpoint = vol.Mountpoint;
                     CreatedDate = DateTime.TryParse(vol.CreatedAt, out var cTime) ? cTime.ToString("yyyy-MM-dd HH:mm:ss") : vol.CreatedAt;
 
-                    var usedList = await api.GetContainersUsingVolumeAsync(Name);
+                    var usedList = await _dockerService.GetContainersUsingVolumeAsync(Name);
                     UsedByContainers = usedList.Count > 0 ? string.Join(", ", usedList) : "None";
 
                     IsRunning = false;
                     IsPaused = false;
                     StatusColor = "#E67E22";
                 }
-                // [CASE 3] 네트워크 상세 조회
                 else if (Type == NodeType.Network)
                 {
                     if (string.IsNullOrEmpty(ContainerId)) return;
 
-                    var net = await api.InspectNetworkAsync(ContainerId);
+                    var net = await _dockerService.InspectNetworkAsync(ContainerId);
 
                     DetailStatus = "Active";
                     NetworkDriver = net.Driver;
@@ -414,7 +383,6 @@ namespace DockerDiagram.ViewModels
                     StatusColor = "#9B59B6";
                 }
 
-                // UI 갱신 강제
                 CommandManager.InvalidateRequerySuggested();
             }
             catch (Exception ex)
@@ -432,39 +400,39 @@ namespace DockerDiagram.ViewModels
         {
             if (string.IsNullOrEmpty(ContainerId)) return;
 
-            var api = DockerApiService.Instance;
             try
             {
                 switch (action)
                 {
-                    case "start": await api.StartContainerAsync(ContainerId); break;
-                    case "stop": await api.StopContainerAsync(ContainerId); break;
+                    case "start": await _dockerService.StartContainerAsync(ContainerId); break;
+                    case "stop": await _dockerService.StopContainerAsync(ContainerId); break;
                     case "pause":
-                        if (DetailStatus == "paused") await api.UnpauseContainerAsync(ContainerId);
-                        else await api.PauseContainerAsync(ContainerId);
+                        if (DetailStatus == "paused") await _dockerService.UnpauseContainerAsync(ContainerId);
+                        else await _dockerService.PauseContainerAsync(ContainerId);
                         break;
-                    case "restart": await api.RestartContainerAsync(ContainerId); break;
+                    case "restart": await _dockerService.RestartContainerAsync(ContainerId); break;
                 }
-                // 액션 수행 후 정보 갱신 (상태 변경 반영)
                 await RefreshDetailsAsync();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"동작 실패 : {ex.Message}");
+                // [변경] DialogService 사용
+                _dialogService.ShowMessage($"동작 실패 : {ex.Message}");
             }
         }
 
         private void OpenTerminal()
         {
             if (string.IsNullOrEmpty(ContainerId)) return;
-            var api = DockerApiService.Instance;
+
             try
             {
-                api.OpenTerminal(ContainerId);
+                _dockerService.OpenTerminal(ContainerId);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"터미널 오류 : {ex.Message}");
+                // [변경] DialogService 사용
+                _dialogService.ShowMessage($"터미널 오류 : {ex.Message}");
             }
         }
     }

@@ -12,13 +12,17 @@ namespace DockerDiagram.ViewModels
 {
     public class MainViewModel : ViewModelBase
     {
+        // ★ [DI] 서비스 필드 추가
+        private readonly IDockerService _dockerService;
+        private readonly IDialogService _dialogService;
+
         public System.Windows.Input.ICommand ExportComposeCommand { get; }
 
         private bool _isModified = false;
         public bool IsModified
         {
             get => _isModified;
-            set { _isModified = value; OnPropertyChanged(); } // 상태 바인딩 가능
+            set { _isModified = value; OnPropertyChanged(); }
         }
 
         // --- 1. 기본 맵 속성 ---
@@ -64,7 +68,7 @@ namespace DockerDiagram.ViewModels
                 if (_activeSheet != null)
                 {
                     AttachSheetEvents();
-                    UpdateAvailableItems(); // 시트 변경 시 리스트 갱신
+                    UpdateAvailableItems();
                 }
             }
         }
@@ -89,7 +93,7 @@ namespace DockerDiagram.ViewModels
                     foreach (var group in ActiveSheet.Groups) group.IsSelected = (group == value);
                 }
 
-                // 2. 노드가 선택되었다면, 상세 정보(Inspect)를 비동기로 갱신. (Fire-and-forget 방식으로 실행하여 UI 끊김 방지)
+                // 2. 노드가 선택되었다면, 상세 정보(Inspect)를 비동기로 갱신.
                 if (_selectedElement is NodeViewModel nodeVm)
                 {
                     _ = nodeVm.RefreshDetailsAsync();
@@ -98,24 +102,17 @@ namespace DockerDiagram.ViewModels
         }
 
         private bool _isSyncing = false;
-
         public bool IsDetailPanelOpen => _selectedElement != null;
 
         // --- 3. 아코디언 데이터 ---
-
-        // (1) 템플릿 목록 (기본 + 빈도 추천)
         public ObservableCollection<TemplateItem> Templates { get; } = new();
-
-        // (2) 기존 컨테이너 (싱글톤: 맵에 있으면 숨김)
         public ObservableCollection<DockerContainer> ExistingContainers { get; } = new();
         public ObservableCollection<DockerContainer> ExistingVolumes { get; } = new();
         public ObservableCollection<DockerContainer> ExistingNetworks { get; } = new();
-        // (3) 도커 이미지 (삭제 관리)
         public ObservableCollection<DockerImage> LocalImages { get; } = new();
 
-        // 내부 데이터 저장소
         private List<DockerContainer> _allContainers = new();
-        private Dictionary<string, int> _usageStats = new Dictionary<string, int>(); // 사용 빈도 기록
+        private Dictionary<string, int> _usageStats = new Dictionary<string, int>();
 
         // --- 4. 명령(Commands) ---
         public ICommand AddSheetCommand { get; }
@@ -162,7 +159,6 @@ namespace DockerDiagram.ViewModels
             set { _imageSearchText = value; OnPropertyChanged(); UpdateAvailableItems(); }
         }
 
-        // [2] 삭제 커맨드 추가
         public ICommand DeleteContainerItemCommand { get; }
         public ICommand DeleteVolumeItemCommand { get; }
         public ICommand DeleteNetworkItemCommand { get; }
@@ -172,10 +168,14 @@ namespace DockerDiagram.ViewModels
         public ICommand LoadCommand { get; }
 
         // --- 생성자 ---
-        public MainViewModel()
+        // ★ [DI] 생성자 수정: IDockerService와 IDialogService 주입
+        public MainViewModel(IDockerService dockerService, IDialogService dialogService)
         {
-            // 기본 시트 추가
-            Sheets.Add(new SheetViewModel("Sheet 1"));
+            _dockerService = dockerService ?? throw new ArgumentNullException(nameof(dockerService));
+            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
+
+            // 기본 시트 추가 (★ 시트 생성 시 서비스들 전달)
+            Sheets.Add(new SheetViewModel("Sheet 1", _dockerService, _dialogService));
             ActiveSheet = Sheets.First();
 
             // 명령 초기화
@@ -250,70 +250,83 @@ namespace DockerDiagram.ViewModels
 
         private async void AutoSync_Tick(object? sender, EventArgs e)
         {
-            // 1. 이미 갱신 작업 중이라면? 이번 턴은 무시하고 돌아감 (Skip)
             if (_isSyncing) return;
 
             try
             {
-                // 2. 작업 시작 표시 (깃발 올림)
                 _isSyncing = true;
-
-                // 3. 실제 Docker 갱신 요청
                 await SyncWithDockerEngine();
             }
             catch (Exception ex)
             {
-                // 에러 로그 (필요 시)
                 Debug.WriteLine($"[DockerDiscovery] AutoSync Error: {ex.Message}");
             }
             finally
             {
-                // 4. 작업이 끝나면 무조건 깃발 내림 (다음 턴을 위해)
                 _isSyncing = false;
             }
         }
 
         private async Task DeleteContainerItemAsync(object? param)
         {
-            if (param is DockerContainer c && MessageBox.Show($"컨테이너 '{c.Name}'을 영구 삭제하시겠습니까?", "확인", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+            if (param is DockerContainer c)
             {
-                try {
-                    await DockerApiService.Instance.RemoveContainerAsync(c.Id);
-                    await SyncWithDockerEngine();
-                }
-                catch (Exception ex)
+                // [변경] DialogService 사용
+                if (_dialogService.ShowConfirm($"컨테이너 '{c.Name}'을 영구 삭제하시겠습니까?", "확인"))
                 {
-                    MessageBox.Show($"삭제 실패: {ex.Message}");
+                    try
+                    {
+                        // [변경] _dockerService 사용
+                        await _dockerService.RemoveContainerAsync(c.Id);
+                        await SyncWithDockerEngine();
+                    }
+                    catch (Exception ex)
+                    {
+                        // [변경] DialogService 사용
+                        _dialogService.ShowMessage($"삭제 실패: {ex.Message}");
+                    }
                 }
             }
         }
 
         private async Task DeleteVolumeItemAsync(object? param)
         {
-            if (param is DockerContainer v && MessageBox.Show($"볼륨 '{v.Name}'을 영구 삭제하시겠습니까?", "확인", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+            if (param is DockerContainer v)
             {
-                try
+                // [변경] DialogService 사용
+                if (_dialogService.ShowConfirm($"볼륨 '{v.Name}'을 영구 삭제하시겠습니까?", "확인"))
                 {
-                    await DockerApiService.Instance.RemoveVolumeAsync(v.Name);
-                    await SyncWithDockerEngine(); // 목록 갱신
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"볼륨 삭제 실패: {ex.Message}");
+                    try
+                    {
+                        // [변경] _dockerService 사용
+                        await _dockerService.RemoveVolumeAsync(v.Name);
+                        await SyncWithDockerEngine();
+                    }
+                    catch (Exception ex)
+                    {
+                        _dialogService.ShowMessage($"볼륨 삭제 실패: {ex.Message}");
+                    }
                 }
             }
         }
 
         private async Task DeleteNetworkItemAsync(object? param)
         {
-            if (param is DockerContainer n && MessageBox.Show($"네트워크 '{n.Name}'을 영구 삭제하시겠습니까?", "확인", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+            if (param is DockerContainer n)
             {
-                try {
-                    await DockerApiService.Instance.RemoveNetworkAsync(n.Id);
-                    await SyncWithDockerEngine();
-                }
-                catch (Exception ex) {
-                    MessageBox.Show($"네트워크 삭제 실패: {ex.Message}");
+                // [변경] DialogService 사용
+                if (_dialogService.ShowConfirm($"네트워크 '{n.Name}'을 영구 삭제하시겠습니까?", "확인"))
+                {
+                    try
+                    {
+                        // [변경] _dockerService 사용
+                        await _dockerService.RemoveNetworkAsync(n.Id);
+                        await SyncWithDockerEngine();
+                    }
+                    catch (Exception ex)
+                    {
+                        _dialogService.ShowMessage($"네트워크 삭제 실패: {ex.Message}");
+                    }
                 }
             }
         }
@@ -346,14 +359,14 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                var api = DockerApiService.Instance;
-                if (!await api.PingAsync()) return;
+                // [변경] _dockerService 사용
+                if (!await _dockerService.PingAsync()) return;
 
                 // 1. 원본 데이터 가져오기
-                _rawContainers = await api.GetContainersAsync();
-                _rawVolumes = await api.GetVolumesAsync();
-                _rawNetworks = await api.GetNetworksAsync();
-                _rawImages = await api.GetImagesAsync();
+                _rawContainers = await _dockerService.GetContainersAsync();
+                _rawVolumes = await _dockerService.GetVolumesAsync();
+                _rawNetworks = await _dockerService.GetNetworksAsync();
+                _rawImages = await _dockerService.GetImagesAsync();
 
                 // 2. 필터링 및 UI 갱신 호출
                 UpdateAvailableItems();
@@ -415,34 +428,30 @@ namespace DockerDiagram.ViewModels
         {
             if (parameter is DockerImage img)
             {
-                if (MessageBox.Show($"이미지 '{img.Repository}'를 삭제하시겠습니까?", "이미지 삭제", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                // [변경] DialogService 사용
+                if (_dialogService.ShowConfirm($"이미지 '{img.Repository}'를 삭제하시겠습니까?", "이미지 삭제"))
                 {
-                    var api = DockerApiService.Instance;
                     try
                     {
-                        // 정상 삭제 시도
-                        await api.DeleteImageAsync(img.Id, force: false);
+                        // [변경] _dockerService 사용
+                        await _dockerService.DeleteImageAsync(img.Id, force: false);
                         LocalImages.Remove(img);
                     }
                     catch (Exception ex)
                     {
                         // 실패 시 강제 삭제 제안
-                        var res = MessageBox.Show(
+                        if (_dialogService.ShowConfirm(
                             $"삭제 실패: 이미지가 사용 중일 수 있습니다.\n강제로 삭제하시겠습니까?\n({ex.Message})",
-                            "강제 삭제 확인",
-                            MessageBoxButton.YesNo,
-                            MessageBoxImage.Warning);
-
-                        if (res == MessageBoxResult.Yes)
+                            "강제 삭제 확인"))
                         {
                             try
                             {
-                                await api.DeleteImageAsync(img.Id, force: true);
+                                await _dockerService.DeleteImageAsync(img.Id, force: true);
                                 LocalImages.Remove(img);
                             }
                             catch (Exception forceEx)
                             {
-                                MessageBox.Show($"강제 삭제 실패: {forceEx.Message}");
+                                _dialogService.ShowMessage($"강제 삭제 실패: {forceEx.Message}");
                             }
                         }
                     }
@@ -461,8 +470,8 @@ namespace DockerDiagram.ViewModels
         {
             if (ActiveSheet == null) return;
 
-            // 1. Placeholder 노드 생성
-            var node = new NodeViewModel
+            // 1. Placeholder 노드 생성 (★ NodeViewModel 생성 시 서비스 전달)
+            var node = new NodeViewModel(_dockerService, _dialogService)
             {
                 Name = $"{name} (Creating...)",
                 ImageName = $"{image}:{tag}",
@@ -476,11 +485,11 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                var api = DockerApiService.Instance;
-                await api.PullImageAsync(image, tag);
+                // [변경] _dockerService 사용
+                await _dockerService.PullImageAsync(image, tag);
 
                 // 2. 컨테이너 생성 및 실행
-                string containerId = await api.CreateAndStartContainerAsync(
+                string containerId = await _dockerService.CreateAndStartContainerAsync(
                     name, image, tag, ports, envs, volumes, restartPolicy, memoryMb, cpuCount);
 
                 // 3. 완료 처리
@@ -505,7 +514,8 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"생성 실패: {ex.Message}");
+                // [변경] DialogService 사용
+                _dialogService.ShowMessage($"생성 실패: {ex.Message}");
                 ActiveSheet.Nodes.Remove(node);
             }
         }
@@ -515,8 +525,8 @@ namespace DockerDiagram.ViewModels
         {
             if (ActiveSheet == null) return;
 
-            // 1. 컨테이너 노드 생성 (기존 로직)
-            var containerNode = new NodeViewModel
+            // 1. 컨테이너 노드 생성 (★ NodeViewModel 생성 시 서비스 전달)
+            var containerNode = new NodeViewModel(_dockerService, _dialogService)
             {
                 Name = container.Name,
                 ImageName = container.Image,
@@ -538,8 +548,8 @@ namespace DockerDiagram.ViewModels
             {
                 try
                 {
-                    var api = DockerApiService.Instance;
-                    var info = await api.InspectContainerAsync(container.Id);
+                    // [변경] _dockerService 사용
+                    var info = await _dockerService.InspectContainerAsync(container.Id);
 
                     if (info.Mounts != null)
                     {
@@ -567,7 +577,8 @@ namespace DockerDiagram.ViewModels
                                 else
                                 {
                                     // [Case B] 없으면 새로 생성 (위치는 컨테이너 오른쪽)
-                                    targetVolNode = new NodeViewModel
+                                    // ★ NodeViewModel 생성 시 서비스 전달
+                                    targetVolNode = new NodeViewModel(_dockerService, _dialogService)
                                     {
                                         Name = volName,
                                         Type = NodeType.Volume,
@@ -592,7 +603,8 @@ namespace DockerDiagram.ViewModels
 
                                 if (!connExists)
                                 {
-                                    var conn = new ConnectorViewModel(containerNode, targetVolNode, PortDirection.Right, PortDirection.Left);
+                                    // ★ ConnectorViewModel 생성 시 서비스 전달
+                                    var conn = new ConnectorViewModel(containerNode, targetVolNode, PortDirection.Right, PortDirection.Left, _dockerService, _dialogService);
 
                                     // ★ 중요: 마운트 경로 정보 입력
                                     conn.RelationType = RelationType.VolumeMount;
@@ -610,490 +622,6 @@ namespace DockerDiagram.ViewModels
                     // 볼륨 자동 연결 실패해도 컨테이너 생성은 유지
                     Debug.WriteLine($"자동 탐색 실패 : {ex.Message}");
                 }
-            }
-        }
-
-        // 시트 이벤트 연결
-        private void AttachSheetEvents()
-        {
-            if (ActiveSheet != null)
-            {
-                ActiveSheet.Nodes.CollectionChanged -= Nodes_CollectionChanged;
-                ActiveSheet.Nodes.CollectionChanged += Nodes_CollectionChanged;
-            }
-        }
-
-        private void Nodes_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-        {
-            UpdateAvailableItems();
-        }
-
-        // --- 8. 기타 시트 관리 및 Delegate ---
-
-        private void AddSheet()
-        {
-            var newSheet = new SheetViewModel($"Sheet {Sheets.Count + 1}");
-            Sheets.Add(newSheet);
-            ActiveSheet = newSheet;
-        }
-
-        public void DeleteSheet(SheetViewModel sheet)
-        {
-            if (Sheets.Count <= 1) return;
-
-            if (ActiveSheet == sheet)
-            {
-                int index = Sheets.IndexOf(sheet);
-                int nextIndex = index > 0 ? index - 1 : index + 1;
-                if (nextIndex >= 0 && nextIndex < Sheets.Count)
-                    ActiveSheet = Sheets[nextIndex];
-            }
-            Sheets.Remove(sheet);
-        }
-
-        public void MoveSheet(int oldIndex, int newIndex)
-        {
-            if (oldIndex < 0 || oldIndex >= Sheets.Count || newIndex < 0 || newIndex >= Sheets.Count) return;
-            Sheets.Move(oldIndex, newIndex);
-        }
-
-        public void RenameSheet(SheetViewModel sheet, string newName)
-        {
-            if (sheet != null && !string.IsNullOrWhiteSpace(newName)) sheet.Title = newName;
-        }
-
-        private void NavigateSheet(int direction)
-        {
-            if (ActiveSheet == null || Sheets.Count <= 1) return;
-            int currentIndex = Sheets.IndexOf(ActiveSheet);
-            int newIndex = currentIndex + direction;
-            if (newIndex >= 0 && newIndex < Sheets.Count) ActiveSheet = Sheets[newIndex];
-        }
-
-        public async void AddConnection(NodeViewModel source, NodeViewModel target, PortDirection sourceDir, PortDirection targetDir)
-        {
-            if (ActiveSheet == null || source == target) return;
-
-            // 1. 유효성 검사
-            if (!IsValidConnection(source.Type, target.Type))
-            {
-                MessageBox.Show("연결할 수 없는 조합입니다.");
-                return;
-            }
-
-            // 2. 방향 정규화 (Container가 항상 Source가 되도록)
-            NodeViewModel finalSource = source;
-            NodeViewModel finalTarget = target;
-            PortDirection finalSourceDir = sourceDir;
-            PortDirection finalTargetDir = targetDir;
-
-            if (source.Type != NodeType.Container && target.Type == NodeType.Container)
-            {
-                finalSource = target;
-                finalTarget = source;
-                finalSourceDir = targetDir;
-                finalTargetDir = sourceDir;
-            }
-
-            // =========================================================
-            // ★ [CASE 1] 컨테이너 <-> 볼륨 (기존 로직 유지)
-            // =========================================================
-            if (finalSource.Type == NodeType.Container && finalTarget.Type == NodeType.Volume)
-            {
-                bool isSuccess = await ConnectVolumeToContainerAsync(finalSource, finalTarget);
-                if (!isSuccess) return;
-            }
-
-            // =========================================================
-            // ★ [CASE 2] 컨테이너 <-> 네트워크 (신규 추가: 물리적 연결)
-            // =========================================================
-            if (finalSource.Type == NodeType.Container && finalTarget.Type == NodeType.Network)
-            {
-                try
-                {
-                    var api = DockerApiService.Instance;
-
-                    // 물리적 연결 시도 (docker network connect)
-                    await api.ConnectNetworkAsync(finalTarget.ContainerId, finalSource.ContainerId);
-
-                    // 성공하면 컨테이너 정보 갱신 (IP 주소 등 변경사항 반영)
-                    await finalSource.RefreshDetailsAsync();
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"네트워크 연결 실패 : {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                    return; // 실패하면 선을 긋지 않음
-                }
-            }
-
-            // 3. 중복 연결 방지 및 실제 선(Connector) 추가
-            bool exists = ActiveSheet.Connectors.Any(c =>
-                (c.Source == finalSource && c.Target == finalTarget) ||
-                (c.Source == finalTarget && c.Target == finalSource));
-
-            if (!exists)
-            {
-                var newConnector = new ConnectorViewModel(finalSource, finalTarget, finalSourceDir, finalTargetDir);
-
-                // 관계 타입 설정
-                if (finalTarget.Type == NodeType.Volume)
-                {
-                    newConnector.RelationType = RelationType.VolumeMount;
-
-                    // ★ [추가된 부분] 볼륨일 경우, 사용자가 입력했던 경로를 가져와야 함
-                    // 하지만 AddConnection은 경로를 인자로 안 받고 있죠?
-                    // 임시 방편: 기본값을 넣거나, 추후 다이얼로그 결과를 여기에 전달해야 함.
-
-                    // ※ 일단 기본값 대신 "사용자가 나중에 속성창에서 수정 가능하게" 만듭니다.
-                    newConnector.MountPath = "/var/lib/mysql"; // (임시 기본값)
-                }
-                else if (finalTarget.Type == NodeType.Network)
-                {
-                    newConnector.RelationType = RelationType.NetworkAttach;
-                }
-                else
-                {
-                    newConnector.RelationType = RelationType.Dependency;
-                }
-
-                ActiveSheet.Connectors.Add(newConnector);
-            }
-
-            IsModified = true;
-        }
-
-        private bool IsValidConnection(NodeType t1, NodeType t2)
-        {
-            // 1. 볼륨끼리, 네트워크끼리, 볼륨-네트워크 연결 불가
-            if (t1 != NodeType.Container && t2 != NodeType.Container) return false;
-
-            // 위의 조건만 통과하면 나머지는 (적어도 한쪽은 컨테이너이므로) 모두 허용
-            return true;
-        }
-
-        public void ClearSelection() => SelectedElement = null;
-
-        public async Task DeleteSelectedAsync()
-        {
-            if (SelectedElement == null || ActiveSheet == null) return;
-
-            // =========================================================
-            // [CASE 1] 연결선(Connector) 삭제 시
-            // =========================================================
-            if (SelectedElement is ConnectorViewModel conn)
-            {
-                // 1. 컨테이너 ↔ 컨테이너 (단순 의존성)
-                // -> Docker 설정 아님. 그림만 지움.
-                if (conn.RelationType == RelationType.Dependency)
-                {
-                    ActiveSheet.Connectors.Remove(conn);
-                }
-
-                // 2. 컨테이너 ↔ 네트워크 (Network Attach)
-                // -> ★ [물리적 해제] API 호출로 실제 연결 끊기
-                else if (conn.RelationType == RelationType.NetworkAttach)
-                {
-                    var result = MessageBox.Show(
-                        $"컨테이너 '{conn.Source.Name}'를 네트워크 '{conn.Target.Name}'에서 분리하시겠습니까?\n(실제 Docker 연결이 해제됩니다.)",
-                        "네트워크 연결 해제",
-                        MessageBoxButton.YesNo,
-                        MessageBoxImage.Question);
-
-                    if (result == MessageBoxResult.Yes)
-                    {
-                        try
-                        {
-                            var api = DockerApiService.Instance;
-                            // 물리적 해제 시도 (docker network disconnect)
-                            await api.DisconnectNetworkAsync(conn.Target.ContainerId, conn.Source.ContainerId);
-
-                            // 성공 시 선 삭제 및 정보 갱신 (IP 변경 등 반영)
-                            ActiveSheet.Connectors.Remove(conn);
-                            await conn.Source.RefreshDetailsAsync();
-                        }
-                        catch (Exception ex)
-                        {
-                            // API 실패 시 사용자가 원하면 선만이라도 지워줌 (강제 삭제)
-                            if (MessageBox.Show($"네트워크 해제 실패: {ex.Message}\n\n강제로 선만 삭제하시겠습니까?",
-                                "오류", MessageBoxButton.YesNo, MessageBoxImage.Error) == MessageBoxResult.Yes)
-                            {
-                                ActiveSheet.Connectors.Remove(conn);
-                            }
-                        }
-                    }
-                }
-
-                // 3. 컨테이너 ↔ 볼륨 (Volume Mount)
-                // -> [선택권 부여] 재생성(물리적) vs 선삭제(논리적)
-                else if (conn.RelationType == RelationType.VolumeMount)
-                {
-                    var result = MessageBox.Show(
-                        "실제 Docker 컨테이너에서도 볼륨 연결을 해제하시겠습니까?\n" +
-                        "(컨테이너가 재생성됩니다. 데이터는 볼륨에 안전하게 남습니다.)\n\n" +
-                        "[예(Yes)] : Docker에서 해제 (물리적 해제 - 재생성)\n" +
-                        "[아니요(No)] : 선만 삭제 (논리적 삭제)\n" +
-                        "[취소(Cancel)] : 작업 취소",
-                        "볼륨 연결 해제",
-                        MessageBoxButton.YesNoCancel,
-                        MessageBoxImage.Question);
-
-                    if (result == MessageBoxResult.Cancel) return;
-
-                    if (result == MessageBoxResult.Yes) // 물리적 해제
-                    {
-                        // 헬퍼 메서드 호출 (UnmountVolumeFromContainerAsync)
-                        bool success = await UnmountVolumeFromContainerAsync(conn.Source, conn.Target);
-                        if (success)
-                        {
-                            ActiveSheet.Connectors.Remove(conn);
-                        }
-                    }
-                    else // 논리적 삭제
-                    {
-                        ActiveSheet.Connectors.Remove(conn);
-                    }
-                }
-            }
-
-            // =========================================================
-            // [CASE 2] 노드(Node) 삭제 시
-            // =========================================================
-            else if (SelectedElement is NodeViewModel node)
-            {
-                var result = MessageBox.Show(
-                    "선택한 항목을 삭제하시겠습니까?\n\n" +
-                    "[예(Yes)] : Docker에서도 영구 삭제 (완전 삭제)\n" +
-                    "[아니요(No)] : 시트에서만 제거 (목록 제거)\n" +
-                    "[취소(Cancel)] : 작업 취소",
-                    "삭제 옵션",
-                    MessageBoxButton.YesNoCancel,
-                    MessageBoxImage.Warning);
-
-                if (result == MessageBoxResult.Cancel) return;
-
-                // 1. Docker 영구 삭제 시도
-                if (result == MessageBoxResult.Yes)
-                {
-                    if (!string.IsNullOrEmpty(node.ContainerId))
-                    {
-                        try
-                        {
-                            var api = DockerApiService.Instance;
-                            await Task.Run(async () =>
-                            {
-                                if (node.Type == NodeType.Container)
-                                    await api.RemoveContainerAsync(node.ContainerId);
-                                else if (node.Type == NodeType.Network)
-                                    await api.RemoveNetworkAsync(node.ContainerId);
-                                // 볼륨 삭제는 데이터 손실 위험이 크므로 보통 API 호출을 신중히 함 (여기선 생략)
-                            });
-                        }
-                        catch (Exception ex)
-                        {
-                            MessageBox.Show($"Docker 리소스 삭제 실패: {ex.Message}\n\n목록에서 제거되지 않습니다.",
-                                "오류", MessageBoxButton.OK, MessageBoxImage.Error);
-                            return; // 에러 발생 시 시트에서 지우지 않고 중단
-                        }
-                    }
-                }
-
-                // 2. 시트에서 제거 (공통 수행)
-                // 연결된 선 먼저 제거
-                var relatedConnectors = ActiveSheet.Connectors
-                    .Where(c => c.Source == node || c.Target == node).ToList();
-                foreach (var c in relatedConnectors) ActiveSheet.Connectors.Remove(c);
-
-                ActiveSheet.Nodes.Remove(node);
-                IsModified = true;
-            }
-
-            // =========================================================
-            // [CASE 3] 그룹(Group) 삭제 시
-            // =========================================================
-            else if (SelectedElement is GroupViewModel group)
-            {
-                ActiveSheet.Groups.Remove(group);
-            }
-
-            // 삭제 후 선택 해제
-            SelectedElement = null;
-        }
-
-        private async Task<bool> UnmountVolumeFromContainerAsync(NodeViewModel containerNode, NodeViewModel volumeNode)
-        {
-            var api = DockerApiService.Instance;
-            string containerId = containerNode.ContainerId;
-            string volumeNameToRemove = volumeNode.Name;
-
-            Mouse.OverrideCursor = Cursors.Wait;
-
-            try
-            {
-                // 1. 정지
-                if (containerNode.IsRunning)
-                {
-                    await api.StopContainerAsync(containerId);
-                }
-
-                // 2. 정보 조회
-                var inspect = await api.InspectContainerAsync(containerId);
-                var oldConfig = inspect.Config;
-                var oldHostConfig = inspect.HostConfig;
-
-                // 3. 이미지 정보 파싱
-                string imageName = oldConfig.Image;
-                string imgRepo = imageName;
-                string imgTag = "latest";
-                int lastColonIndex = imageName.LastIndexOf(':');
-
-                // 콜론이 존재하고, 맨 앞자리(0번 인덱스)가 아닌 경우 (예: ":latest" 방지)
-                if (lastColonIndex > 0)
-                {
-                    // 마지막 콜론 앞부분 전체 (예: localhost:5000/my-image)
-                    imgRepo = imageName.Substring(0, lastColonIndex);
-
-                    // 마지막 콜론 뒷부분 (예: latest)
-                    imgTag = imageName.Substring(lastColonIndex + 1);
-                }
-                else
-                {
-                    // 콜론이 없는 경우 (예: nginx)
-                    imgRepo = imageName;
-                    imgTag = "latest";
-                }
-
-                // 4. 포트 복구
-                var ports = new List<string>();
-                if (oldHostConfig.PortBindings != null)
-                {
-                    foreach (var pb in oldHostConfig.PortBindings)
-                    {
-                        string containerPort = pb.Key.Split('/')[0];
-                        if (pb.Value != null && pb.Value.Count > 0)
-                            ports.Add($"{pb.Value[0].HostPort}:{containerPort}");
-                    }
-                }
-
-                // 5. 환경변수 복구
-                var envs = oldConfig.Env != null ? oldConfig.Env.ToList() : new List<string>();
-
-                // 6. 볼륨 필터링 (제거할 볼륨만 뺌)
-                var newVolumes = new List<string>();
-                if (oldHostConfig.Binds != null)
-                {
-                    foreach (var bind in oldHostConfig.Binds)
-                    {
-                        // bind 문자열 예시: "my_vol:/var/lib/mysql"
-                        // 앞부분이 제거하려는 볼륨 이름과 다를 때만 유지
-                        if (!bind.StartsWith(volumeNameToRemove + ":"))
-                        {
-                            newVolumes.Add(bind);
-                        }
-                    }
-                }
-
-                // 7. 기존 컨테이너 삭제
-                await api.RemoveContainerAsync(containerId);
-
-                // 8. 재생성
-                string newId = await api.CreateAndStartContainerAsync(
-                    containerNode.Name, imgRepo, imgTag, ports, envs, newVolumes,
-                    oldHostConfig.RestartPolicy.Name.ToString(), 0, 0
-                );
-
-                containerNode.ContainerId = newId;
-                await containerNode.RefreshDetailsAsync();
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"해제 중 오류 발생: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                return false;
-            }
-            finally
-            {
-                Mouse.OverrideCursor = null;
-            }
-        }
-
-        public async Task CreateNewVolumeNodeAsync(string name, string driver, double x, double y)
-        {
-            if (ActiveSheet == null) return;
-
-            // Placeholder
-            var node = new NodeViewModel
-            {
-                Name = $"{name} (Creating...)",
-                ImageName = driver,
-                Type = NodeType.Volume,
-                X = x,
-                Y = y,
-                IsCreating = true,
-                StatusColor = "#FFC107"
-            };
-            ActiveSheet.Nodes.Add(node);
-
-            try
-            {
-                var api = DockerApiService.Instance;
-                await api.CreateVolumeAsync(name, driver);
-
-                // 완료
-                node.Name = name;
-                node.ContainerId = ""; // 볼륨은 보통 ID가 이름과 같거나 별도 관리됨. 일단 비워두거나 Name을 씀.
-                node.IsCreating = false;
-
-                // 볼륨은 보통 Running/Stop 개념이 없으므로 기본 색상 유지 또는 변경
-                node.StatusColor = "#E67E22"; // 주황색
-
-                // 통계나 리스트 갱신이 필요하면 호출
-                // UpdateAvailableItems(); 
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"볼륨 생성 실패: {ex.Message}");
-                ActiveSheet.Nodes.Remove(node);
-            }
-        }
-
-        // 2. 네트워크 생성 (비동기)
-        public async Task CreateNewNetworkNodeAsync(string name, string driver, double x, double y)
-        {
-            if (ActiveSheet == null) return;
-
-            // Placeholder
-            var node = new NodeViewModel
-            {
-                Name = $"{name} (Creating...)",
-                ImageName = driver,
-                Type = NodeType.Network,
-                X = x,
-                Y = y,
-                IsCreating = true,
-                StatusColor = "#FFC107"
-            };
-            ActiveSheet.Nodes.Add(node);
-
-            try
-            {
-                var api = DockerApiService.Instance;
-                string netId = await api.CreateNetworkAsync(name, driver);
-
-                // 완료
-                node.Name = name;
-                // ID 12자리 자르기 (컨테이너와 동일 규칙)
-                node.ContainerId = netId;
-
-                node.IsCreating = false;
-                node.StatusColor = "#9B59B6"; // 보라색
-
-                // UpdateAvailableItems();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"네트워크 생성 실패: {ex.Message}");
-                ActiveSheet.Nodes.Remove(node);
             }
         }
 
@@ -1155,7 +683,7 @@ namespace DockerDiagram.ViewModels
             string mountPath = dlg.MountPath; // 예: /var/lib/mysql
             string owner = dlg.VolumeOwner;   // 예: mysql:mysql
 
-            var api = DockerApiService.Instance;
+            // [변경] _dockerService 사용
             string containerId = containerNode.ContainerId;
             string volumeName = volumeNode.Name;
 
@@ -1174,7 +702,7 @@ namespace DockerDiagram.ViewModels
                 // 데이터 정합성을 위해 컨테이너가 실행 중이면 잠시 정지
                 if (containerNode.IsRunning)
                 {
-                    await api.StopContainerAsync(containerId);
+                    await _dockerService.StopContainerAsync(containerId);
                 }
 
                 // 호스트 임시 폴더 생성
@@ -1182,13 +710,13 @@ namespace DockerDiagram.ViewModels
                     System.IO.Directory.CreateDirectory(tempHostPath);
 
                 // 컨테이너 내부 데이터를 호스트 임시 폴더로 복사 (docker cp)
-                await api.CopyFromContainerAsync(containerId, mountPath, tempHostPath);
+                await _dockerService.CopyFromContainerAsync(containerId, mountPath, tempHostPath);
 
 
                 // ---------------------------------------------------------
                 // [STEP 2] 기존 컨테이너 설정 조회 (설정 유지용)
                 // ---------------------------------------------------------
-                var inspect = await api.InspectContainerAsync(containerId);
+                var inspect = await _dockerService.InspectContainerAsync(containerId);
                 var oldConfig = inspect.Config;
                 var oldHostConfig = inspect.HostConfig;
 
@@ -1250,13 +778,13 @@ namespace DockerDiagram.ViewModels
                 // ---------------------------------------------------------
                 // [STEP 3] 기존 컨테이너 삭제
                 // ---------------------------------------------------------
-                await api.RemoveContainerAsync(containerId);
+                await _dockerService.RemoveContainerAsync(containerId);
 
 
                 // ---------------------------------------------------------
                 // [STEP 4] 컨테이너 재생성 (볼륨 마운트가 포함됨)
                 // ---------------------------------------------------------
-                string newId = await api.CreateAndStartContainerAsync(
+                string newId = await _dockerService.CreateAndStartContainerAsync(
                     containerNode.Name,
                     imgRepo,
                     imgTag,
@@ -1279,12 +807,12 @@ namespace DockerDiagram.ViewModels
                 // 하위 폴더가 실제로 존재하면 그 안의 내용물을 복사하고, 아니면(파일 단위 복사 등 예외) 기존 경로 사용
                 if (System.IO.Directory.Exists(actualSourcePath))
                 {
-                    await api.CopyToContainerAsync(newId, actualSourcePath, mountPath);
+                    await _dockerService.CopyToContainerAsync(newId, actualSourcePath, mountPath);
                 }
                 else
                 {
                     // 만약 Docker가 폴더 없이 내용물만 줬거나 경로가 달랐을 경우에 대한 대비
-                    await api.CopyToContainerAsync(newId, tempHostPath, mountPath);
+                    await _dockerService.CopyToContainerAsync(newId, tempHostPath, mountPath);
                 }
 
 
@@ -1296,7 +824,7 @@ namespace DockerDiagram.ViewModels
                 {
                     // 예: "chown -R mysql:mysql /var/lib/mysql"
                     string cmd = $"chown -R {owner} {mountPath}";
-                    await api.ExecuteCommandAsync(newId, cmd);
+                    await _dockerService.ExecuteCommandAsync(newId, cmd);
                 }
 
 
@@ -1309,7 +837,8 @@ namespace DockerDiagram.ViewModels
                 // 상태 표시 갱신 (Running 등)
                 await containerNode.RefreshDetailsAsync();
 
-                MessageBox.Show("볼륨 연결 및 데이터 마이그레이션이 완료되었습니다!", "성공", MessageBoxButton.OK, MessageBoxImage.Information);
+                // [변경] DialogService 사용
+                _dialogService.ShowMessage("볼륨 연결 및 데이터 마이그레이션이 완료되었습니다!");
 
                 return true; // 성공! (선 그리기 허용)
             }
@@ -1320,9 +849,8 @@ namespace DockerDiagram.ViewModels
                 Debug.WriteLine($"[ConnectVolume] ERROR: {ex}");
                 Debug.WriteLine($"[ConnectVolume] Backup preserved at: {tempHostPath}");
 
-                MessageBox.Show(
-                    $"작업 중 오류 발생: {ex.Message}\n\n(백업 데이터는 '{tempHostPath}'에 보존되었습니다.)",
-                    "오류", MessageBoxButton.OK, MessageBoxImage.Error);
+                // [변경] DialogService 사용
+                _dialogService.ShowMessage($"작업 중 오류 발생: {ex.Message}\n\n(백업 데이터는 '{tempHostPath}'에 보존되었습니다.)");
 
                 return false;
             }
@@ -1350,6 +878,88 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        public async Task CreateNewVolumeNodeAsync(string name, string driver, double x, double y)
+        {
+            if (ActiveSheet == null) return;
+
+            // Placeholder (★ NodeViewModel 생성 시 서비스 전달)
+            var node = new NodeViewModel(_dockerService, _dialogService)
+            {
+                Name = $"{name} (Creating...)",
+                ImageName = driver,
+                Type = NodeType.Volume,
+                X = x,
+                Y = y,
+                IsCreating = true,
+                StatusColor = "#FFC107"
+            };
+            ActiveSheet.Nodes.Add(node);
+
+            try
+            {
+                // [변경] _dockerService 사용
+                await _dockerService.CreateVolumeAsync(name, driver);
+
+                // 완료
+                node.Name = name;
+                node.ContainerId = ""; // 볼륨은 보통 ID가 이름과 같거나 별도 관리됨. 일단 비워두거나 Name을 씀.
+                node.IsCreating = false;
+
+                // 볼륨은 보통 Running/Stop 개념이 없으므로 기본 색상 유지 또는 변경
+                node.StatusColor = "#E67E22"; // 주황색
+
+                // 통계나 리스트 갱신이 필요하면 호출
+                // UpdateAvailableItems(); 
+            }
+            catch (Exception ex)
+            {
+                // [변경] DialogService 사용
+                _dialogService.ShowMessage($"볼륨 생성 실패: {ex.Message}");
+                ActiveSheet.Nodes.Remove(node);
+            }
+        }
+
+        // 2. 네트워크 생성 (비동기)
+        public async Task CreateNewNetworkNodeAsync(string name, string driver, double x, double y)
+        {
+            if (ActiveSheet == null) return;
+
+            // Placeholder (★ NodeViewModel 생성 시 서비스 전달)
+            var node = new NodeViewModel(_dockerService, _dialogService)
+            {
+                Name = $"{name} (Creating...)",
+                ImageName = driver,
+                Type = NodeType.Network,
+                X = x,
+                Y = y,
+                IsCreating = true,
+                StatusColor = "#FFC107"
+            };
+            ActiveSheet.Nodes.Add(node);
+
+            try
+            {
+                // [변경] _dockerService 사용
+                string netId = await _dockerService.CreateNetworkAsync(name, driver);
+
+                // 완료
+                node.Name = name;
+                // ID 12자리 자르기 (컨테이너와 동일 규칙)
+                node.ContainerId = netId;
+
+                node.IsCreating = false;
+                node.StatusColor = "#9B59B6"; // 보라색
+
+                // UpdateAvailableItems();
+            }
+            catch (Exception ex)
+            {
+                // [변경] DialogService 사용
+                _dialogService.ShowMessage($"네트워크 생성 실패: {ex.Message}");
+                ActiveSheet.Nodes.Remove(node);
+            }
+        }
+
         private void SaveAction(object? obj)
         {
             // 경로가 이미 잡혀있으면 -> 덮어쓰기 (QuickSave)
@@ -1358,7 +968,8 @@ namespace DockerDiagram.ViewModels
                 bool success = FileService.QuickSave(this, CurrentFilePath);
                 if (success)
                 {
-                    MessageBox.Show("저장되었습니다.", "알림", MessageBoxButton.OK, MessageBoxImage.Information);
+                    // [변경] DialogService 사용
+                    _dialogService.ShowMessage("저장되었습니다.");
                     IsModified = false;
                 }
             }
@@ -1387,12 +998,14 @@ namespace DockerDiagram.ViewModels
             // 변경사항이 있다면 물어보기 (선택 사항)
             if (IsModified)
             {
-                var res = MessageBox.Show("변경 사항이 저장되지 않았습니다. 계속하시겠습니까?", "확인", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-                if (res == MessageBoxResult.No) return;
+                // [변경] DialogService 사용
+                if (!_dialogService.ShowConfirm("변경 사항이 저장되지 않았습니다. 계속하시겠습니까?", "확인"))
+                    return;
             }
 
             // 파일 불러오기 시도
-            string? loadedPath = await FileService.LoadDiagramWithDialogAsync(this);
+            // ★ [수정] _dockerService와 _dialogService를 모두 전달해야 함
+            string? loadedPath = await FileService.LoadDiagramWithDialogAsync(this, _dockerService, _dialogService);
 
             // 성공적으로 불러왔다면 경로 업데이트
             if (!string.IsNullOrEmpty(loadedPath))
@@ -1400,6 +1013,410 @@ namespace DockerDiagram.ViewModels
                 CurrentFilePath = loadedPath;
                 IsModified = false;
             }
+        }
+
+        private void AddSheet()
+        {
+            // ★ SheetViewModel 생성 시 서비스 전달
+            var newSheet = new SheetViewModel($"Sheet {Sheets.Count + 1}", _dockerService, _dialogService);
+            Sheets.Add(newSheet);
+            ActiveSheet = newSheet;
+        }
+
+        public void DeleteSheet(SheetViewModel sheet)
+        {
+            if (Sheets.Count <= 1) return;
+
+            if (ActiveSheet == sheet)
+            {
+                int index = Sheets.IndexOf(sheet);
+                int nextIndex = index > 0 ? index - 1 : index + 1;
+                if (nextIndex >= 0 && nextIndex < Sheets.Count)
+                    ActiveSheet = Sheets[nextIndex];
+            }
+            Sheets.Remove(sheet);
+        }
+
+        public void MoveSheet(int oldIndex, int newIndex)
+        {
+            if (oldIndex < 0 || oldIndex >= Sheets.Count || newIndex < 0 || newIndex >= Sheets.Count) return;
+            Sheets.Move(oldIndex, newIndex);
+        }
+
+        public void RenameSheet(SheetViewModel sheet, string newName)
+        {
+            if (sheet != null && !string.IsNullOrWhiteSpace(newName)) sheet.Title = newName;
+        }
+
+        private void NavigateSheet(int direction)
+        {
+            if (ActiveSheet == null || Sheets.Count <= 1) return;
+            int currentIndex = Sheets.IndexOf(ActiveSheet);
+            int newIndex = currentIndex + direction;
+            if (newIndex >= 0 && newIndex < Sheets.Count) ActiveSheet = Sheets[newIndex];
+        }
+
+        public async void AddConnection(NodeViewModel source, NodeViewModel target, PortDirection sourceDir, PortDirection targetDir)
+        {
+            if (ActiveSheet == null || source == target) return;
+
+            // 1. 유효성 검사
+            if (!IsValidConnection(source.Type, target.Type))
+            {
+                // [변경] DialogService 사용
+                _dialogService.ShowMessage("연결할 수 없는 조합입니다.");
+                return;
+            }
+
+            // 2. 방향 정규화 (Container가 항상 Source가 되도록)
+            NodeViewModel finalSource = source;
+            NodeViewModel finalTarget = target;
+            PortDirection finalSourceDir = sourceDir;
+            PortDirection finalTargetDir = targetDir;
+
+            if (source.Type != NodeType.Container && target.Type == NodeType.Container)
+            {
+                finalSource = target;
+                finalTarget = source;
+                finalSourceDir = targetDir;
+                finalTargetDir = sourceDir;
+            }
+
+            // =========================================================
+            // ★ [CASE 1] 컨테이너 <-> 볼륨 (기존 로직 유지)
+            // =========================================================
+            if (finalSource.Type == NodeType.Container && finalTarget.Type == NodeType.Volume)
+            {
+                bool isSuccess = await ConnectVolumeToContainerAsync(finalSource, finalTarget);
+                if (!isSuccess) return;
+            }
+
+            // =========================================================
+            // ★ [CASE 2] 컨테이너 <-> 네트워크 (신규 추가: 물리적 연결)
+            // =========================================================
+            if (finalSource.Type == NodeType.Container && finalTarget.Type == NodeType.Network)
+            {
+                try
+                {
+                    // [변경] _dockerService 사용
+                    // 물리적 연결 시도 (docker network connect)
+                    await _dockerService.ConnectNetworkAsync(finalTarget.ContainerId, finalSource.ContainerId);
+
+                    // 성공하면 컨테이너 정보 갱신 (IP 주소 등 변경사항 반영)
+                    await finalSource.RefreshDetailsAsync();
+                }
+                catch (Exception ex)
+                {
+                    // [변경] DialogService 사용
+                    _dialogService.ShowMessage($"네트워크 연결 실패 : {ex.Message}");
+                    return; // 실패하면 선을 긋지 않음
+                }
+            }
+
+            // 3. 중복 연결 방지 및 실제 선(Connector) 추가
+            bool exists = ActiveSheet.Connectors.Any(c =>
+                (c.Source == finalSource && c.Target == finalTarget) ||
+                (c.Source == finalTarget && c.Target == finalSource));
+
+            if (!exists)
+            {
+                // ★ ConnectorViewModel 생성 시 서비스 전달
+                var newConnector = new ConnectorViewModel(finalSource, finalTarget, finalSourceDir, finalTargetDir, _dockerService, _dialogService);
+
+                // 관계 타입 설정
+                if (finalTarget.Type == NodeType.Volume)
+                {
+                    newConnector.RelationType = RelationType.VolumeMount;
+
+                    // ★ [추가된 부분] 볼륨일 경우, 사용자가 입력했던 경로를 가져와야 함
+                    // 하지만 AddConnection은 경로를 인자로 안 받고 있죠?
+                    // 임시 방편: 기본값을 넣거나, 추후 다이얼로그 결과를 여기에 전달해야 함.
+
+                    // ※ 일단 기본값 대신 "사용자가 나중에 속성창에서 수정 가능하게" 만듭니다.
+                    newConnector.MountPath = "/var/lib/mysql"; // (임시 기본값)
+                }
+                else if (finalTarget.Type == NodeType.Network)
+                {
+                    newConnector.RelationType = RelationType.NetworkAttach;
+                }
+                else
+                {
+                    newConnector.RelationType = RelationType.Dependency;
+                }
+
+                ActiveSheet.Connectors.Add(newConnector);
+            }
+
+            IsModified = true;
+        }
+
+        private bool IsValidConnection(NodeType t1, NodeType t2)
+        {
+            // 1. 볼륨끼리, 네트워크끼리, 볼륨-네트워크 연결 불가
+            if (t1 != NodeType.Container && t2 != NodeType.Container) return false;
+
+            // 위의 조건만 통과하면 나머지는 (적어도 한쪽은 컨테이너이므로) 모두 허용
+            return true;
+        }
+
+        public void ClearSelection() => SelectedElement = null;
+
+        public async Task DeleteSelectedAsync()
+        {
+            if (SelectedElement == null || ActiveSheet == null) return;
+
+            // =========================================================
+            // [CASE 1] 연결선(Connector) 삭제 시
+            // =========================================================
+            if (SelectedElement is ConnectorViewModel conn)
+            {
+                // 1. 컨테이너 ↔ 컨테이너 (단순 의존성)
+                // -> Docker 설정 아님. 그림만 지움.
+                if (conn.RelationType == RelationType.Dependency)
+                {
+                    ActiveSheet.Connectors.Remove(conn);
+                }
+
+                // 2. 컨테이너 ↔ 네트워크 (Network Attach)
+                // -> ★ [물리적 해제] API 호출로 실제 연결 끊기
+                else if (conn.RelationType == RelationType.NetworkAttach)
+                {
+                    // [변경] DialogService 사용
+                    if (_dialogService.ShowConfirm(
+                        $"컨테이너 '{conn.Source.Name}'를 네트워크 '{conn.Target.Name}'에서 분리하시겠습니까?\n(실제 Docker 연결이 해제됩니다.)",
+                        "네트워크 연결 해제"))
+                    {
+                        try
+                        {
+                            // [변경] _dockerService 사용
+                            // 물리적 해제 시도 (docker network disconnect)
+                            await _dockerService.DisconnectNetworkAsync(conn.Target.ContainerId, conn.Source.ContainerId);
+
+                            // 성공 시 선 삭제 및 정보 갱신 (IP 변경 등 반영)
+                            ActiveSheet.Connectors.Remove(conn);
+                            await conn.Source.RefreshDetailsAsync();
+                        }
+                        catch (Exception ex)
+                        {
+                            // API 실패 시 사용자가 원하면 선만이라도 지워줌 (강제 삭제)
+                            if (_dialogService.ShowConfirm($"네트워크 해제 실패: {ex.Message}\n\n강제로 선만 삭제하시겠습니까?", "오류"))
+                            {
+                                ActiveSheet.Connectors.Remove(conn);
+                            }
+                        }
+                    }
+                }
+
+                // 3. 컨테이너 ↔ 볼륨 (Volume Mount)
+                // -> [선택권 부여] 재생성(물리적) vs 선삭제(논리적)
+                else if (conn.RelationType == RelationType.VolumeMount)
+                {
+                    // ★ 중요: 3단계 분기(Yes/No/Cancel)는 IDialogService(True/False)로 완벽 대응이 불가능하므로
+                    // 기존 MessageBox 로직을 유지합니다. (핵심 로직 보존)
+                    var result = MessageBox.Show(
+                        "실제 Docker 컨테이너에서도 볼륨 연결을 해제하시겠습니까?\n" +
+                        "(컨테이너가 재생성됩니다. 데이터는 볼륨에 안전하게 남습니다.)\n\n" +
+                        "[예(Yes)] : Docker에서 해제 (물리적 해제 - 재생성)\n" +
+                        "[아니요(No)] : 선만 삭제 (논리적 삭제)\n" +
+                        "[취소(Cancel)] : 작업 취소",
+                        "볼륨 연결 해제",
+                        MessageBoxButton.YesNoCancel,
+                        MessageBoxImage.Question);
+
+                    if (result == MessageBoxResult.Cancel) return;
+
+                    if (result == MessageBoxResult.Yes) // 물리적 해제
+                    {
+                        // 헬퍼 메서드 호출 (UnmountVolumeFromContainerAsync)
+                        bool success = await UnmountVolumeFromContainerAsync(conn.Source, conn.Target);
+                        if (success)
+                        {
+                            ActiveSheet.Connectors.Remove(conn);
+                        }
+                    }
+                    else // 논리적 삭제
+                    {
+                        ActiveSheet.Connectors.Remove(conn);
+                    }
+                }
+            }
+
+            // =========================================================
+            // [CASE 2] 노드(Node) 삭제 시
+            // =========================================================
+            else if (SelectedElement is NodeViewModel node)
+            {
+                // ★ 중요: 3단계 분기(Yes/No/Cancel) 유지
+                var result = MessageBox.Show(
+                    "선택한 항목을 삭제하시겠습니까?\n\n" +
+                    "[예(Yes)] : Docker에서도 영구 삭제 (완전 삭제)\n" +
+                    "[아니요(No)] : 시트에서만 제거 (목록 제거)\n" +
+                    "[취소(Cancel)] : 작업 취소",
+                    "삭제 옵션",
+                    MessageBoxButton.YesNoCancel,
+                    MessageBoxImage.Warning);
+
+                if (result == MessageBoxResult.Cancel) return;
+
+                // 1. Docker 영구 삭제 시도
+                if (result == MessageBoxResult.Yes)
+                {
+                    if (!string.IsNullOrEmpty(node.ContainerId))
+                    {
+                        try
+                        {
+                            // [변경] _dockerService 사용
+                            await Task.Run(async () =>
+                            {
+                                if (node.Type == NodeType.Container)
+                                    await _dockerService.RemoveContainerAsync(node.ContainerId);
+                                else if (node.Type == NodeType.Network)
+                                    await _dockerService.RemoveNetworkAsync(node.ContainerId);
+                                // 볼륨 삭제는 데이터 손실 위험이 크므로 보통 API 호출을 신중히 함 (여기선 생략)
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            // [변경] DialogService 사용
+                            _dialogService.ShowMessage($"Docker 리소스 삭제 실패: {ex.Message}\n\n목록에서 제거되지 않습니다.");
+                            return; // 에러 발생 시 시트에서 지우지 않고 중단
+                        }
+                    }
+                }
+
+                // 2. 시트에서 제거 (공통 수행)
+                // 연결된 선 먼저 제거
+                var relatedConnectors = ActiveSheet.Connectors
+                    .Where(c => c.Source == node || c.Target == node).ToList();
+                foreach (var c in relatedConnectors) ActiveSheet.Connectors.Remove(c);
+
+                ActiveSheet.Nodes.Remove(node);
+                IsModified = true;
+            }
+
+            // =========================================================
+            // [CASE 3] 그룹(Group) 삭제 시
+            // =========================================================
+            else if (SelectedElement is GroupViewModel group)
+            {
+                ActiveSheet.Groups.Remove(group);
+            }
+
+            // 삭제 후 선택 해제
+            SelectedElement = null;
+        }
+
+        private async Task<bool> UnmountVolumeFromContainerAsync(NodeViewModel containerNode, NodeViewModel volumeNode)
+        {
+            // [변경] _dockerService 사용
+            string containerId = containerNode.ContainerId;
+            string volumeNameToRemove = volumeNode.Name;
+
+            Mouse.OverrideCursor = Cursors.Wait;
+
+            try
+            {
+                // 1. 정지
+                if (containerNode.IsRunning)
+                {
+                    await _dockerService.StopContainerAsync(containerId);
+                }
+
+                // 2. 정보 조회
+                var inspect = await _dockerService.InspectContainerAsync(containerId);
+                var oldConfig = inspect.Config;
+                var oldHostConfig = inspect.HostConfig;
+
+                // 3. 이미지 정보 파싱
+                string imageName = oldConfig.Image;
+                string imgRepo = imageName;
+                string imgTag = "latest";
+                int lastColonIndex = imageName.LastIndexOf(':');
+
+                // 콜론이 존재하고, 맨 앞자리(0번 인덱스)가 아닌 경우 (예: ":latest" 방지)
+                if (lastColonIndex > 0)
+                {
+                    // 마지막 콜론 앞부분 전체 (예: localhost:5000/my-image)
+                    imgRepo = imageName.Substring(0, lastColonIndex);
+
+                    // 마지막 콜론 뒷부분 (예: latest)
+                    imgTag = imageName.Substring(lastColonIndex + 1);
+                }
+                else
+                {
+                    // 콜론이 없는 경우 (예: nginx)
+                    imgRepo = imageName;
+                    imgTag = "latest";
+                }
+
+                // 4. 포트 복구
+                var ports = new List<string>();
+                if (oldHostConfig.PortBindings != null)
+                {
+                    foreach (var pb in oldHostConfig.PortBindings)
+                    {
+                        string containerPort = pb.Key.Split('/')[0];
+                        if (pb.Value != null && pb.Value.Count > 0)
+                            ports.Add($"{pb.Value[0].HostPort}:{containerPort}");
+                    }
+                }
+
+                // 5. 환경변수 복구
+                var envs = oldConfig.Env != null ? oldConfig.Env.ToList() : new List<string>();
+
+                // 6. 볼륨 필터링 (제거할 볼륨만 뺌)
+                var newVolumes = new List<string>();
+                if (oldHostConfig.Binds != null)
+                {
+                    foreach (var bind in oldHostConfig.Binds)
+                    {
+                        // bind 문자열 예시: "my_vol:/var/lib/mysql"
+                        // 앞부분이 제거하려는 볼륨 이름과 다를 때만 유지
+                        if (!bind.StartsWith(volumeNameToRemove + ":"))
+                        {
+                            newVolumes.Add(bind);
+                        }
+                    }
+                }
+
+                // 7. 기존 컨테이너 삭제
+                await _dockerService.RemoveContainerAsync(containerId);
+
+                // 8. 재생성
+                string newId = await _dockerService.CreateAndStartContainerAsync(
+                    containerNode.Name, imgRepo, imgTag, ports, envs, newVolumes,
+                    oldHostConfig.RestartPolicy.Name.ToString(), 0, 0
+                );
+
+                containerNode.ContainerId = newId;
+                await containerNode.RefreshDetailsAsync();
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // [변경] DialogService 사용
+                _dialogService.ShowMessage($"해제 중 오류 발생: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+        }
+
+        private void AttachSheetEvents()
+        {
+            if (ActiveSheet != null)
+            {
+                ActiveSheet.Nodes.CollectionChanged -= Nodes_CollectionChanged;
+                ActiveSheet.Nodes.CollectionChanged += Nodes_CollectionChanged;
+            }
+        }
+
+        private void Nodes_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        {
+            UpdateAvailableItems();
         }
     }
 }

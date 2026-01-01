@@ -3,11 +3,17 @@ using System.Windows.Media;
 using System.Windows.Input;
 using DockerDiagram.Helpers;
 using DockerDiagram.Models;
+using System.Threading.Tasks;
+using System;
 
 namespace DockerDiagram.ViewModels
 {
     public class ConnectorViewModel : ViewModelBase
     {
+        // ★ [DI] 서비스 필드 (2개)
+        private readonly IDockerService _dockerService;
+        private readonly IDialogService _dialogService;
+
         public NodeViewModel Source { get; private set; }
         public NodeViewModel Target { get; private set; }
         public PortDirection SourceDir { get; private set; }
@@ -38,9 +44,19 @@ namespace DockerDiagram.ViewModels
         public Point SourcePos => GetExactBorderPoint(Source, SourceDir);
         public Point TargetPos => GetExactBorderPoint(Target, TargetDir);
 
-        // 생성자
-        public ConnectorViewModel(NodeViewModel source, NodeViewModel target, PortDirection sDir, PortDirection tDir)
+        // ★ [DI] 생성자 수정: 매개변수 6개 (데이터 4 + 서비스 2)
+        public ConnectorViewModel(
+            NodeViewModel source,
+            NodeViewModel target,
+            PortDirection sDir,
+            PortDirection tDir,
+            IDockerService dockerService,
+            IDialogService dialogService)
         {
+            // 의존성 주입 저장
+            _dockerService = dockerService ?? throw new ArgumentNullException(nameof(dockerService));
+            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
+
             Source = source;
             Target = target;
             SourceDir = sDir;
@@ -143,7 +159,6 @@ namespace DockerDiagram.ViewModels
             set { _relationType = value; OnPropertyChanged(); }
         }
 
-        // (IpAddress, MountPath 등의 속성 및 ApplyStaticIpAsync 메서드는 기존 코드 유지)
         private string? _mountPath;
         public string? MountPath
         {
@@ -182,24 +197,26 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                var api = DockerApiService.Instance;
-
+                // [변경] 주입받은 _dockerService 사용
                 string networkId = networkNode.ContainerId;
                 string containerId = containerNode.ContainerId;
 
-                await api.DisconnectNetworkAsync(networkId, containerId);
-                await api.ConnectNetworkAsync(
+                await _dockerService.DisconnectNetworkAsync(networkId, containerId);
+                await _dockerService.ConnectNetworkAsync(
                     networkId,
                     containerId,
                     string.IsNullOrWhiteSpace(IpAddress) ? null : IpAddress
                 );
 
                 CurrentAssignedIp = string.IsNullOrWhiteSpace(IpAddress) ? "Auto (Reassigned)" : IpAddress;
-                MessageBox.Show($"네트워크 설정이 적용되었습니다.\nIP: {CurrentAssignedIp}", "성공");
+
+                // [변경] _dialogService 사용
+                _dialogService.ShowMessage($"네트워크 설정이 적용되었습니다.\nIP: {CurrentAssignedIp}");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"IP 설정 실패: {ex.Message}", "오류");
+                // [변경] _dialogService 사용
+                _dialogService.ShowMessage($"IP 설정 실패: {ex.Message}");
             }
         }
     }

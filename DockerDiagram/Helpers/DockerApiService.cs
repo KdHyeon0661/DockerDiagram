@@ -8,15 +8,15 @@ using System.Runtime.InteropServices;
 
 namespace DockerDiagram.Helpers
 {
-    public class DockerApiService
+    public class DockerApiService : IDockerService
     {
-        private static readonly Lazy<DockerApiService> _instance = new Lazy<DockerApiService>(() => new DockerApiService());
+        /*private static readonly Lazy<DockerApiService> _instance = new Lazy<DockerApiService>(() => new DockerApiService());
 
-        public static DockerApiService Instance => _instance.Value;
+        public static DockerApiService Instance => _instance.Value;*/
 
         private readonly DockerClient _client;
 
-        private DockerApiService()
+        public DockerApiService()
         {
             var dockerUri = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? new Uri("npipe://./pipe/docker_engine") : new Uri("unix:///var/run/docker.sock");
             var config = new DockerClientConfiguration(dockerUri);
