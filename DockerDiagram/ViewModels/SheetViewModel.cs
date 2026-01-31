@@ -42,7 +42,6 @@ namespace DockerDiagram.ViewModels
         private double _offsetY = 0;
         public double OffsetY { get => _offsetY; set { _offsetY = value; OnPropertyChanged(); } }
 
-        // ★ [DI] 생성자 수정: IDialogService 추가
         public SheetViewModel(string title, IDockerService dockerService, IDialogService dialogService)
         {
             Title = title;
@@ -52,7 +51,6 @@ namespace DockerDiagram.ViewModels
 
         public void CreateNodeAt(DockerContainer container, double x, double y)
         {
-            // ★ [DI] 자식(NodeViewModel) 생성 시 서비스 전달
             Nodes.Add(new NodeViewModel(_dockerService, _dialogService)
             {
                 Name = container.Name,
@@ -86,8 +84,6 @@ namespace DockerDiagram.ViewModels
             Groups.Add(group);
         }
 
-        // ... (AutoLayout, LayoutCluster, GetConnectedClusters 등 나머지 로직은 변경 없음) ...
-        // [기존 코드 그대로 유지]
         public void AutoLayout()
         {
             if (Nodes.Count == 0) return;

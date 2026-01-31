@@ -3,10 +3,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
 using Microsoft.Win32;
-using DockerDiagram.Models; // RelationType이 여기 있습니다.
+using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
-using System.Collections.Generic;
-using System.Linq;
 
 namespace DockerDiagram.Helpers
 {
@@ -113,7 +111,7 @@ namespace DockerDiagram.Helpers
                     sb.AppendLine("    depends_on:");
                     foreach (var conn in depConns)
                     {
-                        if (nodeIdToServiceName.TryGetValue(conn.Source.Id, out string depServiceName))
+                        if (nodeIdToServiceName.TryGetValue(conn.Source.Id, out string? depServiceName))
                         {
                             sb.AppendLine($"      - {depServiceName}");
                         }
@@ -217,7 +215,7 @@ namespace DockerDiagram.Helpers
             return list;
         }
 
-        private class NetworkInfo { public string NetworkName; public string IpAddress; }
+        private class NetworkInfo { public string? NetworkName; public string? IpAddress; }
 
         private static List<NetworkInfo> GetConnectedNetworks(NodeViewModel container, SheetViewModel sheet)
         {

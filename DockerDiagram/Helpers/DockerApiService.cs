@@ -10,10 +10,6 @@ namespace DockerDiagram.Helpers
 {
     public class DockerApiService : IDockerService
     {
-        /*private static readonly Lazy<DockerApiService> _instance = new Lazy<DockerApiService>(() => new DockerApiService());
-
-        public static DockerApiService Instance => _instance.Value;*/
-
         private readonly DockerClient _client;
 
         public DockerApiService()
@@ -212,76 +208,87 @@ namespace DockerDiagram.Helpers
 
         // 컨테이너 생성 및 시작
         public async Task<string> CreateAndStartContainerAsync(
-            string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes,
-            string restartPolicy, long memoryMb, double cpuCount)
+    string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes,
+    string restartPolicy, long memoryMb, double cpuCount)
         {
+            // [수정 1] 이미지 이름에 태그가 포함된 경우 분리 (latest 404 에러 방지)
+            if (image.Contains(":"))
+            {
+                int lastColon = image.LastIndexOf(':');
+                tag = image.Substring(lastColon + 1);
+                image = image.Substring(0, lastColon);
+            }
             string fullImageName = $"{image}:{tag}";
+
+            // 컨테이너 이름 정제 (기존 로직 유지)
+            string safeContainerName = System.Text.RegularExpressions.Regex.Replace(name, "[^a-zA-Z0-9_.-]", "-");
 
             var portBindings = new Dictionary<string, IList<PortBinding>>();
             var exposedPorts = new Dictionary<string, EmptyStruct>();
-            foreach (var p in ports)
+
+            // ports가 null일 경우 대비
+            if (ports != null)
             {
-                var parts = p.Split(':');
-                string hostPort = "";
-                string rawContainerPort = "";
+                foreach (var p in ports)
+                {
+                    if (string.IsNullOrWhiteSpace(p)) continue;
 
-                // case 1 : "8080:80" (호스트 포트 지정)
-                if (parts.Length == 2)
-                {
-                    hostPort = parts[0];
-                    rawContainerPort = parts[1];
-                }
-                // case 2 : "80" (호스트 포트 랜덤 할당, 컨테이너만 할당됨. 예 : -p 80)
-                else if (parts.Length == 1 && !string.IsNullOrWhiteSpace(parts[0]))
-                {
-                    hostPort = "0"; // "0"을 주면 도커가 알아서 남는 포트를 할당함
-                    rawContainerPort = parts[0];
-                }
-                else
-                {
-                    continue; // 잘못된 형식이면 건너뜀
-                }
+                    var parts = p.Split(':');
+                    string hostPort = "0";
+                    string rawContainerPort = "";
 
-                string containerPort;
-                if (rawContainerPort.Contains('/'))
-                {
-                    containerPort = rawContainerPort; // 예: 53/udp, 80/tcp
-                }
-                else
-                {
-                    containerPort = rawContainerPort + "/tcp"; // 예: 80 -> 80/tcp
-                }
+                    if (parts.Length >= 2)
+                    {
+                        hostPort = parts[0];
+                        rawContainerPort = parts[1];
+                    }
+                    else if (parts.Length == 1)
+                    {
+                        hostPort = "0";
+                        rawContainerPort = parts[0];
+                    }
+                    else continue;
 
-                exposedPorts[containerPort] = new EmptyStruct();
-
-                // 호스트 포트 바인딩 추가
-                portBindings[containerPort] = new List<PortBinding>{new PortBinding { HostPort = hostPort }};
+                    string containerPort = rawContainerPort.Contains('/') ? rawContainerPort : rawContainerPort + "/tcp";
+                    exposedPorts[containerPort] = new EmptyStruct();
+                    portBindings[containerPort] = new List<PortBinding> { new PortBinding { HostPort = hostPort } };
+                }
             }
 
             long memoryBytes = memoryMb > 0 ? memoryMb * 1024 * 1024 : 0;
             long nanoCpus = cpuCount > 0 ? (long)(cpuCount * 1_000_000_000) : 0;
 
-            var parameters = new CreateContainerParameters // 설정한 값들로 컨테이너 파라미터 생성
+            // [수정 2] RestartPolicy 하이픈 제거 로직 (핵심)
+            // "unless-stopped" -> "unlessstopped"로 변환해야 Enum.Parse가 인식함
+            string safeRestartPolicy = (restartPolicy ?? "no").ToLower().Replace("-", "");
+
+            // 만약 파싱에 실패하면 안전하게 "no"로 설정
+            if (!Enum.TryParse(typeof(RestartPolicyKind), safeRestartPolicy, true, out var policyEnum))
+            {
+                policyEnum = RestartPolicyKind.No;
+            }
+
+            var parameters = new CreateContainerParameters
             {
                 Image = fullImageName,
-                Name = name,
-                Env = envs,
+                Name = safeContainerName,
+                Env = envs ?? new List<string>(),    // Null 방지
                 ExposedPorts = exposedPorts,
                 HostConfig = new HostConfig
                 {
                     PortBindings = portBindings,
-                    Binds = volumes,
+                    Binds = volumes ?? new List<string>(), // Null 방지
                     Memory = memoryBytes,
                     NanoCPUs = nanoCpus,
                     RestartPolicy = new RestartPolicy
                     {
-                        Name = (RestartPolicyKind)Enum.Parse(typeof(RestartPolicyKind), restartPolicy, true)
+                        Name = (RestartPolicyKind)policyEnum // [수정됨] 안전하게 변환된 값 사용
                     }
                 }
             };
 
-            var response = await _client.Containers.CreateContainerAsync(parameters); // 생성
-            await _client.Containers.StartContainerAsync(response.ID, new ContainerStartParameters()); // 생성 후 id를 기반으로 시작
+            var response = await _client.Containers.CreateContainerAsync(parameters);
+            await _client.Containers.StartContainerAsync(response.ID, new ContainerStartParameters());
             return response.ID;
         }
 

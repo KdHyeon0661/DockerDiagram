@@ -7,19 +7,19 @@ namespace DockerDiagram.Views
 {
     public partial class ContainerDialog : Window
     {
-        public string ContainerName => txtName.Text.Trim();
-        public string ImageName
+        public string ContainerName => txtName.Text.Trim(); // 도커 컨테이너 이름
+        public string ImageName // 도커 이미지 이름
         {
             get => txtImage.Text.Trim();
             set => txtImage.Text = value;
         }
 
-        public List<string> Ports
+        public List<string> Ports // 포트 바인딩 리스트
         {
             get
             {
                 var list = new List<string>();
-                foreach (var line in txtPorts.Text.Split('\n'))
+                foreach (var line in txtPorts.Text.Split('\n')) // 줄 단위로 분리
                 {
                     if (!string.IsNullOrWhiteSpace(line)) list.Add(line.Trim());
                 }
@@ -27,12 +27,12 @@ namespace DockerDiagram.Views
             }
         }
 
-        public List<string> EnvVars
+        public List<string> EnvVars // 환경 변수 리스트
         {
             get
             {
                 var list = new List<string>();
-                foreach (var line in txtEnv.Text.Split('\n'))
+                foreach (var line in txtEnv.Text.Split('\n')) // 줄 단위로 분리
                 {
                     if (!string.IsNullOrWhiteSpace(line)) list.Add(line.Trim());
                 }
@@ -40,19 +40,18 @@ namespace DockerDiagram.Views
             }
         }
 
-        public string RestartPolicy => (cmbRestart.SelectedItem as ComboBoxItem)?.Content.ToString() ?? "no";
+        public string RestartPolicy => (cmbRestart.SelectedItem as ComboBoxItem)?.Content.ToString() ?? "no"; // 재시작 정책
 
-        // XAML의 이름인 txtMem 사용
-        public long MemoryMb => long.TryParse(txtMem.Text, out var v) ? v : 0;
+        public long MemoryMb => long.TryParse(txtMem.Text, out var v) ? v : 0; // 메모리 제한 (MB 단위)
 
-        public double CpuCount => double.TryParse(txtCpu.Text, out var v) ? v : 0;
+        public double CpuCount => double.TryParse(txtCpu.Text, out var v) ? v : 0; // CPU 제한 (코어 수 단위)
 
-        public List<string> Volumes
+        public List<string> Volumes // 볼륨 마운트 리스트
         {
             get
             {
                 var list = new List<string>();
-                foreach (var item in lstVolumes.Items)
+                foreach (var item in lstVolumes.Items) // 리스트 아이템 순회
                 {
                     if (item != null)
                     {
@@ -69,11 +68,11 @@ namespace DockerDiagram.Views
             txtName.Focus();
         }
 
-        private void BtnOk_Click(object sender, RoutedEventArgs e)
+        private void BtnOk_Click(object sender, RoutedEventArgs e) // 확인 버튼
         {
-            if (string.IsNullOrWhiteSpace(ContainerName) || string.IsNullOrWhiteSpace(ImageName))
+            if (string.IsNullOrWhiteSpace(ContainerName) || string.IsNullOrWhiteSpace(ImageName)) // 이름과 이미지가 비어있는지 확인
             {
-                MessageBox.Show("Container Name and Image Name are required.");
+                MessageBox.Show("컨테이너 명과 이미지 명을 입력하세요.");
                 return;
             }
             DialogResult = true;
@@ -86,7 +85,7 @@ namespace DockerDiagram.Views
 
             if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(target))
             {
-                MessageBox.Show("Host Path and Container Path are required.");
+                MessageBox.Show("호스트 경로와 컨테이너 경로가 필요합니다.");
                 return;
             }
 

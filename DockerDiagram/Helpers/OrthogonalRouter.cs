@@ -220,7 +220,6 @@ namespace DockerDiagram.Helpers
                 return null;
             }
 
-            // ★ [핵심] 선분 충돌 검사 (Inflate 없이 엄격하게)
             // 만들어진 Z자 경로가 Source나 Target 박스를 조금이라도 건드리면 즉시 포기
             if (IsSegmentHitRect(start, p1, r2) ||
                 IsSegmentHitRect(p1, p2, r1) ||

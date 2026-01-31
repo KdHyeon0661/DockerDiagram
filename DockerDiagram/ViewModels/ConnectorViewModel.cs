@@ -10,7 +10,6 @@ namespace DockerDiagram.ViewModels
 {
     public class ConnectorViewModel : ViewModelBase
     {
-        // ★ [DI] 서비스 필드 (2개)
         private readonly IDockerService _dockerService;
         private readonly IDialogService _dialogService;
 
@@ -44,7 +43,6 @@ namespace DockerDiagram.ViewModels
         public Point SourcePos => GetExactBorderPoint(Source, SourceDir);
         public Point TargetPos => GetExactBorderPoint(Target, TargetDir);
 
-        // ★ [DI] 생성자 수정: 매개변수 6개 (데이터 4 + 서비스 2)
         public ConnectorViewModel(
             NodeViewModel source,
             NodeViewModel target,
@@ -53,7 +51,6 @@ namespace DockerDiagram.ViewModels
             IDockerService dockerService,
             IDialogService dialogService)
         {
-            // 의존성 주입 저장
             _dockerService = dockerService ?? throw new ArgumentNullException(nameof(dockerService));
             _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
 
@@ -62,7 +59,6 @@ namespace DockerDiagram.ViewModels
             SourceDir = sDir;
             TargetDir = tDir;
 
-            // [FIX] 람다 대신 명시적 메서드 구독
             Source.OnPositionChanged += OnNodePositionChanged;
             Target.OnPositionChanged += OnNodePositionChanged;
 
@@ -71,16 +67,13 @@ namespace DockerDiagram.ViewModels
             CalculateRoute();
         }
 
-        // [FIX] 이벤트 핸들러 메서드 분리 (메모리 누수 방지)
         private void OnNodePositionChanged(object? sender, EventArgs e)
         {
             CalculateRoute();
         }
 
-        // 연결 정보 업데이트 (재연결 시 호출)
         public void UpdateConnection(NodeViewModel newSource, PortDirection newSDir, NodeViewModel newTarget, PortDirection newTDir)
         {
-            // [FIX] 기존 대상에서 이벤트 확실하게 해제
             if (Source != null) Source.OnPositionChanged -= OnNodePositionChanged;
             if (Target != null) Target.OnPositionChanged -= OnNodePositionChanged;
 
@@ -114,7 +107,6 @@ namespace DockerDiagram.ViewModels
             CalculateArrowHead(end, TargetDir);
         }
 
-        // (이하 헬퍼 메서드들은 기존 유지)
         private Point GetExactBorderPoint(NodeViewModel node, PortDirection dir)
         {
             switch (dir)

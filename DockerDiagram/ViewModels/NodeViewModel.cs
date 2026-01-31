@@ -13,7 +13,6 @@ namespace DockerDiagram.ViewModels
         private const int GRID_SIZE = 10;
         private const double MIN_SIZE = 50;
 
-        // ★ [DI] 서비스 필드들
         private readonly IDockerService _dockerService;
         private readonly IDialogService _dialogService;
 

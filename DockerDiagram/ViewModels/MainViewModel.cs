@@ -209,7 +209,7 @@ namespace DockerDiagram.ViewModels
 
             // 자동 동기화 타이머 시작 15초 간격
             _autoSyncTimer = new DispatcherTimer();
-            _autoSyncTimer.Interval = TimeSpan.FromSeconds(15);
+            _autoSyncTimer.Interval = TimeSpan.FromSeconds(1);
             _autoSyncTimer.Tick += AutoSync_Tick;
             _autoSyncTimer.Start();
 
@@ -463,14 +463,24 @@ namespace DockerDiagram.ViewModels
 
         // 비동기 컨테이너 생성 (모달 입력 처리용)
         public async Task CreateNewContainerNodeAsync(
-            string name, string image, string tag,
-            List<string> ports, List<string> envs, List<string> volumes, string restartPolicy,
-            long memoryMb, double cpuCount,
-            double x, double y)
+    string name, string image, string tag,
+    List<string> ports, List<string> envs, List<string> volumes, string restartPolicy,
+    long memoryMb, double cpuCount,
+    double x, double y)
         {
             if (ActiveSheet == null) return;
 
-            // 1. Placeholder 노드 생성 (★ NodeViewModel 생성 시 서비스 전달)
+            // [필수 추가] 사용자가 "이미지:태그" 형식으로 입력했을 때 이를 강제로 분리하는 로직
+            // 이 코드가 없으면 image="repo:tag", tag="latest"가 되어 404 에러가 발생합니다.
+            if (image.Contains(":"))
+            {
+                int lastColon = image.LastIndexOf(':');
+                // 예: image가 "owasp/modsecurity-crs:nginx"라면
+                tag = image.Substring(lastColon + 1);   // tag를 "nginx"로 덮어씌움
+                image = image.Substring(0, lastColon);  // image를 "owasp/modsecurity-crs"로 자름
+            }
+
+            // 1. Placeholder 노드 생성
             var node = new NodeViewModel(_dockerService, _dialogService)
             {
                 Name = $"{name} (Creating...)",
@@ -485,20 +495,18 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                // [변경] _dockerService 사용
+                // 2. 이미지 다운로드 (Pull)
+                // 위에서 tag가 "nginx"로 수정되었으므로, 정확한 버전을 다운로드합니다.
                 await _dockerService.PullImageAsync(image, tag);
 
-                // 2. 컨테이너 생성 및 실행
+                // 3. 컨테이너 생성 및 실행
                 string containerId = await _dockerService.CreateAndStartContainerAsync(
                     name, image, tag, ports, envs, volumes, restartPolicy, memoryMb, cpuCount);
 
-                // 3. 완료 처리
+                // 4. 완료 처리
                 node.Name = name;
-
                 node.ContainerId = containerId;
-
                 node.PortInfo = string.Join(", ", ports);
-
                 node.PortBindings = ports;
                 node.EnvironmentVariables = envs;
                 node.RestartPolicy = restartPolicy;
@@ -506,15 +514,11 @@ namespace DockerDiagram.ViewModels
                 node.IsCreating = false;
                 node.StatusColor = "#28a745";
 
-                // ★ [핵심] 중복 생성(CreateNodeAt) 호출을 지우고 통계만 기록
                 RegisterTemplateUsage($"{image}:{tag}");
-
-                // ★ [핵심] 리스트 즉시 갱신 (목록에서 사라짐)
                 UpdateAvailableItems();
             }
             catch (Exception ex)
             {
-                // [변경] DialogService 사용
                 _dialogService.ShowMessage($"생성 실패: {ex.Message}");
                 ActiveSheet.Nodes.Remove(node);
             }
@@ -525,8 +529,8 @@ namespace DockerDiagram.ViewModels
         {
             if (ActiveSheet == null) return;
 
-            // 1. 컨테이너 노드 생성 (★ NodeViewModel 생성 시 서비스 전달)
-            var containerNode = new NodeViewModel(_dockerService, _dialogService)
+            // 1. 메인 노드 생성 (컨테이너 또는 네트워크 등)
+            var mainNode = new NodeViewModel(_dockerService, _dialogService)
             {
                 Name = container.Name,
                 ImageName = container.Image,
@@ -539,16 +543,17 @@ namespace DockerDiagram.ViewModels
                 Width = 160,
                 Height = 80
             };
-            ActiveSheet.Nodes.Add(containerNode);
+            ActiveSheet.Nodes.Add(mainNode);
             RegisterTemplateUsage(container.Image); // 통계 기록
             IsModified = true;
 
-            // ★ [NEW] 컨테이너가 생성된 후, 연결된 볼륨이 있는지 검사 (Auto-Discovery)
+            // =========================================================
+            // CASE A: 컨테이너를 올렸을 때 -> 연결된 '볼륨' 자동 찾기 (기존 코드)
+            // =========================================================
             if (container.Type == NodeType.Container && !string.IsNullOrEmpty(container.Id))
             {
                 try
                 {
-                    // [변경] _dockerService 사용
                     var info = await _dockerService.InspectContainerAsync(container.Id);
 
                     if (info.Mounts != null)
@@ -557,33 +562,27 @@ namespace DockerDiagram.ViewModels
 
                         foreach (var mount in info.Mounts)
                         {
-                            // "volume" 타입인 경우만 처리 (bind mount 제외)
-                            // 필요 시 mount.Type == "bind" 도 추가 가능
                             if (mount.Type == "volume")
                             {
                                 string volName = mount.Name;
-                                string destination = mount.Destination; // 컨테이너 내부 경로
+                                string destination = mount.Destination;
 
-                                // 2. 이미 시트에 존재하는 볼륨인지 확인 (중복 생성 방지)
+                                // 이미 시트에 존재하는지 확인
                                 var existingVolNode = ActiveSheet.Nodes.FirstOrDefault(n => n.Type == NodeType.Volume && n.Name == volName);
-
                                 NodeViewModel targetVolNode;
 
                                 if (existingVolNode != null)
                                 {
-                                    // [Case A] 이미 있으면 그 놈을 타겟으로 잡음
                                     targetVolNode = existingVolNode;
                                 }
                                 else
                                 {
-                                    // [Case B] 없으면 새로 생성 (위치는 컨테이너 오른쪽)
-                                    // ★ NodeViewModel 생성 시 서비스 전달
+                                    // 없으면 생성
                                     targetVolNode = new NodeViewModel(_dockerService, _dialogService)
                                     {
                                         Name = volName,
                                         Type = NodeType.Volume,
                                         ImageName = mount.Driver ?? "local",
-                                        // 위치: 컨테이너 오른쪽 250px, 여러 개면 아래로 쌓음
                                         X = x + 250,
                                         Y = y + (volCount * 120),
                                         Width = 160,
@@ -594,19 +593,18 @@ namespace DockerDiagram.ViewModels
                                     volCount++;
                                 }
 
-                                // 3. 선 연결 (Connector)
-                                // 컨테이너 -> 볼륨 방향으로 연결
-                                // 이미 연결된 선이 있는지 확인
+                                // 선 연결 (컨테이너 -> 볼륨)
                                 bool connExists = ActiveSheet.Connectors.Any(c =>
-                                    (c.Source == containerNode && c.Target == targetVolNode) ||
-                                    (c.Source == targetVolNode && c.Target == containerNode));
+                                    (c.Source == mainNode && c.Target == targetVolNode) ||
+                                    (c.Source == targetVolNode && c.Target == mainNode));
 
                                 if (!connExists)
                                 {
-                                    // ★ ConnectorViewModel 생성 시 서비스 전달
-                                    var conn = new ConnectorViewModel(containerNode, targetVolNode, PortDirection.Right, PortDirection.Left, _dockerService, _dialogService);
+                                    var conn = new ConnectorViewModel(
+                                        mainNode, targetVolNode,
+                                        PortDirection.Right, PortDirection.Left,
+                                        _dockerService, _dialogService);
 
-                                    // ★ 중요: 마운트 경로 정보 입력
                                     conn.RelationType = RelationType.VolumeMount;
                                     conn.MountPath = destination;
 
@@ -615,14 +613,98 @@ namespace DockerDiagram.ViewModels
                             }
                         }
                     }
-                    IsModified = true;
                 }
                 catch (Exception ex)
                 {
-                    // 볼륨 자동 연결 실패해도 컨테이너 생성은 유지
-                    Debug.WriteLine($"자동 탐색 실패 : {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"볼륨 자동 탐색 실패 : {ex.Message}");
                 }
             }
+            // =========================================================
+            // CASE B: [추가됨] 네트워크를 올렸을 때 -> 연결된 '컨테이너' 자동 찾기
+            // =========================================================
+            else if (container.Type == NodeType.Network && !string.IsNullOrEmpty(container.Id))
+            {
+                try
+                {
+                    var networkInfo = await _dockerService.InspectNetworkAsync(container.Id);
+
+                    if (networkInfo.Containers != null && networkInfo.Containers.Count > 0)
+                    {
+                        int containerCount = 0;
+
+                        foreach (var containerPair in networkInfo.Containers)
+                        {
+                            string cId = containerPair.Key;
+                            string cName = containerPair.Value.Name;
+
+                            // ★ [추가된 로직] 이미지 이름(nginx:latest)을 알기 위해 상세 조회
+                            // 네트워크 정보에는 이미지 이름이 없어서 따로 가져와야 함
+                            string foundImageName = "Unknown";
+                            try
+                            {
+                                var detailedInfo = await _dockerService.InspectContainerAsync(cId);
+                                foundImageName = detailedInfo.Config.Image; // 여기에 "nginx:latest"가 들어있음
+                            }
+                            catch { /* 컨테이너가 꺼져있거나 조회가 안되면 패스 */ }
+
+                            // 이미 시트에 존재하는지 확인
+                            var existingContainerNode = ActiveSheet.Nodes
+                                .FirstOrDefault(n => n.ContainerId == cId || n.Name == cName);
+
+                            NodeViewModel targetContainerNode;
+
+                            if (existingContainerNode != null)
+                            {
+                                targetContainerNode = existingContainerNode;
+                                // 기왕 찾은 김에 이미지 이름 업데이트 (혹시 비어있을까봐)
+                                if (string.IsNullOrEmpty(targetContainerNode.ImageName))
+                                {
+                                    targetContainerNode.ImageName = foundImageName;
+                                }
+                            }
+                            else
+                            {
+                                // 없으면 생성
+                                targetContainerNode = new NodeViewModel(_dockerService, _dialogService)
+                                {
+                                    Name = cName,
+                                    ContainerId = cId,
+                                    Type = NodeType.Container,
+                                    ImageName = foundImageName, // ★ 여기에 "nginx:latest"가 들어감!
+                                    X = x + 250,
+                                    Y = y + (containerCount * 120),
+                                    Width = 160,
+                                    Height = 80,
+                                    StatusColor = "#28a745"
+                                };
+                                ActiveSheet.Nodes.Add(targetContainerNode);
+                                containerCount++;
+                            }
+
+                            // 선 연결 (네트워크 -> 컨테이너)
+                            bool connExists = ActiveSheet.Connectors.Any(c =>
+                                (c.Source == mainNode && c.Target == targetContainerNode) ||
+                                (c.Source == targetContainerNode && c.Target == mainNode));
+
+                            if (!connExists)
+                            {
+                                var conn = new ConnectorViewModel(
+                                    mainNode, targetContainerNode,
+                                    PortDirection.Right, PortDirection.Left,
+                                    _dockerService, _dialogService);
+
+                                ActiveSheet.Connectors.Add(conn);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"네트워크 하위 컨테이너 연결 실패 : {ex.Message}");
+                }
+            }
+
+            IsModified = true;
         }
 
         private void SyncCollection<T>(ObservableCollection<T> uiCollection, List<T> newItems, Func<T, string> keySelector)

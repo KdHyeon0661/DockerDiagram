@@ -10,10 +10,8 @@ using System.Diagnostics;
 using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
-// 서비스 인터페이스 위치에 따라 namespace 확인 필요 (보통 Helpers나 Services 등)
-// using DockerDiagram.Services; 
 
-namespace DockerDiagram // ★ 중요: .Views를 제거하여 기존 XAML과 연결
+namespace DockerDiagram
 {
     [SupportedOSPlatform("windows")]
     public partial class MainWindow : Window
@@ -698,7 +696,6 @@ namespace DockerDiagram // ★ 중요: .Views를 제거하여 기존 XAML과 연
                     {
                         if (targetNode.IsCreating)
                         {
-                            // ★ [수정] _dialogService 사용 (이미 잘 되어있지만 확인!)
                             _dialogService.ShowMessage("생성 중인 객체에는 연결할 수 없습니다.");
                         }
                         else if (targetNode != _sourceNode && _sourceNode != null)
