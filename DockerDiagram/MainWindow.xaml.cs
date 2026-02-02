@@ -66,22 +66,22 @@ namespace DockerDiagram
         private Rect _resizeStartGroupRect;
 
         private DispatcherTimer _dockerMonitorTimer;
+
+        // ★ [복구됨] 자동 저장 타이머
         private DispatcherTimer _autoSaveTimer;
 
-        // ★ [DI] 서비스 필드 추가
+        // ★ [DI] 서비스 필드
         private readonly IDockerService _dockerService;
         private readonly IDialogService _dialogService;
 
-        // ★ [DI] 생성자 수정
+        // ★ [DI] 생성자
         public MainWindow(MainViewModel viewModel, IDockerService dockerService, IDialogService dialogService)
         {
-            InitializeComponent(); // 네임스페이스가 맞아야 이 함수가 정상 작동함
+            InitializeComponent();
 
-            // 의존성 저장
             _dockerService = dockerService ?? throw new ArgumentNullException(nameof(dockerService));
             _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
 
-            // DataContext 설정
             this.DataContext = viewModel;
 
             // 타이머 초기화
@@ -89,9 +89,10 @@ namespace DockerDiagram
             _dockerMonitorTimer.Interval = TimeSpan.FromSeconds(5);
             _dockerMonitorTimer.Tick += DockerMonitorTimer_Tick;
 
+            // ★ [복구됨] 자동 저장 타이머 (1분 -> 30초 등 조절 가능)
             _autoSaveTimer = new DispatcherTimer();
-            _autoSaveTimer.Interval = TimeSpan.FromMinutes(1);
-            _autoSaveTimer.Tick += AutoSaveTimer_Tick!;
+            _autoSaveTimer.Interval = TimeSpan.FromSeconds(30);
+            _autoSaveTimer.Tick += AutoSaveTimer_Tick;
         }
 
         // 2. 종료 시 (변경사항 있을 때만 묻기)
@@ -99,10 +100,7 @@ namespace DockerDiagram
         {
             if (this.DataContext is not MainViewModel vm) return;
 
-            if (!vm.IsModified)
-            {
-                return;
-            }
+            if (!vm.IsModified) return;
 
             var result = MessageBox.Show("변경 사항이 저장되지 않았습니다.\n저장하고 종료하시겠습니까?",
                                          "종료 확인",
@@ -131,19 +129,31 @@ namespace DockerDiagram
             }
         }
 
-        // 자동 저장 로직
+        // ★ [복구 및 수정됨] 자동 저장 로직
         private void AutoSaveTimer_Tick(object? sender, EventArgs e)
         {
-            string lastFile = Properties.Settings.Default.LastFilePath;
             var vm = this.DataContext as MainViewModel;
+            if (vm == null) return;
 
-            if (!string.IsNullOrEmpty(lastFile) && vm != null)
+            // 1. [핵심 수정] 현재 파일 경로가 없으면(최초 저장을 안 했으면) -> 저장 안 함!
+            if (string.IsNullOrEmpty(vm.CurrentFilePath))
             {
-                bool success = FileService.QuickSave(vm, lastFile);
-                if (success)
-                {
-                    Debug.WriteLine($"Auto-saved at {DateTime.Now}");
-                }
+                return;
+            }
+
+            // 2. 변경사항이 없으면 굳이 저장 안 함
+            if (!vm.IsModified)
+            {
+                return;
+            }
+
+            // 3. 조건 만족 시 현재 경로에 저장 (LastFilePath가 아님)
+            bool success = FileService.QuickSave(vm, vm.CurrentFilePath);
+            if (success)
+            {
+                Debug.WriteLine($"[AutoSave] Saved to {vm.CurrentFilePath} at {DateTime.Now}");
+                // 저장이 완료되면 IsModified를 false로 돌리는 로직은 QuickSave 내부에 있거나 여기서 처리
+                vm.IsModified = false;
             }
         }
 
@@ -167,11 +177,13 @@ namespace DockerDiagram
             }
 
             UpdateTitle();
-        
+
             await CheckDockerStateAsync();
 
-            // 2. 이후 타이머 시작 (지속 감시용)
+            // 2. 타이머 시작
             if (!_dockerMonitorTimer.IsEnabled) _dockerMonitorTimer.Start();
+
+            // ★ [복구됨] 자동 저장 타이머 시작
             if (!_autoSaveTimer.IsEnabled) _autoSaveTimer.Start();
         }
 
@@ -186,21 +198,19 @@ namespace DockerDiagram
 
         private async Task CheckDockerStateAsync()
         {
-            // 도커가 켜져 있으면 그냥 리턴 (팝업 안 뜸)
             if (DockerServiceHelper.IsDockerRunning()) return;
 
-            // ★ [여기가 팝업 코드!] 
             // _dialogService.ShowConfirm을 실행하면 -> 내부적으로 MessageBox가 뜹니다.
             bool result = _dialogService.ShowConfirm(
                 "Docker 프로세스가 종료되었습니다.\nDocker를 다시 실행하시겠습니까?\n\n('아니요'를 누르면 프로그램이 종료됩니다.)",
                 "Docker 감지");
 
-            if (result) // '예'를 눌렀을 때
+            if (result) // '예'
             {
                 try { await DockerServiceHelper.StartDockerAsync(_dockerService, _dialogService); }
                 catch (Exception ex) { _dialogService.ShowMessage($"Docker 실행 실패: {ex.Message}"); }
             }
-            else // '아니요'를 눌렀을 때
+            else // '아니요'
             {
                 Application.Current.Shutdown();
             }
@@ -330,7 +340,6 @@ namespace DockerDiagram
         {
             _isPanning = true;
             _panStartClick = e.GetPosition(this);
-            // MapTranslate는 XAML의 TranslateTransform 이름이어야 합니다.
             _panStartTranslate = new Point(MapTranslate.X, MapTranslate.Y);
             Mouse.OverrideCursor = Cursors.SizeAll;
             ZoomPanGrid.CaptureMouse();
@@ -411,7 +420,7 @@ namespace DockerDiagram
                 return;
             }
 
-            // 3. 그룹 전체 이동 (10px 스냅 적용)
+            // 3. 그룹 전체 이동
             if (_isGroupMoving && _movingGroup != null)
             {
                 double rawTargetX = current.X - _groupClickOffset.X;
@@ -466,8 +475,8 @@ namespace DockerDiagram
                     {
                         double rawNewX = _resizeStartGroupRect.X + diffX;
                         double maxAllowedX = _resizingGroup.ContainedNodes.Count > 0
-                                             ? contentBounds.Left - padding
-                                             : _resizeStartGroupRect.Right - 50;
+                                                        ? contentBounds.Left - padding
+                                                        : _resizeStartGroupRect.Right - 50;
                         double constrainedX = Math.Min(rawNewX, maxAllowedX);
                         double newWidth = _resizeStartGroupRect.Right - constrainedX;
                         _resizingGroup.X = constrainedX;
@@ -477,8 +486,8 @@ namespace DockerDiagram
                     {
                         double rawNewY = _resizeStartGroupRect.Y + diffY;
                         double maxAllowedY = _resizingGroup.ContainedNodes.Count > 0
-                                             ? contentBounds.Top - padding
-                                             : _resizeStartGroupRect.Bottom - 50;
+                                                        ? contentBounds.Top - padding
+                                                        : _resizeStartGroupRect.Bottom - 50;
                         double constrainedY = Math.Min(rawNewY, maxAllowedY);
                         double newHeight = _resizeStartGroupRect.Bottom - constrainedY;
                         _resizingGroup.Y = constrainedY;
@@ -549,28 +558,12 @@ namespace DockerDiagram
                     var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, el => el.DataContext is NodeViewModel);
                     if (hitNodeObj != null && hitNodeObj.DataContext is NodeViewModel targetNode && targetNode != _sourceNode)
                     {
-                        // 연결 시도 시 (드래그 중 메시지박스 제거, 종료 시 체크)
                         targetRect = new Rect(targetNode.X, targetNode.Y, targetNode.Width, targetNode.Height);
                         targetDir = GetClosestDirection(current, targetRect);
                         endPoint = GetExactBorderPoint(targetNode, targetDir);
                     }
                 }
                 TempPolyline.Points = OrthogonalRouter.GetRoute(startP, _sourceDir, endPoint, targetDir, sourceRect, targetRect);
-            }
-
-            // ★ MouseMove 끝에서 연결 종료 로직(메시지박스 포함)이 있던 부분 수정
-            if (_isConnecting)
-            {
-                // 드래그 중인 상태라면 여기서 종료시키면 안 됩니다.
-                // 사용자님의 원래 코드 로직을 보니, MouseMove 마지막에 _isConnecting 블록이 있고 거기서 완료 처리를 하는 것 같습니다.
-                // 하지만 MouseMove는 마우스가 '움직일 때' 발생하므로, 여기서 완료 처리를 하면 클릭하자마자 끝나버립니다.
-                // 일반적으로 완료 처리는 MouseUp에서 합니다.
-
-                // 다만, 사용자님의 의도가 "마우스가 특정 노드 위에 올라갔을 때(Hit) 메시지를 띄우는 것"이라면
-                // 드래그 중에 계속 메시지박스가 뜨는 문제가 생깁니다.
-
-                // 따라서, 메시지박스 출력 로직은 MouseUp 이벤트로 옮기는 것이 맞습니다.
-                // 여기서는 경로(Polyline) 그리는 로직만 남겨두었습니다.
             }
         }
 
@@ -596,9 +589,7 @@ namespace DockerDiagram
                     var vm = DataContext as MainViewModel;
                     if (vm?.ActiveSheet != null)
                     {
-                        // ★ [수정] GroupViewModel 생성자에 _dialogService 주입!
                         var newGroup = new GroupViewModel(x, y, w, h, _dialogService);
-
                         newGroup.ParentSheet = vm.ActiveSheet;
                         vm.ActiveSheet.Groups.Add(newGroup);
                         vm.ActiveSheet.RefreshGroupContainment(newGroup);
@@ -680,7 +671,7 @@ namespace DockerDiagram
                 _resizingGroup = null;
             }
 
-            // 6. 신규 연결(Connection) 종료
+            // 6. 신규 연결 종료 (실제 연결)
             if (_isConnecting)
             {
                 _isConnecting = false;
@@ -710,6 +701,7 @@ namespace DockerDiagram
             }
         }
 
+        // --- 기타 UI 이벤트들 ---
         private void GroupHeader_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (sender is not FrameworkElement border) return;
@@ -953,15 +945,15 @@ namespace DockerDiagram
                             string fullImage = dlg.ImageName.Contains(":") ? dlg.ImageName : dlg.ImageName + ":latest";
                             var parts = fullImage.Split(new[] { ':' }, 2);
 
-                            // ★ [수정] _dockerService 사용
+                            // ★ _dockerService 사용
                             string newId = await _dockerService.CreateAndStartContainerAsync(
                                 dlg.ContainerName, parts[0], parts[1], dlg.Ports, dlg.EnvVars, dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount);
 
+                            // ★ 자동 연결 로직이 들어있는 CreateNodeAtAsync 호출
                             await vm.CreateNodeAtAsync(new DockerContainer { Id = newId, Name = dlg.ContainerName, Image = dlg.ImageName, Type = NodeType.Container, State = "running", StateColor = "#28a745" }, snapX, snapY);
                         }
                         catch (Exception ex)
                         {
-                            // ★ [수정] _dialogService 사용
                             _dialogService.ShowMessage($"에러 : {ex.Message}");
                         }
                         finally
@@ -980,13 +972,11 @@ namespace DockerDiagram
                         {
                             try
                             {
-                                // ★ [수정] _dockerService 사용
                                 await _dockerService.CreateVolumeAsync(dlg.VolumeName, dlg.Driver);
                                 await vm.CreateNodeAtAsync(new DockerContainer { Name = dlg.VolumeName, Type = NodeType.Volume, Image = dlg.Driver }, snapX, snapY);
                             }
                             catch (Exception ex)
                             {
-                                // ★ [수정] _dialogService 사용
                                 _dialogService.ShowMessage($"에러 : {ex.Message}");
                             }
                         }
@@ -1004,13 +994,11 @@ namespace DockerDiagram
                     {
                         try
                         {
-                            // ★ [수정] _dockerService 사용
                             string netId = await _dockerService.CreateNetworkAsync(dlg.NetworkName, dlg.Driver);
                             await vm.CreateNodeAtAsync(new DockerContainer { Id = netId, Name = dlg.NetworkName, Type = NodeType.Network, Image = dlg.Driver }, snapX, snapY);
                         }
                         catch (Exception ex)
                         {
-                            // ★ [수정] _dialogService 사용
                             _dialogService.ShowMessage($"에러 : {ex.Message}");
                         }
                     }
@@ -1018,6 +1006,7 @@ namespace DockerDiagram
             }
             else
             {
+                // 기존 아이템 드롭 시에도 연결 로직 작동
                 if (string.Equals(d.State, "running", StringComparison.OrdinalIgnoreCase)) d.StateColor = "#28a745";
                 else if (string.Equals(d.State, "exited", StringComparison.OrdinalIgnoreCase) || string.Equals(d.State, "dead", StringComparison.OrdinalIgnoreCase)) d.StateColor = "#dc3545";
                 else d.StateColor = "#808080";
@@ -1059,7 +1048,6 @@ namespace DockerDiagram
 
             if (_sourceNode != null && _sourceNode.IsCreating)
             {
-                // ★ [수정] _dialogService 사용
                 _dialogService.ShowMessage("생성 중인 객체는 연결할 수 없습니다.");
                 return;
             }
@@ -1136,6 +1124,7 @@ namespace DockerDiagram
             }
         }
 
+        // --- 헬퍼 메서드들 ---
         private Point GetExactBorderPoint(NodeViewModel node, PortDirection dir)
         {
             switch (dir)
