@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -464,17 +465,34 @@ namespace DockerDiagram.ViewModels
         {
             if (ActiveSheet == null) return;
 
-            // [필수 추가] 사용자가 "이미지:태그" 형식으로 입력했을 때 이를 강제로 분리하는 로직
-            // 이 코드가 없으면 image="repo:tag", tag="latest"가 되어 404 에러가 발생합니다.
+            // [1] 볼륨 리스트 분류
+            // API에는 사용자가 입력한 모든 볼륨(volumes)을 다 넘겨주면 되지만,
+            // 화면에 '그릴 것'은 Named Volume뿐이므로 이를 가려냅니다.
+            var namedVolumesToDraw = new List<string>();
+
+            foreach (var vol in volumes)
+            {
+                // "Source:Target" 형태
+                // 윈도우 경로(C:\)나 리눅스 경로(/, .)로 시작하면 Bind Mount입니다.
+                // 이런 건 화면에 그릴 필요가 없으므로 건너뛰고, '이름'으로 된 것만 추립니다.
+
+                bool isBindMount = System.Text.RegularExpressions.Regex.IsMatch(vol, @"^([a-zA-Z]:[\\/]|/|\.|~)");
+
+                if (!isBindMount)
+                {
+                    namedVolumesToDraw.Add(vol);
+                }
+            }
+
+            // [2] 이미지 태그 처리
             if (image.Contains(":"))
             {
                 int lastColon = image.LastIndexOf(':');
-                // 예: image가 "owasp/modsecurity-crs:nginx"라면
-                tag = image.Substring(lastColon + 1);   // tag를 "nginx"로 덮어씌움
-                image = image.Substring(0, lastColon);  // image를 "owasp/modsecurity-crs"로 자름
+                tag = image.Substring(lastColon + 1);
+                image = image.Substring(0, lastColon);
             }
 
-            // 1. Placeholder 노드 생성
+            // [3] Placeholder 노드 생성 (임시 노란색)
             var node = new NodeViewModel(_dockerService, _dialogService)
             {
                 Name = $"{name} (Creating...)",
@@ -483,32 +501,101 @@ namespace DockerDiagram.ViewModels
                 X = x,
                 Y = y,
                 IsCreating = true,
-                StatusColor = "#FFC107"
+                StatusColor = "#FFC107" // Creating...
             };
             ActiveSheet.Nodes.Add(node);
 
             try
             {
-                // 2. 이미지 다운로드 (Pull)
-                // 위에서 tag가 "nginx"로 수정되었으므로, 정확한 버전을 다운로드합니다.
+                // [4] 이미지 다운로드
                 await _dockerService.PullImageAsync(image, tag);
 
-                // 3. 컨테이너 생성 및 실행
+                // [5] 컨테이너 생성 및 실행 (Docker API 호출)
+                // ★ 중요: 사용자가 입력한 'volumes' 전체(Bind Mount 포함)를 그대로 Docker에 넘깁니다.
+                // 앱이 따로 저장할 필요 없이, Docker가 알아서 설정하고 실행합니다.
                 string containerId = await _dockerService.CreateAndStartContainerAsync(
                     name, image, tag, ports, envs, volumes, restartPolicy, memoryMb, cpuCount);
 
-                // 4. 완료 처리
+                // [6] 노드 정보 갱신 (완료 상태)
                 node.Name = name;
                 node.ContainerId = containerId;
+
+                // 포트/환경변수는 UI 표시용으로만 세팅 (저장은 Docker가 하니까 Display용)
                 node.PortInfo = string.Join(", ", ports);
                 node.PortBindings = ports;
                 node.EnvironmentVariables = envs;
                 node.RestartPolicy = restartPolicy;
 
                 node.IsCreating = false;
-                node.StatusColor = "#28a745";
+                node.StatusColor = "#28a745"; // Running (Green)
 
+                // 통계 기록
                 RegisterTemplateUsage($"{image}:{tag}");
+
+                // =========================================================
+                // [7] Named Volume만 시각화 (원기둥 노드 생성)
+                // =========================================================
+                // Bind Mount는 위에서 걸러냈으니, 여기서는 순수 도커 볼륨만 그려집니다.
+                int volIndex = 0;
+                foreach (var volStr in namedVolumesToDraw)
+                {
+                    // volStr 예: "my-db-data:/var/lib/mysql"
+                    string volName = volStr;
+                    string mountPath = "/data"; // 기본값
+
+                    int lastColon = volStr.LastIndexOf(':');
+                    if (lastColon > 0)
+                    {
+                        volName = volStr.Substring(0, lastColon);
+                        mountPath = volStr.Substring(lastColon + 1);
+                    }
+
+                    // A. 이미 화면에 있는 볼륨 노드인지 확인 (재사용)
+                    var existingVolNode = ActiveSheet.Nodes
+                        .FirstOrDefault(n => n.Type == NodeType.Volume && n.Name == volName);
+
+                    NodeViewModel targetVolNode;
+
+                    if (existingVolNode != null)
+                    {
+                        targetVolNode = existingVolNode;
+                    }
+                    else
+                    {
+                        // B. 없으면 새로 생성 (컨테이너 오른쪽에 배치)
+                        targetVolNode = new NodeViewModel(_dockerService, _dialogService)
+                        {
+                            Name = volName,
+                            Type = NodeType.Volume, // 🛢️ 원기둥
+                            ImageName = "local",    // 드라이버명 등 표시용
+                            X = x + 250,
+                            Y = y + (volIndex * 100), // 아래로 쌓이게
+                            StatusColor = "#E67E22"   // 주황색
+                        };
+                        ActiveSheet.Nodes.Add(targetVolNode);
+                    }
+
+                    // C. 선 연결 (Connector)
+                    bool connExists = ActiveSheet.Connectors.Any(c =>
+                        (c.Source == node && c.Target == targetVolNode) ||
+                        (c.Source == targetVolNode && c.Target == node));
+
+                    if (!connExists)
+                    {
+                        var conn = new ConnectorViewModel(
+                            node, targetVolNode,
+                            PortDirection.Right, PortDirection.Left,
+                            _dockerService, _dialogService)
+                        {
+                            RelationType = RelationType.VolumeMount,
+                            MountPath = mountPath
+                        };
+                        ActiveSheet.Connectors.Add(conn);
+                    }
+                    volIndex++;
+                }
+
+                // 전체 아이템 목록 갱신
                 UpdateAvailableItems();
             }
             catch (Exception ex)

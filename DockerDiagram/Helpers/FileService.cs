@@ -5,8 +5,6 @@ using Microsoft.Win32;
 using System.Diagnostics;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
-using System.Collections.Generic;
-using System.Linq;
 
 namespace DockerDiagram.Helpers
 {
