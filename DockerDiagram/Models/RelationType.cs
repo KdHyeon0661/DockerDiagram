@@ -4,6 +4,6 @@
     {
         Dependency,     // Container <-> Container
         VolumeMount,    // Container <-> Volume
-        NetworkAttach   // Container <-> Network
+        NetworkAttach   // Container <-> Internet
     }
 }

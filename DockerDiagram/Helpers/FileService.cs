@@ -5,12 +5,16 @@ using Microsoft.Win32;
 using System.Diagnostics;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
+using System.Threading.Tasks; // Task 사용을 위해 추가
+using System.Collections.Generic; // List, Dictionary 등을 위해 추가
+using System.Linq; // Select 등을 위해 추가
 
 namespace DockerDiagram.Helpers
 {
     public static class FileService
     {
-        public static string? SaveDiagramAs(MainViewModel mainVm)
+        // [저장 기능]
+        public static string? SaveDiagramAs(MainViewModel mainVm, IDialogService dialogService)
         {
             var dlg = new SaveFileDialog
             {
@@ -26,7 +30,7 @@ namespace DockerDiagram.Helpers
                 if (InternalSave(mainVm, dlg.FileName))
                 {
                     SaveLastFilePath(dlg.FileName);
-                    MessageBox.Show($"저장되었습니다.\n{dlg.FileName}", "완료", MessageBoxButton.OK, MessageBoxImage.Information);
+                    dialogService.ShowInfo($"저장되었습니다.\n{dlg.FileName}", "완료");
                     return dlg.FileName;
                 }
             }
@@ -97,7 +101,15 @@ namespace DockerDiagram.Helpers
 
                     foreach (var group in sheetVm.Groups)
                     {
-                        var gData = new GroupData { Title = group.Title, X = group.X, Y = group.Y, Width = group.Width, Height = group.Height };
+                        var gData = new GroupData
+                        {
+                            Title = group.Title,
+                            X = group.X,
+                            Y = group.Y,
+                            Width = group.Width,
+                            Height = group.Height,
+                            Type = group.Type
+                        };
                         gData.ContainedNodeIds = group.ContainedNodes.Select(n => n.Id).ToList();
                         sheetData.Groups.Add(gData);
                     }
@@ -119,8 +131,13 @@ namespace DockerDiagram.Helpers
             }
         }
 
-        // [불러오기 기능 1] 다이얼로그
-        public static async Task<string?> LoadDiagramWithDialogAsync(MainViewModel mainVm, IDockerService dockerService, IDialogService dialogService)
+        // [불러오기 기능 1] 다이얼로그 (수정됨: 성공 여부 확인 후 경로 반환)
+        public static async Task<string?> LoadDiagramWithDialogAsync(
+            MainViewModel mainVm,
+            IContainerService containerService,
+            IVolumeService volumeService,
+            INetworkService networkService,
+            IDialogService dialogService)
         {
             var dlg = new OpenFileDialog
             {
@@ -129,30 +146,41 @@ namespace DockerDiagram.Helpers
 
             if (dlg.ShowDialog() == true)
             {
-                await LoadDiagramFromPathAsync(mainVm, dlg.FileName, dockerService, dialogService);
-                SaveLastFilePath(dlg.FileName);
-                return dlg.FileName;
+                // ★ 여기서 true가 리턴되어야만 파일 경로를 반환함
+                bool success = await LoadDiagramFromPathAsync(mainVm, dlg.FileName, containerService, volumeService, networkService, dialogService);
+
+                if (success)
+                {
+                    SaveLastFilePath(dlg.FileName);
+                    return dlg.FileName;
+                }
             }
             return null;
         }
 
-        // [불러오기 기능 2] 경로 로드
-        public static async Task LoadDiagramFromPathAsync(MainViewModel mainVm, string filePath, IDockerService dockerService, IDialogService dialogService)
+        // [불러오기 기능 2] 경로 로드 (수정됨: bool 반환)
+        public static async Task<bool> LoadDiagramFromPathAsync(
+            MainViewModel mainVm,
+            string filePath,
+            IContainerService containerService,
+            IVolumeService volumeService,
+            INetworkService networkService,
+            IDialogService dialogService)
         {
             try
             {
-                if (!File.Exists(filePath)) return;
+                if (!File.Exists(filePath)) return false;
 
                 string json = await File.ReadAllTextAsync(filePath);
                 var fileData = JsonSerializer.Deserialize<DiagramFile>(json);
 
-                if (fileData == null) return;
+                if (fileData == null) return false;
 
                 mainVm.Sheets.Clear();
 
                 foreach (var sheetData in fileData.Sheets)
                 {
-                    var sheetVm = new SheetViewModel(sheetData.Title, dockerService, dialogService);
+                    var sheetVm = new SheetViewModel(sheetData.Title, containerService, volumeService, networkService, dialogService);
 
                     sheetVm.MapWidth = sheetData.MapWidth;
                     sheetVm.MapHeight = sheetData.MapHeight;
@@ -164,7 +192,7 @@ namespace DockerDiagram.Helpers
 
                     foreach (var nodeData in sheetData.Nodes)
                     {
-                        var nodeVm = new NodeViewModel(dockerService, dialogService)
+                        var nodeVm = new NodeViewModel(containerService, volumeService, dialogService)
                         {
                             Id = nodeData.Id,
                             ContainerId = nodeData.DockerId,
@@ -190,7 +218,7 @@ namespace DockerDiagram.Helpers
                         if (nodeMap.TryGetValue(connData.SourceNodeId, out var source) &&
                             nodeMap.TryGetValue(connData.TargetNodeId, out var target))
                         {
-                            var connVm = new ConnectorViewModel(source, target, connData.SourceDir, connData.TargetDir, dockerService, dialogService);
+                            var connVm = new ConnectorViewModel(source, target, connData.SourceDir, connData.TargetDir, dialogService);
 
                             connVm.RelationType = connData.RelationType;
                             connVm.MountPath = connData.MountPath;
@@ -202,16 +230,17 @@ namespace DockerDiagram.Helpers
 
                     foreach (var groupData in sheetData.Groups)
                     {
-                        // ★ [수정 완료] 생성자 매개변수 6개 (x, y, w, h, dialogService, title)
                         var groupVm = new GroupViewModel(
                             groupData.X,
                             groupData.Y,
                             groupData.Width,
                             groupData.Height,
-                            dialogService, // <--- 여기에 dialogService 주입!
+                            networkService,
+                            dialogService,
                             groupData.Title
                         );
 
+                        groupVm.Type = groupData.Type;
                         groupVm.ParentSheet = sheetVm;
 
                         foreach (var nodeId in groupData.ContainedNodeIds)
@@ -230,13 +259,20 @@ namespace DockerDiagram.Helpers
                 {
                     mainVm.ActiveSheet = mainVm.Sheets[fileData.ActiveSheetIndex];
                 }
+
+                return true; // ★ 성공 시 true 반환
             }
             catch (Exception ex)
             {
-                // ★ [추가 수정] MessageBox 대신 주입받은 dialogService 사용
                 dialogService.ShowMessage($"파일 불러오기 실패 ({filePath}):\n{ex.Message}");
+                return false; // ★ 실패 시 false 반환
             }
         }
+
+        // [신규 추가] 파일을 직접 로드하여 MainViewModel을 반환하는 메서드 (자동 로드용)
+        // 주의: 이 메서드는 ViewModel을 생성하지 않고 데이터 구조체만 반환하거나,
+        // 기존 LoadDiagramFromPathAsync를 재활용하는 것이 좋습니다.
+        // MainViewModel에서 호출할 때는 LoadDiagramFromPathAsync를 쓰면 되므로 이 메서드는 필수 아님.
 
         private static void SaveLastFilePath(string path)
         {

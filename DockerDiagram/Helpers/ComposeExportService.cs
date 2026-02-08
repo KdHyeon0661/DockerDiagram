@@ -10,11 +10,11 @@ namespace DockerDiagram.Helpers
 {
     public static class ComposeExportService
     {
-        public static void ExportToCompose(SheetViewModel sheet)
+        public static void ExportToCompose(SheetViewModel sheet, IDialogService dialogService)
         {
             if (sheet == null || sheet.Nodes.Count == 0)
             {
-                MessageBox.Show("내보낼 노드가 없습니다.", "알림");
+                dialogService.ShowMessage("내보낼 노드가 없습니다.");
                 return;
             }
 
@@ -31,11 +31,13 @@ namespace DockerDiagram.Helpers
                 {
                     string yamlContent = GenerateYaml(sheet);
                     File.WriteAllText(dlg.FileName, yamlContent, Encoding.UTF8);
-                    MessageBox.Show($"파일이 생성되었습니다!\n{dlg.FileName}", "성공", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                    // ★ [수정] ShowInfo 사용
+                    dialogService.ShowInfo($"파일이 생성되었습니다!\n{dlg.FileName}", "성공");
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"내보내기 실패: {ex.Message}", "오류", MessageBoxButton.OK, MessageBoxImage.Error);
+                    dialogService.ShowMessage($"내보내기 실패: {ex.Message}");
                 }
             }
         }
@@ -92,6 +94,7 @@ namespace DockerDiagram.Helpers
                         sb.AppendLine($"      - \"{EscapeQuotes(env)}\"");
                 }
 
+                // 볼륨 연결은 커넥터(선) 방식 유지 (Node <-> Node)
                 var connectedVolumes = GetConnectedVolumes(node, sheet);
                 if (connectedVolumes.Count > 0)
                 {
@@ -100,6 +103,7 @@ namespace DockerDiagram.Helpers
                         sb.AppendLine($"      - \"{vol}\"");
                 }
 
+                // 의존성(depends_on)도 커넥터(선) 방식 유지
                 var depConns = sheet.Connectors
                     .Where(c => c.Target == node
                              && c.Source.Type == NodeType.Container
@@ -118,6 +122,7 @@ namespace DockerDiagram.Helpers
                     }
                 }
 
+                // ★ [수정] 네트워크 정보 조회 로직 변경 (Node -> Group)
                 var connectedNets = GetConnectedNetworks(node, sheet);
                 if (connectedNets.Count > 0)
                 {
@@ -134,36 +139,32 @@ namespace DockerDiagram.Helpers
                 sb.AppendLine();
             }
 
-            // 네트워크 정의
-            var networks = sheet.Nodes.Where(n => n.Type == NodeType.Network).ToList();
-            if (networks.Any())
+            // ★ [수정] 네트워크 정의 (Nodes가 아니라 Groups에서 찾기)
+            var networkGroups = sheet.Groups.Where(g => g.Type == GroupType.Network).ToList();
+            if (networkGroups.Any())
             {
                 sb.AppendLine("networks:");
-                foreach (var net in networks)
+                foreach (var netGroup in networkGroups)
                 {
-                    sb.AppendLine($"  {net.Name}:");
-                    string driver = !string.IsNullOrWhiteSpace(net.ImageName) ? net.ImageName : "bridge";
+                    sb.AppendLine($"  {netGroup.Title}:");
+                    // Group에는 ImageName이 없으므로 기본값 bridge 사용
+                    string driver = "bridge";
                     sb.AppendLine($"    driver: {driver}");
 
-                    if (!string.IsNullOrEmpty(net.Subnet) && net.Subnet != "-")
-                    {
-                        sb.AppendLine("    ipam:");
-                        sb.AppendLine("      config:");
-                        sb.AppendLine($"        - subnet: {net.Subnet}");
-                        if (!string.IsNullOrEmpty(net.Gateway) && net.Gateway != "-")
-                            sb.AppendLine($"          gateway: {net.Gateway}");
-                    }
+                    // 서브넷/게이트웨이 정보는 GroupViewModel에 현재 없으므로 생략하거나
+                    // 추후 GroupViewModel에 속성을 추가해야 함. 현재는 기본 설정만 출력.
                 }
                 sb.AppendLine();
             }
 
-            // 볼륨 정의
+            // 볼륨 정의 (기존 유지 - 볼륨은 여전히 Node임)
             var volumes = sheet.Nodes.Where(n => n.Type == NodeType.Volume).ToList();
             if (volumes.Any())
             {
                 sb.AppendLine("volumes:");
                 foreach (var vol in volumes)
                 {
+                    // 바인드 마운트(경로)가 아닌 명명된 볼륨만 정의
                     if (!vol.Name.Contains("/") && !vol.Name.Contains("\\"))
                     {
                         sb.AppendLine($"  {vol.Name}:");
@@ -173,6 +174,8 @@ namespace DockerDiagram.Helpers
 
             return sb.ToString();
         }
+
+        // --- 헬퍼 메서드들 (이름 정제 등 기존 로직 100% 유지) ---
 
         private static string SanitizeServiceName(string rawName)
         {
@@ -217,22 +220,26 @@ namespace DockerDiagram.Helpers
 
         private class NetworkInfo { public string? NetworkName; public string? IpAddress; }
 
+        // ★ [수정] 네트워크 연결 확인 로직 (커넥터 -> 그룹 포함 여부로 변경)
         private static List<NetworkInfo> GetConnectedNetworks(NodeViewModel container, SheetViewModel sheet)
         {
             var list = new List<NetworkInfo>();
-            var conns = sheet.Connectors
-                .Where(c => (c.Source == container && c.Target.Type == NodeType.Network) ||
-                            (c.Target == container && c.Source.Type == NodeType.Network))
-                .ToList();
 
-            foreach (var c in conns)
+            // 1. 시트에 있는 모든 네트워크 그룹을 순회
+            var networkGroups = sheet.Groups.Where(g => g.Type == GroupType.Network);
+
+            foreach (var group in networkGroups)
             {
-                var netNode = c.Source == container ? c.Target : c.Source;
-                string ip = null;
-                if (container.NetworkIpMap != null && container.NetworkIpMap.ContainsKey(netNode.Name))
-                    ip = container.NetworkIpMap[netNode.Name];
+                // 2. 해당 그룹에 컨테이너가 포함되어 있는지 확인
+                if (group.ContainedNodes.Contains(container))
+                {
+                    string ip = null;
+                    // IP 정보가 있다면 가져오기 (컨테이너의 맵에서 그룹 이름으로 조회)
+                    if (container.NetworkIpMap != null && container.NetworkIpMap.ContainsKey(group.Title))
+                        ip = container.NetworkIpMap[group.Title];
 
-                list.Add(new NetworkInfo { NetworkName = netNode.Name, IpAddress = ip });
+                    list.Add(new NetworkInfo { NetworkName = group.Title, IpAddress = ip });
+                }
             }
             return list;
         }

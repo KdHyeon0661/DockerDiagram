@@ -57,6 +57,10 @@ namespace DockerDiagram
         private GroupViewModel? _movingGroup = null;
         private Point _groupClickOffset;
 
+        // ★ [추가] 네트워크 그리기 모드 변수
+        private bool _isNetworkDrawingMode = false;
+        private bool _isNetworkDrawingDrag = false;
+
         // --- 3. 재연결(Reconnection) 관련 변수 ---
         private bool _isReconnecting = false;
         private ConnectorViewModel? _reconnectingConn = null;
@@ -66,20 +70,19 @@ namespace DockerDiagram
         private Rect _resizeStartGroupRect;
 
         private DispatcherTimer _dockerMonitorTimer;
-
-        // ★ [복구됨] 자동 저장 타이머
         private DispatcherTimer _autoSaveTimer;
 
-        // ★ [DI] 서비스 필드
-        private readonly IDockerService _dockerService;
+        // ★ [수정] 서비스 필드 변경 (IDockerService -> ISystemService)
+        // 메인 로직은 ViewModel이 처리하므로 여기선 상태 체크용 SystemService만 필요
+        private readonly ISystemService _systemService;
         private readonly IDialogService _dialogService;
 
-        // ★ [DI] 생성자
-        public MainWindow(MainViewModel viewModel, IDockerService dockerService, IDialogService dialogService)
+        // ★ [수정] 생성자
+        public MainWindow(MainViewModel viewModel, ISystemService systemService, IDialogService dialogService)
         {
             InitializeComponent();
 
-            _dockerService = dockerService ?? throw new ArgumentNullException(nameof(dockerService));
+            _systemService = systemService ?? throw new ArgumentNullException(nameof(systemService));
             _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
 
             this.DataContext = viewModel;
@@ -89,7 +92,6 @@ namespace DockerDiagram
             _dockerMonitorTimer.Interval = TimeSpan.FromSeconds(5);
             _dockerMonitorTimer.Tick += DockerMonitorTimer_Tick;
 
-            // ★ [복구됨] 자동 저장 타이머 (1분 -> 30초 등 조절 가능)
             _autoSaveTimer = new DispatcherTimer();
             _autoSaveTimer.Interval = TimeSpan.FromSeconds(30);
             _autoSaveTimer.Tick += AutoSaveTimer_Tick;
@@ -120,7 +122,8 @@ namespace DockerDiagram
                 }
                 else
                 {
-                    string? savedPath = Helpers.FileService.SaveDiagramAs(vm);
+                    // DialogService 사용을 권장하나 기존 로직 유지
+                    string? savedPath = Helpers.FileService.SaveDiagramAs(vm, _dialogService);
                     if (string.IsNullOrEmpty(savedPath))
                     {
                         e.Cancel = true;
@@ -129,30 +132,19 @@ namespace DockerDiagram
             }
         }
 
-        // ★ [복구 및 수정됨] 자동 저장 로직
+        // 자동 저장 로직
         private void AutoSaveTimer_Tick(object? sender, EventArgs e)
         {
             var vm = this.DataContext as MainViewModel;
             if (vm == null) return;
 
-            // 1. [핵심 수정] 현재 파일 경로가 없으면(최초 저장을 안 했으면) -> 저장 안 함!
-            if (string.IsNullOrEmpty(vm.CurrentFilePath))
-            {
-                return;
-            }
+            if (string.IsNullOrEmpty(vm.CurrentFilePath)) return;
+            if (!vm.IsModified) return;
 
-            // 2. 변경사항이 없으면 굳이 저장 안 함
-            if (!vm.IsModified)
-            {
-                return;
-            }
-
-            // 3. 조건 만족 시 현재 경로에 저장 (LastFilePath가 아님)
             bool success = FileService.QuickSave(vm, vm.CurrentFilePath);
             if (success)
             {
                 Debug.WriteLine($"[AutoSave] Saved to {vm.CurrentFilePath} at {DateTime.Now}");
-                // 저장이 완료되면 IsModified를 false로 돌리는 로직은 QuickSave 내부에 있거나 여기서 처리
                 vm.IsModified = false;
             }
         }
@@ -163,27 +155,10 @@ namespace DockerDiagram
             var vm = this.DataContext as MainViewModel;
             if (vm == null) return;
 
-            // 1. 마지막 파일 불러오기 로직 (기존 유지)
-            string lastFile = Properties.Settings.Default.LastFilePath;
-            if (!string.IsNullOrEmpty(lastFile) && System.IO.File.Exists(lastFile))
-            {
-                await FileService.LoadDiagramFromPathAsync(vm, lastFile, _dockerService, _dialogService);
-                vm.CurrentFilePath = lastFile;
-                vm.IsModified = false;
-            }
-            else
-            {
-                vm.CurrentFilePath = null;
-            }
-
             UpdateTitle();
-
             await CheckDockerStateAsync();
 
-            // 2. 타이머 시작
             if (!_dockerMonitorTimer.IsEnabled) _dockerMonitorTimer.Start();
-
-            // ★ [복구됨] 자동 저장 타이머 시작
             if (!_autoSaveTimer.IsEnabled) _autoSaveTimer.Start();
         }
 
@@ -200,17 +175,21 @@ namespace DockerDiagram
         {
             if (DockerServiceHelper.IsDockerRunning()) return;
 
-            // _dialogService.ShowConfirm을 실행하면 -> 내부적으로 MessageBox가 뜹니다.
             bool result = _dialogService.ShowConfirm(
                 "Docker 프로세스가 종료되었습니다.\nDocker를 다시 실행하시겠습니까?\n\n('아니요'를 누르면 프로그램이 종료됩니다.)",
                 "Docker 감지");
 
-            if (result) // '예'
+            if (result)
             {
-                try { await DockerServiceHelper.StartDockerAsync(_dockerService, _dialogService); }
+                try
+                {
+                    // ★ DockerServiceHelper는 static이거나 ISystemService를 받아야 함.
+                    // 기존 코드 호환을 위해 유지하되, 필요시 수정
+                    await DockerServiceHelper.StartDockerAsync(_systemService, _dialogService);
+                }
                 catch (Exception ex) { _dialogService.ShowMessage($"Docker 실행 실패: {ex.Message}"); }
             }
-            else // '아니요'
+            else
             {
                 Application.Current.Shutdown();
             }
@@ -277,6 +256,7 @@ namespace DockerDiagram
         private void BtnGroupMode_Checked(object sender, RoutedEventArgs e)
         {
             _isGroupingMode = true;
+            _isNetworkDrawingMode = false; // 다른 모드 해제
             Mouse.OverrideCursor = Cursors.Cross;
             OptionPopup.IsOpen = false;
         }
@@ -351,13 +331,16 @@ namespace DockerDiagram
             {
                 _isPanning = false;
                 ZoomPanGrid.ReleaseMouseCapture();
-                Mouse.OverrideCursor = _isGroupingMode ? Cursors.Cross : null;
+                // 모드에 따라 커서 복구
+                if (_isGroupingMode || _isNetworkDrawingMode) Mouse.OverrideCursor = Cursors.Cross;
+                else Mouse.OverrideCursor = null;
             }
         }
 
+        // ★ [수정] 3. 캔버스 클릭 (네트워크/그룹 그리기 시작)
         private void Diagram_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            // 1. 그룹핑 모드
+            // 1. 일반 그룹핑 모드
             if (_isGroupingMode)
             {
                 _isGroupingDrag = true;
@@ -383,10 +366,38 @@ namespace DockerDiagram
                 return;
             }
 
-            // 2. 일반 선택 해제
+            // ★ 2. 네트워크 그리기 모드 (신규)
+            if (_isNetworkDrawingMode)
+            {
+                _isNetworkDrawingDrag = true;
+                _groupStartPoint = GetWorldPosition(e);
+
+                // 보라색 점선 사각형
+                _tempGroupRect = new Rectangle
+                {
+                    Stroke = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#9B59B6")),
+                    StrokeThickness = 2,
+                    StrokeDashArray = new DoubleCollection { 2, 2 },
+                    RadiusX = 10,
+                    RadiusY = 10,
+                    Fill = new SolidColorBrush(Color.FromArgb(30, 155, 89, 182)),
+                    IsHitTestVisible = false
+                };
+
+                Canvas.SetLeft(_tempGroupRect, _groupStartPoint.X);
+                Canvas.SetTop(_tempGroupRect, _groupStartPoint.Y);
+                DragCanvas.Children.Add(_tempGroupRect);
+
+                Mouse.Capture(ViewportCanvas);
+                e.Handled = true;
+                return;
+            }
+
+            // 3. 일반 선택 해제
             if (!e.Handled) (DataContext as MainViewModel)?.ClearSelection();
         }
 
+        // ★ [수정] 4. 캔버스 드래그 (네트워크 사각형 크기 조절 포함)
         private void Diagram_MouseMove(object sender, MouseEventArgs e)
         {
             var vm = DataContext as MainViewModel;
@@ -405,8 +416,9 @@ namespace DockerDiagram
                 return;
             }
 
-            // 2. 그룹 생성 드래그
-            if (_isGroupingDrag && _tempGroupRect != null)
+            // 2. 그룹/네트워크 생성 드래그
+            // (로직이 동일하므로 OR 조건으로 처리)
+            if ((_isGroupingDrag || _isNetworkDrawingDrag) && _tempGroupRect != null)
             {
                 double x = Math.Min(_groupStartPoint.X, current.X);
                 double y = Math.Min(_groupStartPoint.Y, current.Y);
@@ -500,6 +512,7 @@ namespace DockerDiagram
             // 5. 재연결 (Grip Drag)
             if (_isReconnecting && _reconnectingConn != null)
             {
+                // (기존 재연결 로직 유지)
                 Point startP, endP;
                 Rect r1, r2;
                 PortDirection d1, d2;
@@ -567,12 +580,13 @@ namespace DockerDiagram
             }
         }
 
+        // ★ [수정] 5. 마우스 뗌 (네트워크/그룹 생성 완료)
         protected override void OnPreviewMouseLeftButtonUp(MouseButtonEventArgs e)
         {
             base.OnPreviewMouseLeftButtonUp(e);
             _isClickedOnTab = false;
 
-            // 1. 그룹핑 생성 완료
+            // 1. 일반 그룹핑 생성 완료
             if (_isGroupingDrag && _tempGroupRect != null)
             {
                 _isGroupingDrag = false;
@@ -589,7 +603,7 @@ namespace DockerDiagram
                     var vm = DataContext as MainViewModel;
                     if (vm?.ActiveSheet != null)
                     {
-                        var newGroup = new GroupViewModel(x, y, w, h, _dialogService);
+                        var newGroup = new GroupViewModel(x, y, w, h, null, _dialogService); // null: 일반 그룹
                         newGroup.ParentSheet = vm.ActiveSheet;
                         vm.ActiveSheet.Groups.Add(newGroup);
                         vm.ActiveSheet.RefreshGroupContainment(newGroup);
@@ -601,6 +615,36 @@ namespace DockerDiagram
                 _tempGroupRect = null;
                 _isGroupingMode = false;
                 if (BtnGroupMode != null) BtnGroupMode.IsChecked = false;
+                Mouse.OverrideCursor = null;
+                return;
+            }
+
+            // ★ 1-1. 네트워크 그리기 완료 (신규 로직)
+            if (_isNetworkDrawingDrag && _tempGroupRect != null)
+            {
+                _isNetworkDrawingDrag = false;
+                Mouse.Capture(null);
+
+                double w = _tempGroupRect.Width;
+                double h = _tempGroupRect.Height;
+                double x = Canvas.GetLeft(_tempGroupRect);
+                double y = Canvas.GetTop(_tempGroupRect);
+
+                if (w > 30 && h > 30) // 너무 작으면 무시
+                {
+                    var dlg = new DockerDiagram.Views.NetworkDialog();
+                    dlg.Owner = this;
+                    if (dlg.ShowDialog() == true)
+                    {
+                        var vm = DataContext as MainViewModel;
+                        // 좌표와 크기까지 전달하는 새 함수 호출 (MainViewModel에 해당 함수 오버로딩 필요)
+                        vm?.CreateNewNetworkNodeAsync(dlg.NetworkName, dlg.Driver, x, y, w, h);
+                    }
+                }
+
+                DragCanvas.Children.Remove(_tempGroupRect);
+                _tempGroupRect = null;
+                _isNetworkDrawingMode = false;
                 Mouse.OverrideCursor = null;
                 return;
             }
@@ -634,7 +678,7 @@ namespace DockerDiagram
                 _draggedNodeElement = null;
             }
 
-            // 4. 재연결 완료
+            // 4. 재연결 완료 (기존 로직)
             if (_isReconnecting && _reconnectingConn != null)
             {
                 _isReconnecting = false;
@@ -671,7 +715,7 @@ namespace DockerDiagram
                 _resizingGroup = null;
             }
 
-            // 6. 신규 연결 종료 (실제 연결)
+            // 6. 신규 연결 종료
             if (_isConnecting)
             {
                 _isConnecting = false;
@@ -841,30 +885,92 @@ namespace DockerDiagram
             if (SheetListBox.SelectedItem != null) SheetListBox.ScrollIntoView(SheetListBox.SelectedItem);
         }
 
+        // ★ [수정] 1. 사이드바 아이콘 클릭 (네트워크면 그리기 모드 진입)
         private void Tool_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             _toolStartPoint = e.GetPosition(null);
             _isToolDragging = false;
+
+            var border = sender as Border;
+            string typeStr = border?.Tag?.ToString() ?? "";
+
+            // ★ 네트워크인 경우: 드래그 앤 드롭(DoDragDrop) 하지 않고, 그리기 모드 활성화
+            if (typeStr == "Network")
+            {
+                _isNetworkDrawingMode = true;
+                Mouse.OverrideCursor = Cursors.Cross;
+                (DataContext as MainViewModel)?.ClearSelection();
+                e.Handled = true; // 이벤트 소비 (DoDragDrop 방지)
+                return;
+            }
         }
 
+        // ★ [수정] 2. 마우스 이동 (네트워크 모드면 드래그 앤 드롭 방지 + 기존 목록 드래그 처리)
         private void Tool_PreviewMouseMove(object sender, MouseEventArgs e)
         {
+            if (_isNetworkDrawingMode) return; // 네트워크 그리기 모드 중이면 중단
+
             if (e.LeftButton == MouseButtonState.Pressed && !_isToolDragging)
             {
                 if (Math.Abs(e.GetPosition(null).X - _toolStartPoint.X) > 5)
                 {
                     _isToolDragging = true;
                     var border = sender as Border;
-                    string typeStr = border?.Tag?.ToString() ?? "Container";
-                    if (Enum.TryParse(typeStr, out NodeType type))
-                    {
-                        var c = new DockerContainer { Type = type };
-                        if (type == NodeType.Container) { c.Name = "New Container"; c.Image = "nginx:latest"; }
-                        else if (type == NodeType.Volume) { c.Name = "New Volume"; c.Image = "local"; }
-                        else if (type == NodeType.Network) { c.Name = "New Net"; c.Image = "bridge"; }
+                    if (border == null) return;
 
-                        DragDrop.DoDragDrop((DependencyObject)sender, new DataObject("DockerContainerObject", c), DragDropEffects.Copy);
+                    // 드래그할 데이터 객체 준비
+                    DockerResource container = null;
+
+                    // [CASE 1] 템플릿 목록에서 드래그 (DataContext가 TemplateItem인 경우)
+                    if (border.DataContext is TemplateItem template)
+                    {
+                        container = new DockerContainer
+                        {
+                            Name = template.Name,
+                            Image = template.Image,
+                            Id = "" // New임을 표시
+                        };
                     }
+                    // [CASE 2] 상단 고정 버튼에서 드래그 (Tag가 문자열인 경우)
+                    // ★ 이 부분이 빠져 있어서 작동하지 않았습니다.
+                    else if (border.Tag is string tagStr)
+                    {
+                        if (tagStr == "Container")
+                        {
+                            container = new DockerContainer
+                            {
+                                Name = "New Container",
+                                Image = "New Container",
+                                Id = ""
+                            };
+                        }
+                        else if (tagStr == "Volume")
+                        {
+                            // Canvas_Drop에서 DockerContainer로 캐스팅해서 받으므로 타입을 맞춰줍니다.
+                            container = new DockerVolume
+                            {
+                                Name = "New Volume",
+                                Id = ""
+                            };
+                        }
+                        else if (tagStr == "Internet")
+                        {
+                            container = new DockerInternet
+                            {
+                                Name = "Internet",
+                                Id = ""
+                            };
+                        }
+                    }
+
+                    // 데이터가 준비되었으면 드래그 시작
+                    if (container != null)
+                    {
+                        DataObject data = new DataObject("DockerContainerObject", container);
+                        DragDrop.DoDragDrop(border, data, DragDropEffects.Copy);
+                    }
+
+                    _isToolDragging = false;
                 }
             }
         }
@@ -874,7 +980,10 @@ namespace DockerDiagram
             if (!_isToolDragging)
             {
                 var border = sender as Border;
-                string typeStr = border?.Tag?.ToString() ?? "Container";
+                string typeStr = border?.Tag?.ToString() ?? "";
+
+                // Network는 문자열 체크로 제외 (위에서 handled 처리되었지만 안전장치)
+                if (typeStr == "Network") return;
 
                 if (Enum.TryParse(typeStr, out NodeType type))
                 {
@@ -903,116 +1012,179 @@ namespace DockerDiagram
                                 await vm.CreateNewVolumeNodeAsync(dlg.VolumeName, dlg.Driver, defaultX, defaultY);
                             }
                         }
-                        else if (type == NodeType.Network)
+                        else if (type == NodeType.Internet)
                         {
-                            var dlg = new DockerDiagram.Views.NetworkDialog();
-                            dlg.Owner = this;
-                            if (dlg.ShowDialog() == true)
-                            {
-                                await vm.CreateNewNetworkNodeAsync(dlg.NetworkName, dlg.Driver, defaultX, defaultY);
-                            }
+                            vm.ActiveSheet.CreateInternetAt(new DockerInternet { Name = "Internet" }, defaultX, defaultY);
                         }
                     }
                 }
             }
         }
 
+        // 캔버스 드롭 핸들러 (네트워크 삭제 반영)
         private async void Canvas_Drop(object sender, DragEventArgs e)
         {
-            if (!e.Data.GetDataPresent("DockerContainerObject")) return;
-            var d = e.Data.GetData("DockerContainerObject") as DockerContainer;
             var vm = DataContext as MainViewModel;
-            if (d == null || vm == null || vm.ActiveSheet is not SheetViewModel sheet) return;
+            if (vm?.ActiveSheet == null) return;
 
             Point mouseOnScreen = e.GetPosition((UIElement)ZoomPanGrid.Parent);
             Point worldPos = ZoomPanGrid.RenderTransform.Inverse.Transform(mouseOnScreen);
             double snapX = Math.Round((worldPos.X - 80) / 10) * 10;
             double snapY = Math.Round((worldPos.Y - 40) / 10) * 10;
 
-            if (string.IsNullOrEmpty(d.Id))
+            // [CASE A] 모든 노드 리소스 처리 (DockerResource로 받기)
+            if (e.Data.GetDataPresent("DockerContainerObject"))
             {
-                if (d.Type == NodeType.Container)
+                // ★ 핵심: DockerContainer가 아닌 공통 부모인 DockerResource로 받습니다.
+                var d = e.Data.GetData("DockerContainerObject") as DockerResource;
+                if (d == null) return;
+
+                if (string.IsNullOrEmpty(d.Id)) // "New" 아이템 (템플릿에서 끌어온 경우)
                 {
-                    var dlg = new DockerDiagram.Views.ContainerDialog();
-                    dlg.Owner = this;
-                    if (d.Image != "New Container") dlg.ImageName = d.Image;
-
-                    if (dlg.ShowDialog() == true)
+                    // 1. 컨테이너인 경우
+                    if (d is DockerContainer container)
                     {
-                        try
-                        {
-                            Mouse.OverrideCursor = Cursors.Wait;
-                            string fullImage = dlg.ImageName.Contains(":") ? dlg.ImageName : dlg.ImageName + ":latest";
-                            var parts = fullImage.Split(new[] { ':' }, 2);
-
-                            // ★ _dockerService 사용
-                            string newId = await _dockerService.CreateAndStartContainerAsync(
-                                dlg.ContainerName, parts[0], parts[1], dlg.Ports, dlg.EnvVars, dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount);
-
-                            // ★ 자동 연결 로직이 들어있는 CreateNodeAtAsync 호출
-                            await vm.CreateNodeAtAsync(new DockerContainer { Id = newId, Name = dlg.ContainerName, Image = dlg.ImageName, Type = NodeType.Container, State = "running", StateColor = "#28a745" }, snapX, snapY);
-                        }
-                        catch (Exception ex)
-                        {
-                            _dialogService.ShowMessage($"에러 : {ex.Message}");
-                        }
-                        finally
-                        {
-                            Mouse.OverrideCursor = null;
-                        }
-                    }
-                }
-                else if (d.Type == NodeType.Volume)
-                {
-                    if (d.Name == "New Volume")
-                    {
-                        var dlg = new DockerDiagram.Views.VolumeDialog();
+                        var dlg = new DockerDiagram.Views.ContainerDialog();
                         dlg.Owner = this;
+                        if (container.Image != "New Container") dlg.ImageName = container.Image;
+
                         if (dlg.ShowDialog() == true)
                         {
                             try
                             {
-                                await _dockerService.CreateVolumeAsync(dlg.VolumeName, dlg.Driver);
-                                await vm.CreateNodeAtAsync(new DockerContainer { Name = dlg.VolumeName, Type = NodeType.Volume, Image = dlg.Driver }, snapX, snapY);
+                                Mouse.OverrideCursor = Cursors.Wait;
+                                string fullImage = dlg.ImageName.Contains(":") ? dlg.ImageName : dlg.ImageName + ":latest";
+                                var parts = fullImage.Split(new[] { ':' }, 2);
+
+                                await vm.CreateNewContainerNodeAsync(
+                                    dlg.ContainerName, parts[0], parts.Length > 1 ? parts[1] : "latest",
+                                    dlg.Ports, dlg.EnvVars, dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount, snapX, snapY);
                             }
                             catch (Exception ex)
                             {
                                 _dialogService.ShowMessage($"에러 : {ex.Message}");
                             }
+                            finally { Mouse.OverrideCursor = null; }
                         }
                     }
-                    else
+                    // 2. 볼륨인 경우
+                    else if (d is DockerVolume volume)
                     {
-                        await vm.CreateNodeAtAsync(d, snapX, snapY);
+                        if (volume.Name == "New Volume")
+                        {
+                            var dlg = new DockerDiagram.Views.VolumeDialog();
+                            dlg.Owner = this;
+                            if (dlg.ShowDialog() == true)
+                            {
+                                await vm.CreateNewVolumeNodeAsync(dlg.VolumeName, dlg.Driver, snapX, snapY);
+                            }
+                        }
+                        else
+                        {
+                            await vm.CreateNodeAtAsync(volume, snapX, snapY);
+                        }
+                    }
+                    // 3. 인터넷 노드인 경우 (아무 정보 없으므로 바로 생성)
+                    else if (d is DockerInternet internet)
+                    {
+                        await vm.CreateNodeAtAsync(internet, snapX, snapY);
                     }
                 }
-                else if (d.Type == NodeType.Network)
+                else // 기존 아이템 (목록에서 끌어온 경우)
                 {
-                    var dlg = new DockerDiagram.Views.NetworkDialog();
-                    dlg.Owner = this;
-                    if (dlg.ShowDialog() == true)
+                    // 컨테이너일 때만 상태 색상을 계산 (볼륨/인터넷은 State가 없으므로)
+                    if (d is DockerContainer existingContainer)
                     {
-                        try
+                        if (string.Equals(existingContainer.State, "running", StringComparison.OrdinalIgnoreCase)) existingContainer.StateColor = "#28a745";
+                        else if (string.Equals(existingContainer.State, "exited", StringComparison.OrdinalIgnoreCase) || string.Equals(existingContainer.State, "dead", StringComparison.OrdinalIgnoreCase)) existingContainer.StateColor = "#dc3545";
+                        else existingContainer.StateColor = "#808080";
+                    }
+
+                    await vm.CreateNodeAtAsync(d, snapX, snapY);
+                }
+            }
+            // [CASE B] 네트워크 그룹 (DockerGroupObject)
+            else if (e.Data.GetDataPresent("DockerGroupObject"))
+            {
+                var group = e.Data.GetData("DockerGroupObject") as DockerGroup;
+                if (group != null)
+                {
+                    await vm.CreateNodeAtAsync(group, snapX, snapY);
+                }
+            }
+        }
+
+        // ExistingItem_MouseMove 수정 (네트워크일 경우 DockerGroup으로 포장)
+        private void ExistingItem_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed && !_isToolDragging)
+            {
+                if (Math.Abs(e.GetPosition(null).X - _toolStartPoint.X) > 5)
+                {
+                    _isToolDragging = true;
+                    var border = sender as Border;
+
+                    // 1. 컨테이너인 경우
+                    if (border?.DataContext is DockerContainer container)
+                    {
+                        DataObject data = new DataObject("DockerContainerObject", container);
+                        DragDrop.DoDragDrop(border, data, DragDropEffects.Copy);
+                    }
+                    // 2. 볼륨인 경우 (이 부분이 누락되어 드래그가 안 됐던 것입니다)
+                    else if (border?.DataContext is DockerVolume volume)
+                    {
+                        // Canvas_Drop에서 리소스를 통합 판단하므로 키를 "DockerContainerObject"로 동일하게 맞춥니다.
+                        DataObject data = new DataObject("DockerContainerObject", volume);
+                        DragDrop.DoDragDrop(border, data, DragDropEffects.Copy);
+                    }
+                    // 3. 네트워크(그룹)인 경우
+                    else if (border?.DataContext is DockerGroup group)
+                    {
+                        DataObject data = new DataObject("DockerGroupObject", group);
+                        DragDrop.DoDragDrop(border, data, DragDropEffects.Copy);
+                    }
+
+                    _isToolDragging = false;
+                }
+            }
+        }
+
+        // 기존 템플릿 아이템 드래그
+        private void TemplateItem_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (e.LeftButton == MouseButtonState.Pressed && !_isToolDragging)
+            {
+                if (Math.Abs(e.GetPosition(null).X - _toolStartPoint.X) > 5)
+                {
+                    _isToolDragging = true;
+                    var border = sender as Border;
+                    if (border != null && border.DataContext is TemplateItem template)
+                    {
+                        var container = new DockerContainer
                         {
-                            string netId = await _dockerService.CreateNetworkAsync(dlg.NetworkName, dlg.Driver);
-                            await vm.CreateNodeAtAsync(new DockerContainer { Id = netId, Name = dlg.NetworkName, Type = NodeType.Network, Image = dlg.Driver }, snapX, snapY);
-                        }
-                        catch (Exception ex)
-                        {
-                            _dialogService.ShowMessage($"에러 : {ex.Message}");
-                        }
+                            Name = template.Name,
+                            Image = template.Image,
+                        };
+
+                        DataObject data = new DataObject("DockerContainerObject", container);
+                        DragDrop.DoDragDrop(border, data, DragDropEffects.Copy);
+
+                        _isToolDragging = false;
                     }
                 }
             }
-            else
-            {
-                // 기존 아이템 드롭 시에도 연결 로직 작동
-                if (string.Equals(d.State, "running", StringComparison.OrdinalIgnoreCase)) d.StateColor = "#28a745";
-                else if (string.Equals(d.State, "exited", StringComparison.OrdinalIgnoreCase) || string.Equals(d.State, "dead", StringComparison.OrdinalIgnoreCase)) d.StateColor = "#dc3545";
-                else d.StateColor = "#808080";
+        }
 
-                await vm.CreateNodeAtAsync(d, snapX, snapY);
-            }
+        private void ExistingItem_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            _toolStartPoint = e.GetPosition(null);
+            _isToolDragging = false;
+        }
+
+        private void TemplateItem_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            _toolStartPoint = e.GetPosition(null);
+            _isToolDragging = false;
         }
 
         private void Resize_MouseDown(object sender, MouseButtonEventArgs e)
@@ -1178,62 +1350,6 @@ namespace DockerDiagram
             }
 
             return new Rect(minX, minY, maxX - minX, maxY - minY);
-        }
-
-        private void TemplateItem_PreviewMouseDown(object sender, MouseButtonEventArgs e)
-        {
-            _toolStartPoint = e.GetPosition(null);
-            _isToolDragging = false;
-        }
-
-        private void TemplateItem_MouseMove(object sender, MouseEventArgs e)
-        {
-            if (e.LeftButton == MouseButtonState.Pressed && !_isToolDragging)
-            {
-                if (Math.Abs(e.GetPosition(null).X - _toolStartPoint.X) > 5)
-                {
-                    _isToolDragging = true;
-                    var border = sender as Border;
-                    if (border != null && border.DataContext is TemplateItem template)
-                    {
-                        var container = new DockerContainer
-                        {
-                            Name = template.Name,
-                            Image = template.Image,
-                            Type = template.Type
-                        };
-
-                        DataObject data = new DataObject("DockerContainerObject", container);
-                        DragDrop.DoDragDrop(border, data, DragDropEffects.Copy);
-
-                        _isToolDragging = false;
-                    }
-                }
-            }
-        }
-
-        private void ExistingItem_PreviewMouseDown(object sender, MouseButtonEventArgs e)
-        {
-            _toolStartPoint = e.GetPosition(null);
-            _isToolDragging = false;
-        }
-
-        private void ExistingItem_MouseMove(object sender, MouseEventArgs e)
-        {
-            if (e.LeftButton == MouseButtonState.Pressed && !_isToolDragging)
-            {
-                if (Math.Abs(e.GetPosition(null).X - _toolStartPoint.X) > 5)
-                {
-                    _isToolDragging = true;
-                    var border = sender as Border;
-                    if (border != null && border.DataContext is DockerContainer container)
-                    {
-                        DataObject data = new DataObject("DockerContainerObject", container);
-                        DragDrop.DoDragDrop(border, data, DragDropEffects.Copy);
-                        _isToolDragging = false;
-                    }
-                }
-            }
         }
 
         private void UpdateTitle()

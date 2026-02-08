@@ -1,10 +1,13 @@
-﻿using System;
-using System.Windows.Input;
+﻿using DockerDiagram.Helpers;
+using DockerDiagram.Models;
+using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized; // 컬렉션 변경 감지용
 using System.Linq;
 using System.Threading.Tasks;
-using DockerDiagram.Helpers;
-using DockerDiagram.Models;
+using System.Windows.Input;
+using System.Windows.Threading;
 
 namespace DockerDiagram.ViewModels
 {
@@ -13,8 +16,12 @@ namespace DockerDiagram.ViewModels
         private const int GRID_SIZE = 10;
         private const double MIN_SIZE = 50;
 
-        private readonly IDockerService _dockerService;
-        private readonly IDialogService _dialogService;
+        private readonly IContainerService? _containerService;
+        private readonly IVolumeService? _volumeService;
+        private readonly IDialogService? _dialogService;
+
+        // 마운트 정보 원본 저장용 (캐시)
+        private List<Docker.DotNet.Models.MountPoint> _cachedMounts = new();
 
         // --- 1. 기본 레이아웃 속성 ---
         private double _x;
@@ -50,8 +57,72 @@ namespace DockerDiagram.ViewModels
 
         public string ShortContainerId => (Type == NodeType.Container) ? ShortenId(ContainerId) : "";
 
+        // --- 네트워크 3단계 전환 모드 ---
+        private int _networkDisplayMode = 0;
+        public int NetworkDisplayMode
+        {
+            get => _networkDisplayMode;
+            set { _networkDisplayMode = value; OnPropertyChanged(); }
+        }
+
+        // 볼륨 디스플레이 모드 (0: Named, 1: Bind)
+        private int _volumeDisplayMode = 0;
+        public int VolumeDisplayMode
+        {
+            get => _volumeDisplayMode;
+            set
+            {
+                _volumeDisplayMode = value;
+                OnPropertyChanged();
+                UpdateVolumeList(); // 모드가 바뀌면 리스트 내용 즉시 갱신
+            }
+        }
+
+        public class NetworkDetail
+        {
+            public string NetworkName { get; set; } = "";
+            public string IPv4 { get; set; } = "-";
+            public string IPv6 { get; set; } = "-";
+        }
+
+        public ObservableCollection<NetworkDetail> NetworkDetailList { get; } = new();
         public Dictionary<string, string> NetworkIpMap { get; private set; } = new Dictionary<string, string>();
 
+        // [리스트] 볼륨 (필터링된 결과 표시)
+        public ObservableCollection<string> MountedVolumeList { get; } = new ObservableCollection<string>();
+
+        // [리스트] 연결된 노드 (인터넷, 컨테이너만 표시)
+        public ObservableCollection<string> ConnectedNodes { get; } = new ObservableCollection<string>();
+
+        // UsedByContainers: 문자열 -> 리스트로 변경 (볼륨 상세 정보용)
+        public ObservableCollection<string> UsedByContainers { get; } = new ObservableCollection<string>();
+
+        // --- 실시간 리소스 모니터링 ---
+        private string _cpuUsage = "0.0%";
+        public string CpuUsage { get => _cpuUsage; set { _cpuUsage = value; OnPropertyChanged(); } }
+
+        private double _cpuValue = 0;
+        public double CpuValue { get => _cpuValue; set { _cpuValue = value; OnPropertyChanged(); } }
+
+        private string _memoryUsage = "0B / 0B";
+        public string MemoryUsage { get => _memoryUsage; set { _memoryUsage = value; OnPropertyChanged(); } }
+
+        private double _memoryValue = 0;
+        public double MemoryValue
+        {
+            get => _memoryValue;
+            set
+            {
+                // NaN 값 방지
+                if (double.IsNaN(value)) _memoryValue = 0;
+                else _memoryValue = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private DispatcherTimer? _statsTimer;
+
+        // --- 도커 상세 정보 ---
         private List<string> _portBindings = new List<string>();
         public List<string> PortBindings
         {
@@ -59,7 +130,6 @@ namespace DockerDiagram.ViewModels
             set { _portBindings = value; OnPropertyChanged(); }
         }
 
-        // 2. 환경 변수
         private List<string> _environmentVariables = new List<string>();
         public List<string> EnvironmentVariables
         {
@@ -134,10 +204,24 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        // ★ [수정] 선택 시 연결 정보 강제 갱신 추가
         public bool IsSelected
         {
             get => _isSelected;
-            set { _isSelected = value; OnPropertyChanged(); }
+            set
+            {
+                _isSelected = value;
+                OnPropertyChanged();
+                if (value)
+                {
+                    StartMonitoring();
+                    RefreshConnections(); // 클릭 시점에 연결 리스트 갱신
+                }
+                else
+                {
+                    StopMonitoring();
+                }
+            }
         }
 
         public string Name { get => _name; set { _name = value; OnPropertyChanged(); } }
@@ -164,20 +248,43 @@ namespace DockerDiagram.ViewModels
 
         public event EventHandler? OnPositionChanged;
 
-
-        // 2. 상세 정보 및 상태 제어 속성
         private bool _isRunning;
         public bool IsRunning
         {
             get => _isRunning;
-            set { _isRunning = value; OnPropertyChanged(); }
+            set
+            {
+                if (_isRunning != value)
+                {
+                    _isRunning = value;
+                    OnPropertyChanged();
+                    RaiseCommandStates();
+                }
+            }
         }
 
         private bool _isPaused;
         public bool IsPaused
         {
             get => _isPaused;
-            set { _isPaused = value; OnPropertyChanged(); }
+            set
+            {
+                if (_isPaused != value)
+                {
+                    _isPaused = value;
+                    OnPropertyChanged();
+                    RaiseCommandStates();
+                }
+            }
+        }
+
+        private void RaiseCommandStates()
+        {
+            StartCommand?.RaiseCanExecuteChanged();
+            StopCommand?.RaiseCanExecuteChanged();
+            PauseCommand?.RaiseCanExecuteChanged();
+            RestartCommand?.RaiseCanExecuteChanged();
+            TerminalCommand?.RaiseCanExecuteChanged();
         }
 
         private string _detailStatus = "Unknown";
@@ -196,7 +303,7 @@ namespace DockerDiagram.ViewModels
         public string IpAddresses { get => _ipAddresses; set { _ipAddresses = value; OnPropertyChanged(); } }
 
         private string _connectedNetworks = "-";
-        public string ConnectedNetworks { get => _connectedNetworks; set { _connectedNetworks = value; OnPropertyChanged(); } }
+        public string ConnectedNetworksString { get => _connectedNetworks; set { _connectedNetworks = value; OnPropertyChanged(); } }
 
         private string _mountedVolumes = "None";
         public string MountedVolumes { get => _mountedVolumes; set { _mountedVolumes = value; OnPropertyChanged(); } }
@@ -207,56 +314,79 @@ namespace DockerDiagram.ViewModels
         private string _mountpoint = "-";
         public string Mountpoint { get => _mountpoint; set { _mountpoint = value; OnPropertyChanged(); } }
 
-        private string _usedByContainers = "-";
-        public string UsedByContainers { get => _usedByContainers; set { _usedByContainers = value; OnPropertyChanged(); } }
-
-        private string _networkDriver = "-";
-        public string NetworkDriver { get => _networkDriver; set { _networkDriver = value; OnPropertyChanged(); } }
-
-        private string _subnet = "-";
-        public string Subnet { get => _subnet; set { _subnet = value; OnPropertyChanged(); } }
-
-        private string _gateway = "-";
-        public string Gateway { get => _gateway; set { _gateway = value; OnPropertyChanged(); } }
-
-        private string _networkContainers = "-";
-        public string NetworkContainers { get => _networkContainers; set { _networkContainers = value; OnPropertyChanged(); } }
-
-
-        // 3. Commands
-        public ICommand StartCommand { get; }
-        public ICommand StopCommand { get; }
-        public ICommand PauseCommand { get; }
-        public ICommand RestartCommand { get; }
-        public ICommand TerminalCommand { get; }
-
-
-        // ★ [DI] 생성자 수정: IDockerService, IDialogService 주입
-        public NodeViewModel(IDockerService dockerService, IDialogService dialogService)
+        // ParentSheet 변경 시 이벤트 구독/해제
+        private SheetViewModel? _parentSheet;
+        public SheetViewModel? ParentSheet
         {
-            _dockerService = dockerService ?? throw new ArgumentNullException(nameof(dockerService));
-            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
+            get => _parentSheet;
+            set
+            {
+                if (_parentSheet != value)
+                {
+                    if (_parentSheet != null)
+                        _parentSheet.Connectors.CollectionChanged -= Connectors_CollectionChanged;
 
-            StartCommand = new AsyncRelayCommand(_ => ControlAction("start"), _ => !IsRunning);
-            StopCommand = new AsyncRelayCommand(_ => ControlAction("stop"), _ => IsRunning);
-            PauseCommand = new AsyncRelayCommand(_ => ControlAction("pause"), _ => IsRunning || IsPaused);
-            RestartCommand = new AsyncRelayCommand(_ => ControlAction("restart"), _ => true);
-            TerminalCommand = new RelayCommand(_ => OpenTerminal(), _ => IsRunning);
+                    _parentSheet = value;
+
+                    if (_parentSheet != null)
+                        _parentSheet.Connectors.CollectionChanged += Connectors_CollectionChanged;
+
+                    RefreshConnections();
+                }
+            }
         }
 
+        private void Connectors_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        {
+            RefreshConnections();
+        }
 
-        // 4. 상세 정보 로드
+        // --- Commands ---
+        public AsyncRelayCommand StartCommand { get; }
+        public AsyncRelayCommand StopCommand { get; }
+        public AsyncRelayCommand PauseCommand { get; }
+        public AsyncRelayCommand RestartCommand { get; }
+        public RelayCommand TerminalCommand { get; }
+        public ICommand ToggleNetworkModeCommand { get; }
+        public ICommand ToggleVolumeModeCommand { get; }
+
+        public NodeViewModel(IContainerService? containerService = null,
+                             IVolumeService? volumeService = null,
+                             IDialogService? dialogService = null)
+        {
+            _containerService = containerService;
+            _volumeService = volumeService;
+            _dialogService = dialogService;
+
+            StartCommand = new AsyncRelayCommand(_ => ControlAction("start"), _ => Type == NodeType.Container && !IsRunning);
+            StopCommand = new AsyncRelayCommand(_ => ControlAction("stop"), _ => Type == NodeType.Container && IsRunning);
+            PauseCommand = new AsyncRelayCommand(_ => ControlAction("pause"), _ => Type == NodeType.Container && (IsRunning || IsPaused));
+            RestartCommand = new AsyncRelayCommand(_ => ControlAction("restart"), _ => Type == NodeType.Container);
+
+            TerminalCommand = new RelayCommand(_ => OpenTerminal(), _ => Type == NodeType.Container && IsRunning);
+
+            ToggleNetworkModeCommand = new RelayCommand(_ => {
+                NetworkDisplayMode = (NetworkDisplayMode + 1) % 3;
+            });
+
+            ToggleVolumeModeCommand = new RelayCommand(_ => {
+                VolumeDisplayMode = (VolumeDisplayMode + 1) % 2;
+            });
+        }
+
+        // --- 상세 정보 로드 ---
         public async Task RefreshDetailsAsync()
         {
             if (string.IsNullOrEmpty(Name)) return;
+            if (Type == NodeType.Internet) return;
 
             try
             {
-                if (Type == NodeType.Container)
+                if (Type == NodeType.Container && _containerService != null)
                 {
                     if (string.IsNullOrEmpty(ContainerId)) return;
 
-                    var info = await _dockerService.InspectContainerAsync(ContainerId);
+                    var info = await _containerService.InspectContainerAsync(ContainerId);
 
                     DetailStatus = info.State.Status;
                     IsRunning = info.State.Running;
@@ -293,10 +423,10 @@ namespace DockerDiagram.ViewModels
                     }
                     this.PortBindings = portsList;
 
+                    // 네트워크 정보
                     var nets = new List<string>();
                     var ips = new List<string>();
-
-                    if (NetworkIpMap == null) NetworkIpMap = new Dictionary<string, string>();
+                    NetworkDetailList.Clear();
                     NetworkIpMap.Clear();
 
                     if (info.NetworkSettings?.Networks != null)
@@ -304,25 +434,43 @@ namespace DockerDiagram.ViewModels
                         foreach (var net in info.NetworkSettings.Networks)
                         {
                             nets.Add(net.Key);
-                            string ip = net.Value.IPAddress;
-                            if (!string.IsNullOrEmpty(ip))
+                            string ipv4 = net.Value.IPAddress;
+                            string ipv6 = net.Value.GlobalIPv6Address;
+
+                            if (!string.IsNullOrEmpty(ipv4))
                             {
-                                ips.Add(ip);
-                                NetworkIpMap[net.Key] = ip;
+                                ips.Add(ipv4);
+                                NetworkIpMap[net.Key] = ipv4;
                             }
+
+                            NetworkDetailList.Add(new NetworkDetail
+                            {
+                                NetworkName = net.Key,
+                                IPv4 = string.IsNullOrEmpty(ipv4) ? "-" : ipv4,
+                                IPv6 = string.IsNullOrEmpty(ipv6) ? "-" : ipv6
+                            });
                         }
                     }
-                    ConnectedNetworks = nets.Count > 0 ? string.Join(", ", nets) : "None";
+                    ConnectedNetworksString = nets.Count > 0 ? string.Join(", ", nets) : "None";
                     IpAddresses = ips.Count > 0 ? string.Join(", ", ips) : "-";
 
+                    // 볼륨 정보 로드 (캐싱 후 UpdateVolumeList 호출)
                     var vols = new List<string>();
+
                     if (info.Mounts != null)
                     {
+                        _cachedMounts = info.Mounts.ToList(); // 원본 데이터 저장
                         foreach (var m in info.Mounts)
                         {
                             vols.Add($"{m.Source} -> {m.Destination}");
                         }
                     }
+                    else
+                    {
+                        _cachedMounts = new List<Docker.DotNet.Models.MountPoint>();
+                    }
+
+                    UpdateVolumeList(); // 필터링하여 리스트 갱신
                     MountedVolumes = vols.Count > 0 ? string.Join("\n", vols) : "None";
 
                     if (IsRunning) StatusColor = "#28a745";
@@ -330,59 +478,37 @@ namespace DockerDiagram.ViewModels
                     else StatusColor = "#dc3545";
 
                     OnPropertyChanged(nameof(NetworkIpMap));
+                    OnPropertyChanged(nameof(NetworkDetailList));
                 }
-                else if (Type == NodeType.Volume)
+                else if (Type == NodeType.Volume && _volumeService != null)
                 {
-                    var vol = await _dockerService.InspectVolumeAsync(Name);
+                    var vol = await _volumeService.InspectVolumeAsync(Name);
 
                     DetailStatus = "Created";
                     Driver = vol.Driver;
                     Mountpoint = vol.Mountpoint;
                     CreatedDate = DateTime.TryParse(vol.CreatedAt, out var cTime) ? cTime.ToString("yyyy-MM-dd HH:mm:ss") : vol.CreatedAt;
 
-                    var usedList = await _dockerService.GetContainersUsingVolumeAsync(Name);
-                    UsedByContainers = usedList.Count > 0 ? string.Join(", ", usedList) : "None";
+                    // UsedByContainers 리스트 업데이트
+                    var usedList = await _volumeService.GetContainersUsingVolumeAsync(Name);
+                    UsedByContainers.Clear();
+
+                    if (usedList.Count > 0)
+                    {
+                        foreach (var u in usedList) UsedByContainers.Add(u);
+                    }
+                    else
+                    {
+                        UsedByContainers.Add("None");
+                    }
 
                     IsRunning = false;
                     IsPaused = false;
                     StatusColor = "#E67E22";
                 }
-                else if (Type == NodeType.Network)
-                {
-                    if (string.IsNullOrEmpty(ContainerId)) return;
-
-                    var net = await _dockerService.InspectNetworkAsync(ContainerId);
-
-                    DetailStatus = "Active";
-                    NetworkDriver = net.Driver;
-
-                    if (net.IPAM?.Config != null && net.IPAM.Config.Count > 0)
-                    {
-                        Subnet = net.IPAM.Config[0].Subnet ?? "-";
-                        Gateway = net.IPAM.Config[0].Gateway ?? "-";
-                    }
-                    else
-                    {
-                        Subnet = "-";
-                        Gateway = "-";
-                    }
-
-                    if (net.Containers != null && net.Containers.Count > 0)
-                    {
-                        var names = net.Containers.Values.Select(c => c.Name).ToList();
-                        NetworkContainers = string.Join(", ", names);
-                    }
-                    else
-                    {
-                        NetworkContainers = "None";
-                    }
-
-                    IsRunning = false;
-                    IsPaused = false;
-                    StatusColor = "#9B59B6";
-                }
 
                 CommandManager.InvalidateRequerySuggested();
+                RefreshConnections();
             }
             catch (Exception ex)
             {
@@ -394,44 +520,138 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        // --- 5. 제어 액션 로직 ---
+        // ★ [수정] 볼륨 리스트 필터링 로직 (Bind 마운트 표시 복구)
+        private void UpdateVolumeList()
+        {
+            MountedVolumeList.Clear();
+
+            if (ParentSheet == null) return;
+
+            // 현재 시트에 있는 "볼륨 노드" 이름들 (Named Volume 필터링용)
+            var validVolumeNames = ParentSheet.Nodes
+                                              .Where(n => n.Type == NodeType.Volume)
+                                              .Select(n => n.Name)
+                                              .ToHashSet();
+
+            foreach (var m in _cachedMounts)
+            {
+                // [Mode 0] Named Volume: 시트에 있는 볼륨 노드와 매칭되는 것만 표시
+                if (VolumeDisplayMode == 0)
+                {
+                    if (m.Type == "volume" && validVolumeNames.Contains(m.Name))
+                    {
+                        MountedVolumeList.Add($"{m.Name} : {m.Destination}");
+                    }
+                }
+                // [Mode 1] Bind Mount: 호스트 경로 연결 표시
+                else
+                {
+                    // bind 타입인 경우만 표시
+                    if (m.Type == "bind")
+                    {
+                        MountedVolumeList.Add($"{m.Source} -> {m.Destination}");
+                    }
+                }
+            }
+        }
+
+        public void StartMonitoring()
+        {
+            if (Type != NodeType.Container || string.IsNullOrEmpty(ContainerId) || _containerService == null) return;
+
+            if (_statsTimer == null)
+            {
+                _statsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                _statsTimer.Tick += async (s, e) => await UpdateStatsAsync();
+            }
+            _statsTimer.Start();
+        }
+
+        public void StopMonitoring() => _statsTimer?.Stop();
+
+        private async Task UpdateStatsAsync()
+        {
+            if (!IsRunning || _containerService == null) return;
+
+            try
+            {
+                var stats = await _containerService.GetContainerStatsAsync(ContainerId);
+
+                CpuUsage = $"{stats.CpuPercentage:F1}%";
+                CpuValue = stats.CpuPercentage;
+
+                MemoryUsage = $"{stats.MemoryUsedMB:F1}MB / {stats.MemoryLimitMB:F1}MB";
+
+                if (stats.MemoryLimitMB > 0)
+                {
+                    MemoryValue = (stats.MemoryUsedMB / stats.MemoryLimitMB) * 100;
+                }
+                else
+                {
+                    MemoryValue = 0;
+                }
+            }
+            catch { }
+        }
+
         private async Task ControlAction(string action)
         {
-            if (string.IsNullOrEmpty(ContainerId)) return;
+            if (string.IsNullOrEmpty(ContainerId) || _containerService == null) return;
 
             try
             {
                 switch (action)
                 {
-                    case "start": await _dockerService.StartContainerAsync(ContainerId); break;
-                    case "stop": await _dockerService.StopContainerAsync(ContainerId); break;
+                    case "start": await _containerService.StartContainerAsync(ContainerId); break;
+                    case "stop": await _containerService.StopContainerAsync(ContainerId); break;
                     case "pause":
-                        if (DetailStatus == "paused") await _dockerService.UnpauseContainerAsync(ContainerId);
-                        else await _dockerService.PauseContainerAsync(ContainerId);
+                        if (DetailStatus == "paused") await _containerService.UnpauseContainerAsync(ContainerId);
+                        else await _containerService.PauseContainerAsync(ContainerId);
                         break;
-                    case "restart": await _dockerService.RestartContainerAsync(ContainerId); break;
+                    case "restart": await _containerService.RestartContainerAsync(ContainerId); break;
                 }
                 await RefreshDetailsAsync();
             }
             catch (Exception ex)
             {
-                // [변경] DialogService 사용
-                _dialogService.ShowMessage($"동작 실패 : {ex.Message}");
+                _dialogService?.ShowMessage($"동작 실패 : {ex.Message}");
             }
         }
 
         private void OpenTerminal()
         {
-            if (string.IsNullOrEmpty(ContainerId)) return;
+            if (string.IsNullOrEmpty(ContainerId) || _containerService == null) return;
 
             try
             {
-                _dockerService.OpenTerminal(ContainerId);
+                _containerService.OpenTerminal(ContainerId);
             }
             catch (Exception ex)
             {
-                // [변경] DialogService 사용
-                _dialogService.ShowMessage($"터미널 오류 : {ex.Message}");
+                _dialogService?.ShowMessage($"터미널 오류 : {ex.Message}");
+            }
+        }
+
+        public void RefreshConnections()
+        {
+            ConnectedNodes.Clear();
+            if (ParentSheet == null) return;
+
+            var relatedConnectors = ParentSheet.Connectors
+                .Where(c => c.Source == this || c.Target == this)
+                .ToList();
+
+            foreach (var conn in relatedConnectors)
+            {
+                var otherNode = (conn.Source == this) ? conn.Target : conn.Source;
+
+                if (otherNode.Type == NodeType.Container || otherNode.Type == NodeType.Internet)
+                {
+                    if (!ConnectedNodes.Contains(otherNode.Name))
+                    {
+                        ConnectedNodes.Add(otherNode.Name);
+                    }
+                }
             }
         }
     }

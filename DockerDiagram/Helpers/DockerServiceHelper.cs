@@ -11,25 +11,23 @@ namespace DockerDiagram.Helpers
         private const string DOCKER_PROCESS_NAME = "Docker Desktop";
         private const string DOCKER_EXE_NAME = "Docker Desktop.exe";
 
-        // 도커가 실행 중인지 확인
+        // 도커 프로세스 실행 여부 확인
         public static bool IsDockerRunning()
         {
             var processes = Process.GetProcessesByName(DOCKER_PROCESS_NAME);
             return processes.Length > 0;
         }
 
-        // ★ [수정] 서비스를 매개변수로 받아야 함
-        public static async Task StartDockerAsync(IDockerService dockerService, IDialogService dialogService)
+        public static async Task StartDockerAsync(ISystemService systemService, IDialogService dialogService)
         {
-            if (IsDockerRunning()) return; // 실행 중이면 취소
+            if (IsDockerRunning()) return; // 이미 실행 중
 
-            // 동적으로 실행 파일 경로 찾기
+            // 실행 파일 경로 찾기
             string? dockerPath = GetDockerExecutablePath();
 
-            // 2. 경로를 못 찾았으면 사용자에게 물어보기
+            // 경로 못 찾으면 사용자에게 묻기
             if (string.IsNullOrEmpty(dockerPath) || !File.Exists(dockerPath))
             {
-                // ★ [수정] IDialogService 사용
                 bool userWantsToSelect = dialogService.ShowConfirm(
                     "Docker Desktop 실행 파일을 자동으로 찾을 수 없습니다.\n직접 지정하시겠습니까?",
                     "경로 확인 필요");
@@ -49,16 +47,16 @@ namespace DockerDiagram.Helpers
                     }
                     else
                     {
-                        return; // 취소함
+                        return; // 취소
                     }
                 }
                 else
                 {
-                    return; // 실행 취소
+                    return; // 취소
                 }
             }
 
-            // 실행
+            // 실행 시도
             try
             {
                 Process.Start(new ProcessStartInfo
@@ -67,41 +65,34 @@ namespace DockerDiagram.Helpers
                     UseShellExecute = true
                 });
 
-                // ★ [수정] 실행 대기 시 서비스 전달
-                await WaitForDockerReadyAsync(dockerService);
+                await WaitForDockerReadyAsync(systemService);
             }
             catch (Exception ex)
             {
-                // ★ [수정] IDialogService 사용
                 dialogService.ShowMessage($"도커 실행 실패: {ex.Message}");
             }
         }
 
-        // ★ [수정] 도커 서비스를 매개변수로 받음
-        private static async Task WaitForDockerReadyAsync(IDockerService dockerService)
+        private static async Task WaitForDockerReadyAsync(ISystemService systemService)
         {
-            int timeoutSeconds = 60; // 최대 60초 대기
+            int timeoutSeconds = 60;
 
             for (int i = 0; i < timeoutSeconds; i++)
             {
-                // ★ [핵심] Instance 대신 주입받은 dockerService 사용
-                if (await dockerService.PingAsync())
+                if (await systemService.PingAsync())
                 {
-                    return; // 연결 성공! 즉시 리턴
+                    return;
                 }
 
-                await Task.Delay(1000); // 1초 대기 후 재시도
+                await Task.Delay(1000);
             }
 
             throw new TimeoutException("Docker Desktop 실행 시간이 초과되었습니다. (60초)");
         }
 
-        // 설치 경로를 동적으로 찾는 로직 (변경 없음)
         private static string? GetDockerExecutablePath()
         {
             string? path = null;
-
-            // 레지스트리 Uninstall 정보에서 찾기
             try
             {
                 string registryKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Docker Desktop";
@@ -123,7 +114,6 @@ namespace DockerDiagram.Helpers
                 Debug.WriteLine($"[DockerDiscovery] 레지스트리 허용 실패 : {ex.Message}");
             }
 
-            // 환경변수 이용
             try
             {
                 foreach (var root in new[]
@@ -145,7 +135,6 @@ namespace DockerDiagram.Helpers
                 Debug.WriteLine($"[DockerDiscovery] 환경변수 경로 찾기 실패: {ex.Message}");
             }
 
-            // 기본 C드라이브 경로, 최후의 수단
             path = @"C:\Program Files\Docker\Docker\Docker Desktop.exe";
             if (File.Exists(path)) return path;
 

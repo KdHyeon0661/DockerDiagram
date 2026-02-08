@@ -7,7 +7,7 @@ namespace DockerDiagram.Models
     // 전체 파일 구조
     public class DiagramFile
     {
-        public string Version { get; set; } = "1.0";
+        public string Version { get; set; } = "1.14";
         public DateTime SavedAt { get; set; } = DateTime.Now;
         public List<SheetData> Sheets { get; set; } = new List<SheetData>();
         public int ActiveSheetIndex { get; set; } = 0;
@@ -17,12 +17,8 @@ namespace DockerDiagram.Models
     public class SheetData
     {
         public string Title { get; set; } = "Sheet";
-
-        // 맵 크기
         public double MapWidth { get; set; }
         public double MapHeight { get; set; }
-
-        // 뷰포트 상태 (줌/팬)
         public double OffsetX { get; set; }
         public double OffsetY { get; set; }
         public double Scale { get; set; }
@@ -39,6 +35,7 @@ namespace DockerDiagram.Models
         public string DockerId { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string ImageName { get; set; } = string.Empty;
+
         public NodeType Type { get; set; }
 
         public double X { get; set; }
@@ -60,20 +57,20 @@ namespace DockerDiagram.Models
         public PortDirection TargetDir { get; set; }
         public RelationType RelationType { get; set; }
 
-        public string? MountPath { get; set; } // 볼륨 마운트 경로 (예: /var/lib/mysql)
-        public string? IpAddress { get; set; } // 네트워크 고정 IP
+        public string? MountPath { get; set; }
+        public string? IpAddress { get; set; }
     }
 
     // 그룹 데이터
     public class GroupData
     {
         public string Title { get; set; } = "Group";
+        public GroupType Type { get; set; } = GroupType.General;
+
         public double X { get; set; }
         public double Y { get; set; }
         public double Width { get; set; }
         public double Height { get; set; }
-
-        // 그룹에 속한 노드들의 다이어그램 ID 목록
         public List<string> ContainedNodeIds { get; set; } = new List<string>();
     }
 }

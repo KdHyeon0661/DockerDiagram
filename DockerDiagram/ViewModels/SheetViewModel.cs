@@ -1,9 +1,10 @@
-﻿using System.Collections.ObjectModel;
+﻿using System;
+using System.Collections.ObjectModel;
+using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using DockerDiagram.Helpers;
 using DockerDiagram.Models;
-using System.Collections.Generic;
-using System.Linq;
 
 namespace DockerDiagram.ViewModels
 {
@@ -16,9 +17,10 @@ namespace DockerDiagram.ViewModels
             set { _title = value; OnPropertyChanged(); }
         }
 
-        // ★ [DI] 서비스 주입 필드
-        private readonly IDockerService _dockerService;
-        private readonly IDialogService _dialogService; // 추가됨 (자식에게 넘겨주기 위해 필요)
+        private readonly IContainerService _containerService;
+        private readonly IVolumeService _volumeService;
+        private readonly INetworkService _networkService;
+        private readonly IDialogService _dialogService;
 
         // --- 맵 데이터 ---
         public ObservableCollection<NodeViewModel> Nodes { get; set; } = new();
@@ -42,39 +44,161 @@ namespace DockerDiagram.ViewModels
         private double _offsetY = 0;
         public double OffsetY { get => _offsetY; set { _offsetY = value; OnPropertyChanged(); } }
 
-        public SheetViewModel(string title, IDockerService dockerService, IDialogService dialogService)
+        // ★ [핵심 추가] 선택된 노드 처리 (이게 있어야 CPU 갱신 타이머가 돕니다!)
+        private NodeViewModel? _selectedNode;
+        public NodeViewModel? SelectedNode
+        {
+            get => _selectedNode;
+            set
+            {
+                if (_selectedNode != value)
+                {
+                    // 1. 이전 노드 선택 해제 -> 타이머 중지
+                    if (_selectedNode != null)
+                    {
+                        _selectedNode.IsSelected = false;
+                    }
+
+                    _selectedNode = value;
+
+                    // 2. 새 노드 선택 -> 타이머 시작 & 연결 정보 갱신
+                    if (_selectedNode != null)
+                    {
+                        _selectedNode.IsSelected = true;
+                        _selectedNode.RefreshConnections();
+                    }
+
+                    OnPropertyChanged();
+
+                    // 다른 요소 선택 해제
+                    if (_selectedNode != null)
+                    {
+                        SelectedGroup = null;
+                        SelectedConnector = null;
+                    }
+                }
+            }
+        }
+
+        private GroupViewModel? _selectedGroup;
+        public GroupViewModel? SelectedGroup
+        {
+            get => _selectedGroup;
+            set
+            {
+                if (_selectedGroup != value)
+                {
+                    _selectedGroup = value;
+                    OnPropertyChanged();
+                    if (_selectedGroup != null)
+                    {
+                        SelectedNode = null;
+                        SelectedConnector = null;
+                    }
+                }
+            }
+        }
+
+        private ConnectorViewModel? _selectedConnector;
+        public ConnectorViewModel? SelectedConnector
+        {
+            get => _selectedConnector;
+            set
+            {
+                if (_selectedConnector != value)
+                {
+                    if (_selectedConnector != null) _selectedConnector.IsSelected = false;
+                    _selectedConnector = value;
+                    if (_selectedConnector != null) _selectedConnector.IsSelected = true;
+
+                    OnPropertyChanged();
+                    if (_selectedConnector != null)
+                    {
+                        SelectedNode = null;
+                        SelectedGroup = null;
+                    }
+                }
+            }
+        }
+
+        public SheetViewModel(string title,
+                              IContainerService containerService,
+                              IVolumeService volumeService,
+                              INetworkService networkService,
+                              IDialogService dialogService)
         {
             Title = title;
-            _dockerService = dockerService;
+            _containerService = containerService;
+            _volumeService = volumeService;
+            _networkService = networkService;
             _dialogService = dialogService;
         }
 
-        public void CreateNodeAt(DockerContainer container, double x, double y)
+        public void CreateContainerAt(DockerContainer container, double x, double y)
         {
-            Nodes.Add(new NodeViewModel(_dockerService, _dialogService)
+            var nodeVm = new NodeViewModel(_containerService, _volumeService, _dialogService)
             {
                 Name = container.Name,
+                ParentSheet = this, // ★ 부모 시트 연결
                 ImageName = container.Image,
                 StatusColor = container.StateColor,
-                Type = container.Type,
+                Type = NodeType.Container,
                 ContainerId = container.Id,
                 X = x,
                 Y = y,
                 Width = 160,
                 Height = 80
-            });
+            };
+            Nodes.Add(nodeVm);
+        }
+
+        public void CreateVolumeAt(DockerVolume volume, double x, double y)
+        {
+            var nodeVm = new NodeViewModel(_containerService, _volumeService, _dialogService)
+            {
+                Name = volume.Name,
+                ParentSheet = this,
+                StatusColor = "#E67E22",
+                Type = NodeType.Volume,
+                ContainerId = "",
+                X = x,
+                Y = y,
+                Width = 160,
+                Height = 80
+            };
+            Nodes.Add(nodeVm);
+        }
+
+        public void CreateInternetAt(DockerInternet internet, double x, double y)
+        {
+            var nodeVm = new NodeViewModel(_containerService, _volumeService, _dialogService)
+            {
+                Name = internet.Name,
+                ParentSheet = this,
+                StatusColor = "#E67E22",
+                Type = NodeType.Internet,
+                ContainerId = "",
+                X = x,
+                Y = y,
+                Width = 160,
+                Height = 80
+            };
+            Nodes.Add(nodeVm);
         }
 
         public void AddConnection(NodeViewModel source, NodeViewModel target, PortDirection sourceDir, PortDirection targetDir)
         {
             if (source == target) return;
+
             bool exists = Connectors.Any(c => (c.Source == source && c.Target == target) || (c.Source == target && c.Target == source));
 
-            // ★ [DI] 자식(ConnectorViewModel) 생성 시 서비스 전달
-            // (ConnectorViewModel도 IP 설정 시 MessageBox를 쓰므로 dialogService가 필요합니다)
             if (!exists)
             {
-                Connectors.Add(new ConnectorViewModel(source, target, sourceDir, targetDir, _dockerService, _dialogService));
+                Connectors.Add(new ConnectorViewModel(source, target, sourceDir, targetDir, _dialogService));
+
+                // 연결 즉시 갱신
+                source.RefreshConnections();
+                target.RefreshConnections();
             }
         }
 
@@ -82,6 +206,19 @@ namespace DockerDiagram.ViewModels
         {
             group.ParentSheet = this;
             Groups.Add(group);
+        }
+
+        public void RemoveNode(NodeViewModel node)
+        {
+            var relatedConnectors = Connectors.Where(c => c.Source == node || c.Target == node).ToList();
+            foreach (var c in relatedConnectors) Connectors.Remove(c);
+
+            foreach (var g in Groups)
+            {
+                if (g.ContainedNodes.Contains(node)) g.RemoveNode(node);
+            }
+
+            Nodes.Remove(node);
         }
 
         public void AutoLayout()

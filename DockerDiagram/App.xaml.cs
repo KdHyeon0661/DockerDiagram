@@ -1,28 +1,42 @@
-﻿using System.Windows;
-using DockerDiagram.ViewModels; // MainViewModel 위치
-using DockerDiagram.Helpers; // DialogService 위치
+﻿using DockerDiagram.Helpers;
+using DockerDiagram.ViewModels;
+using System.Runtime.Versioning;
+using System.Windows;
 
 namespace DockerDiagram
 {
+    [SupportedOSPlatform("windows")]
     public partial class App : Application
     {
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
 
-            // DockerApiService 생성자가 public인지 확인하세요!
-            IDockerService dockerService = new DockerApiService();
+            // 1. 통합 서비스 생성
+            // (DockerApiService가 IContainerService, IVolumeService 등을 모두 구현하고 있어야 합니다)
+            var dockerApiService = new DockerApiService();
 
-            // DialogService 클래스가 실제로 존재하는지 확인하세요!
+            // 2. 다이얼로그 서비스 생성
             IDialogService dialogService = new DialogService();
 
-            // 뷰모델 생성
-            var mainViewModel = new MainViewModel(dockerService, dialogService);
+            // 3. MainViewModel 생성 (순서 중요: Container, Volume, Network, Image, System, Dialog)
+            var mainViewModel = new MainViewModel(
+                dockerApiService, // IContainerService
+                dockerApiService, // IVolumeService
+                dockerApiService, // INetworkService
+                dockerApiService, // IImageService
+                dockerApiService, // ISystemService
+                dialogService     // IDialogService
+            );
 
-            // 윈도우 생성
-            var mainWindow = new MainWindow(mainViewModel, dockerService, dialogService);
+            // 4. MainWindow 생성 (ViewModel, SystemService, DialogService)
+            var mainWindow = new MainWindow(
+                mainViewModel,
+                dockerApiService, // ISystemService (도커 상태 체크용)
+                dialogService
+            );
 
-            // 화면 띄우기
+            // 5. 화면 띄우기
             mainWindow.Show();
         }
     }

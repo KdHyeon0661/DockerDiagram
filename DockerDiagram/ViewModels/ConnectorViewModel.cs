@@ -1,23 +1,19 @@
-﻿using System.Windows;
+﻿using System;
+using System.Windows;
 using System.Windows.Media;
-using System.Windows.Input;
 using DockerDiagram.Helpers;
 using DockerDiagram.Models;
-using System.Threading.Tasks;
-using System;
 
 namespace DockerDiagram.ViewModels
 {
     public class ConnectorViewModel : ViewModelBase
     {
-        private readonly IDockerService _dockerService;
         private readonly IDialogService _dialogService;
 
         public NodeViewModel Source { get; private set; }
         public NodeViewModel Target { get; private set; }
         public PortDirection SourceDir { get; private set; }
         public PortDirection TargetDir { get; private set; }
-        public ICommand ApplyIpCommand { get; }
 
         private PointCollection _points = new PointCollection();
         public PointCollection Points
@@ -43,30 +39,50 @@ namespace DockerDiagram.ViewModels
         public Point SourcePos => GetExactBorderPoint(Source, SourceDir);
         public Point TargetPos => GetExactBorderPoint(Target, TargetDir);
 
+        // --- 연결 데이터 ---
+        private RelationType _relationType;
+        public RelationType RelationType
+        {
+            get => _relationType;
+            set { _relationType = value; OnPropertyChanged(); }
+        }
+
+        private string? _mountPath;
+        public string? MountPath
+        {
+            get => _mountPath;
+            set { _mountPath = value; OnPropertyChanged(); }
+        }
+
+        private string? _ipAddress;
+        public string? IpAddress
+        {
+            get => _ipAddress;
+            set { _ipAddress = value; OnPropertyChanged(); }
+        }
+
+        // ★ [수정] 도커 서비스 제거. 선은 선일 뿐입니다.
         public ConnectorViewModel(
             NodeViewModel source,
             NodeViewModel target,
             PortDirection sDir,
             PortDirection tDir,
-            IDockerService dockerService,
             IDialogService dialogService)
         {
-            _dockerService = dockerService ?? throw new ArgumentNullException(nameof(dockerService));
-            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
-
             Source = source;
             Target = target;
             SourceDir = sDir;
             TargetDir = tDir;
+            _dialogService = dialogService;
 
+            // 노드 위치가 바뀌면 선도 따라 움직임
             Source.OnPositionChanged += OnNodePositionChanged;
             Target.OnPositionChanged += OnNodePositionChanged;
-
-            ApplyIpCommand = new AsyncRelayCommand(ApplyStaticIpAsync);
 
             CalculateRoute();
         }
 
+        // 이벤트 핸들러 및 경로 계산 로직은 그대로 유지
         private void OnNodePositionChanged(object? sender, EventArgs e)
         {
             CalculateRoute();
@@ -77,23 +93,19 @@ namespace DockerDiagram.ViewModels
             if (Source != null) Source.OnPositionChanged -= OnNodePositionChanged;
             if (Target != null) Target.OnPositionChanged -= OnNodePositionChanged;
 
-            // 정보 갱신
             Source = newSource;
             Target = newTarget;
             SourceDir = newSDir;
             TargetDir = newTDir;
 
-            // [FIX] 새 대상에 이벤트 구독
             if (Source != null) Source.OnPositionChanged += OnNodePositionChanged;
             if (Target != null) Target.OnPositionChanged += OnNodePositionChanged;
 
             CalculateRoute();
         }
 
-        // 경로 계산 로직
         private void CalculateRoute()
         {
-            // 위치 변경 알림 (Grip 이동용)
             OnPropertyChanged(nameof(SourcePos));
             OnPropertyChanged(nameof(TargetPos));
 
@@ -102,8 +114,9 @@ namespace DockerDiagram.ViewModels
             Point start = GetExactBorderPoint(Source, SourceDir);
             Point end = GetExactBorderPoint(Target, TargetDir);
 
-            // 라우터 호출
+            // OrthogonalRouter는 정적 헬퍼이므로 서비스 주입 없이 사용 가능
             Points = OrthogonalRouter.GetRoute(start, SourceDir, end, TargetDir, sourceRect, targetRect);
+
             CalculateArrowHead(end, TargetDir);
         }
 
@@ -141,75 +154,6 @@ namespace DockerDiagram.ViewModels
                 baseP + (normal * arrowWidth),
                 baseP - (normal * arrowWidth)
             };
-        }
-
-        // --- 추가 속성들 (RelationType 등) ---
-        private RelationType _relationType;
-        public RelationType RelationType
-        {
-            get => _relationType;
-            set { _relationType = value; OnPropertyChanged(); }
-        }
-
-        private string? _mountPath;
-        public string? MountPath
-        {
-            get => _mountPath;
-            set { _mountPath = value; OnPropertyChanged(); }
-        }
-
-        private string? _ipAddress;
-        public string? IpAddress
-        {
-            get => _ipAddress;
-            set { _ipAddress = value; OnPropertyChanged(); }
-        }
-
-        private string _currentAssignedIp = "Auto";
-        public string CurrentAssignedIp
-        {
-            get => _currentAssignedIp;
-            set { _currentAssignedIp = value; OnPropertyChanged(); }
-        }
-
-        private async Task ApplyStaticIpAsync()
-        {
-            if (RelationType != RelationType.NetworkAttach) return;
-
-            // 방향이 뒤집혀도 안전하게 판별
-            var containerNode = Source.Type == NodeType.Container ? Source :
-                                Target.Type == NodeType.Container ? Target : null;
-
-            var networkNode = Source.Type == NodeType.Network ? Source :
-                              Target.Type == NodeType.Network ? Target : null;
-
-            if (containerNode == null || networkNode == null) return;
-            if (string.IsNullOrEmpty(containerNode.ContainerId)) return; // Docker container id
-            if (string.IsNullOrEmpty(networkNode.ContainerId)) return;   // Docker network id
-
-            try
-            {
-                // [변경] 주입받은 _dockerService 사용
-                string networkId = networkNode.ContainerId;
-                string containerId = containerNode.ContainerId;
-
-                await _dockerService.DisconnectNetworkAsync(networkId, containerId);
-                await _dockerService.ConnectNetworkAsync(
-                    networkId,
-                    containerId,
-                    string.IsNullOrWhiteSpace(IpAddress) ? null : IpAddress
-                );
-
-                CurrentAssignedIp = string.IsNullOrWhiteSpace(IpAddress) ? "Auto (Reassigned)" : IpAddress;
-
-                // [변경] _dialogService 사용
-                _dialogService.ShowMessage($"네트워크 설정이 적용되었습니다.\nIP: {CurrentAssignedIp}");
-            }
-            catch (Exception ex)
-            {
-                // [변경] _dialogService 사용
-                _dialogService.ShowMessage($"IP 설정 실패: {ex.Message}");
-            }
         }
     }
 }
