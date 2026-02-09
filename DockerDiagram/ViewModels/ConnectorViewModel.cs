@@ -1,5 +1,4 @@
-﻿using System;
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 using DockerDiagram.Helpers;
 using DockerDiagram.Models;
@@ -29,11 +28,33 @@ namespace DockerDiagram.ViewModels
             set { _arrowPoints = value; OnPropertyChanged(); }
         }
 
+        // ★ [유지] ZIndex 속성 (기본값 50)
+        private int _zIndex = 50;
+        public int ZIndex
+        {
+            get => _zIndex;
+            set { _zIndex = value; OnPropertyChanged(); }
+        }
+
         private bool _isSelected;
         public bool IsSelected
         {
             get => _isSelected;
-            set { _isSelected = value; OnPropertyChanged(); }
+            set
+            {
+                _isSelected = value;
+                OnPropertyChanged();
+
+                // ★ [유지] 선택 시 최상위(65536)로 이동, 해제 시 복귀
+                if (_isSelected)
+                {
+                    ZIndex = 65536;
+                }
+                else
+                {
+                    ZIndex = 50;
+                }
+            }
         }
 
         public Point SourcePos => GetExactBorderPoint(Source, SourceDir);
@@ -61,7 +82,6 @@ namespace DockerDiagram.ViewModels
             set { _ipAddress = value; OnPropertyChanged(); }
         }
 
-        // ★ [수정] 도커 서비스 제거. 선은 선일 뿐입니다.
         public ConnectorViewModel(
             NodeViewModel source,
             NodeViewModel target,
@@ -75,14 +95,12 @@ namespace DockerDiagram.ViewModels
             TargetDir = tDir;
             _dialogService = dialogService;
 
-            // 노드 위치가 바뀌면 선도 따라 움직임
             Source.OnPositionChanged += OnNodePositionChanged;
             Target.OnPositionChanged += OnNodePositionChanged;
 
             CalculateRoute();
         }
 
-        // 이벤트 핸들러 및 경로 계산 로직은 그대로 유지
         private void OnNodePositionChanged(object? sender, EventArgs e)
         {
             CalculateRoute();
@@ -114,10 +132,10 @@ namespace DockerDiagram.ViewModels
             Point start = GetExactBorderPoint(Source, SourceDir);
             Point end = GetExactBorderPoint(Target, TargetDir);
 
-            // OrthogonalRouter는 정적 헬퍼이므로 서비스 주입 없이 사용 가능
             Points = OrthogonalRouter.GetRoute(start, SourceDir, end, TargetDir, sourceRect, targetRect);
 
-            CalculateArrowHead(end, TargetDir);
+            // ★ [수정] 인자 없이 호출 (내부적으로 Points를 분석)
+            CalculateArrowHead();
         }
 
         private Point GetExactBorderPoint(NodeViewModel node, PortDirection dir)
@@ -132,27 +150,43 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        private void CalculateArrowHead(Point tip, PortDirection destDir)
+        // ★ [수정] 벡터 기반 화살표 계산 메서드 (교체됨)
+        private void CalculateArrowHead()
         {
-            Vector dir = new Vector(0, 0);
-            switch (destDir)
+            // 점이 2개 미만이면 방향 계산 불가
+            if (Points == null || Points.Count < 2)
             {
-                case PortDirection.Left: dir = new Vector(-1, 0); break;
-                case PortDirection.Right: dir = new Vector(1, 0); break;
-                case PortDirection.Top: dir = new Vector(0, -1); break;
-                case PortDirection.Bottom: dir = new Vector(0, 1); break;
+                ArrowPoints = new PointCollection();
+                return;
             }
 
-            Vector normal = new Vector(-dir.Y, dir.X);
-            double arrowLength = 10;
-            double arrowWidth = 5;
-            Point baseP = tip - (dir * arrowLength);
+            // 선의 마지막 점(Target)과 그 직전 점을 찾음
+            Point endPoint = Points[Points.Count - 1];
+            Point prevPoint = Points[Points.Count - 2];
 
+            // 진행 방향 벡터 계산 (직전 점 -> 끝점)
+            Vector direction = endPoint - prevPoint;
+            if (direction.Length > 0)
+            {
+                direction.Normalize(); // 단위 벡터화
+            }
+
+            // 화살표 크기
+            double arrowLength = 10;
+            double arrowWidth = 4;
+
+            // 1. 화살표 밑동(Base) 위치 (끝점에서 반대로 후퇴)
+            Point basePoint = endPoint - (direction * arrowLength);
+
+            // 2. 수직 벡터 (90도 회전) -> 날개 벌리기용
+            Vector perpendicular = new Vector(-direction.Y, direction.X);
+
+            // 3. 삼각형 좌표 완성
             ArrowPoints = new PointCollection
             {
-                tip,
-                baseP + (normal * arrowWidth),
-                baseP - (normal * arrowWidth)
+                endPoint,                                 // 꼭지점
+                basePoint + (perpendicular * arrowWidth), // 날개 1
+                basePoint - (perpendicular * arrowWidth)  // 날개 2
             };
         }
     }

@@ -1,7 +1,6 @@
 ﻿using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Windows;
 using Microsoft.Win32;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;

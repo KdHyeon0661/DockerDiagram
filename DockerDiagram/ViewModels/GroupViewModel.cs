@@ -2,6 +2,7 @@
 using DockerDiagram.Models;
 using System.Collections.ObjectModel;
 using System.Windows.Input;
+using System.Diagnostics;
 using System.Windows.Media;
 
 namespace DockerDiagram.ViewModels
@@ -172,7 +173,7 @@ namespace DockerDiagram.ViewModels
                     }
                     catch (Exception ex)
                     {
-                        System.Diagnostics.Debug.WriteLine($"Network Attach Fail: {ex.Message}");
+                        Debug.WriteLine($"Network Attach Fail: {ex.Message}");
                     }
                 }
             }
@@ -195,7 +196,7 @@ namespace DockerDiagram.ViewModels
                     }
                     catch (Exception ex)
                     {
-                        System.Diagnostics.Debug.WriteLine($"Network Detach Fail: {ex.Message}");
+                        Debug.WriteLine($"Network Detach Fail: {ex.Message}");
                     }
                 }
             }

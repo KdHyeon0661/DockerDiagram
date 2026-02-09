@@ -1,5 +1,4 @@
-﻿using System;
-using System.Runtime.Versioning;
+﻿using System.Runtime.Versioning;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -73,7 +72,6 @@ namespace DockerDiagram
         private DispatcherTimer _autoSaveTimer;
 
         // ★ [수정] 서비스 필드 변경 (IDockerService -> ISystemService)
-        // 메인 로직은 ViewModel이 처리하므로 여기선 상태 체크용 SystemService만 필요
         private readonly ISystemService _systemService;
         private readonly IDialogService _dialogService;
 
@@ -184,10 +182,18 @@ namespace DockerDiagram
                 try
                 {
                     // ★ DockerServiceHelper는 static이거나 ISystemService를 받아야 함.
-                    // 기존 코드 호환을 위해 유지하되, 필요시 수정
                     await DockerServiceHelper.StartDockerAsync(_systemService, _dialogService);
+
+                    // ★★★ [중요 수정] 도커 실행이 완료되면 ViewModel에게 상태 갱신을 요청 ★★★
+                    if (DataContext is MainViewModel vm)
+                    {
+                        await vm.OnDockerStartedAsync();
+                    }
                 }
-                catch (Exception ex) { _dialogService.ShowMessage($"Docker 실행 실패: {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    _dialogService.ShowMessage($"Docker 실행 실패: {ex.Message}");
+                }
             }
             else
             {
@@ -487,8 +493,8 @@ namespace DockerDiagram
                     {
                         double rawNewX = _resizeStartGroupRect.X + diffX;
                         double maxAllowedX = _resizingGroup.ContainedNodes.Count > 0
-                                                        ? contentBounds.Left - padding
-                                                        : _resizeStartGroupRect.Right - 50;
+                                                                                ? contentBounds.Left - padding
+                                                                                : _resizeStartGroupRect.Right - 50;
                         double constrainedX = Math.Min(rawNewX, maxAllowedX);
                         double newWidth = _resizeStartGroupRect.Right - constrainedX;
                         _resizingGroup.X = constrainedX;
@@ -498,8 +504,8 @@ namespace DockerDiagram
                     {
                         double rawNewY = _resizeStartGroupRect.Y + diffY;
                         double maxAllowedY = _resizingGroup.ContainedNodes.Count > 0
-                                                        ? contentBounds.Top - padding
-                                                        : _resizeStartGroupRect.Bottom - 50;
+                                                                                ? contentBounds.Top - padding
+                                                                                : _resizeStartGroupRect.Bottom - 50;
                         double constrainedY = Math.Min(rawNewY, maxAllowedY);
                         double newHeight = _resizeStartGroupRect.Bottom - constrainedY;
                         _resizingGroup.Y = constrainedY;
@@ -932,7 +938,6 @@ namespace DockerDiagram
                         };
                     }
                     // [CASE 2] 상단 고정 버튼에서 드래그 (Tag가 문자열인 경우)
-                    // ★ 이 부분이 빠져 있어서 작동하지 않았습니다.
                     else if (border.Tag is string tagStr)
                     {
                         if (tagStr == "Container")

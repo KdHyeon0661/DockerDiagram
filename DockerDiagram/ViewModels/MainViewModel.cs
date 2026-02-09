@@ -4,7 +4,6 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -266,19 +265,19 @@ namespace DockerDiagram.ViewModels
                         // 4. 불러온 노드들의 상태(색상 등)를 도커와 동기화 (회색 -> 녹색/빨강)
                         await RestoreLiveState();
 
-                        System.Diagnostics.Debug.WriteLine($"[AutoLoad] Automatically loaded: {lastPath}");
+                        Debug.WriteLine($"[AutoLoad] Automatically loaded: {lastPath}");
                     }
                 }
                 else
                 {
                     // 파일이 없으면 그냥 새 프로젝트(Sheet 1) 상태 유지
-                    System.Diagnostics.Debug.WriteLine("[AutoLoad] No last file found. Starting new.");
+                    Debug.WriteLine("[AutoLoad] No last file found. Starting new.");
                 }
             }
             catch (Exception ex)
             {
                 // 자동 로드 실패 시 사용자에게 방해가 되지 않도록 로그만 남기고 무시
-                System.Diagnostics.Debug.WriteLine($"[AutoLoad] Failed: {ex.Message}");
+                Debug.WriteLine($"[AutoLoad] Failed: {ex.Message}");
             }
         }
 
@@ -725,7 +724,7 @@ namespace DockerDiagram.ViewModels
                 catch (Exception pullEx)
                 {
                     // Pull 실패(권한 없음, 인터넷 없음 등) 시 로그만 남기고 무시 -> 로컬 이미지 확인으로 넘어감
-                    System.Diagnostics.Debug.WriteLine($"[Docker] Pull failed: {pullEx.Message}. Trying to use local image...");
+                    Debug.WriteLine($"[Docker] Pull failed: {pullEx.Message}. Trying to use local image...");
                 }
 
                 // [5] 컨테이너 생성 및 실행 (로컬에 이미지가 있으면 여기서 성공함)
@@ -1609,6 +1608,20 @@ namespace DockerDiagram.ViewModels
         private void Groups_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
             UpdateAvailableItems();
+        }
+
+        public async Task OnDockerStartedAsync()
+        {
+            Debug.WriteLine("[MainViewModel] Docker started signal received. Refreshing...");
+
+            // DockerServiceHelper에서 이미 Ping 대기를 마쳤으므로, 
+            // 여기서는 바로 데이터 동기화와 상태 갱신을 진행합니다.
+
+            // 1. 전체 목록(이미지, 네트워크, 컨테이너 등) 다시 가져오기
+            await SyncWithDockerEngine();
+
+            // 2. 화면에 있는 노드들의 상태(Running/Stopped/Color) 다시 조회하여 녹색으로 변경
+            await RestoreLiveState();
         }
     }
 }

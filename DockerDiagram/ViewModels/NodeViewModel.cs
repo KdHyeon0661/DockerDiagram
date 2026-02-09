@@ -1,11 +1,8 @@
 ﻿using DockerDiagram.Helpers;
 using DockerDiagram.Models;
-using System;
-using System.Collections.Generic;
+using System.Diagnostics;
 using System.Collections.ObjectModel;
-using System.Collections.Specialized; // 컬렉션 변경 감지용
-using System.Linq;
-using System.Threading.Tasks;
+using System.Collections.Specialized;
 using System.Windows.Input;
 using System.Windows.Threading;
 
@@ -512,7 +509,7 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Refresh Error: {ex.Message}");
+                Debug.WriteLine($"Refresh Error: {ex.Message}");
                 DetailStatus = "Error";
                 IsRunning = false;
                 IsPaused = false;

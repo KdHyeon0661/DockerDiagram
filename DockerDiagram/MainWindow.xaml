@@ -513,33 +513,6 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <ItemsControl ItemsSource="{Binding ActiveSheet.Connectors}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <Canvas/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Canvas>
-                                        <Canvas MouseLeftButtonDown="Connector_MouseDown" Background="Transparent" Cursor="Hand">
-                                            <Polyline Points="{Binding Points}" Stroke="Transparent" StrokeThickness="10"/>
-                                            <Polyline Points="{Binding Points}" Stroke="Black" StrokeThickness="2"/>
-                                            <Polygon Points="{Binding ArrowPoints}" Fill="Black" Stroke="Black" />
-                                        </Canvas>
-                                        <Canvas Visibility="{Binding IsSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                            <Ellipse Style="{StaticResource ConnectorGripStyle}" Fill="White" Stroke="#007ACC" StrokeThickness="2"
-                                                     Canvas.Left="{Binding SourcePos.X}" Canvas.Top="{Binding SourcePos.Y}" Margin="-5,-5,0,0"
-                                                     Tag="Source" MouseLeftButtonDown="ConnectorGrip_MouseDown"/>
-                                            <Ellipse Style="{StaticResource ConnectorGripStyle}" Fill="#007ACC" Stroke="White" StrokeThickness="2"
-                                                     Canvas.Left="{Binding TargetPos.X}" Canvas.Top="{Binding TargetPos.Y}" Margin="-5,-5,0,0"
-                                                     Tag="Target" MouseLeftButtonDown="ConnectorGrip_MouseDown"/>
-                                        </Canvas>
-                                    </Canvas>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-
                         <ItemsControl ItemsSource="{Binding ActiveSheet.Nodes}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
@@ -710,6 +683,41 @@
                                             <Setter TargetName="InternetView" Property="Visibility" Value="Visible"/>
                                         </DataTrigger>
                                     </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <ItemsControl ItemsSource="{Binding ActiveSheet.Connectors}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <Canvas/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+
+                            <ItemsControl.ItemContainerStyle>
+                                <Style TargetType="ContentPresenter">
+                                    <Setter Property="Panel.ZIndex" Value="{Binding ZIndex}"/>
+                                </Style>
+                            </ItemsControl.ItemContainerStyle>
+
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Canvas>
+                                        <Canvas MouseLeftButtonDown="Connector_MouseDown" Background="Transparent" Cursor="Hand">
+                                            <Polyline Points="{Binding Points}" Stroke="Transparent" StrokeThickness="10"/>
+                                            <Polyline Points="{Binding Points}" Stroke="Black" StrokeThickness="2"/>
+                                            <Polygon Points="{Binding ArrowPoints}" Fill="Black" Stroke="Black" />
+                                        </Canvas>
+
+                                        <Canvas Visibility="{Binding IsSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <Ellipse Style="{StaticResource ConnectorGripStyle}" Fill="White" Stroke="#007ACC" StrokeThickness="2"
+     Canvas.Left="{Binding SourcePos.X}" Canvas.Top="{Binding SourcePos.Y}" Margin="-5,-5,0,0"
+     Tag="Source" MouseLeftButtonDown="ConnectorGrip_MouseDown"/>
+                                            <Ellipse Style="{StaticResource ConnectorGripStyle}" Fill="#007ACC" Stroke="White" StrokeThickness="2"
+     Canvas.Left="{Binding TargetPos.X}" Canvas.Top="{Binding TargetPos.Y}" Margin="-5,-5,0,0"
+     Tag="Target" MouseLeftButtonDown="ConnectorGrip_MouseDown"/>
+                                        </Canvas>
+                                    </Canvas>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
