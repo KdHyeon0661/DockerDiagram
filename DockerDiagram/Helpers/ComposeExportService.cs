@@ -30,8 +30,6 @@ namespace DockerDiagram.Helpers
                 {
                     string yamlContent = GenerateYaml(sheet);
                     File.WriteAllText(dlg.FileName, yamlContent, Encoding.UTF8);
-
-                    // ★ [수정] ShowInfo 사용
                     dialogService.ShowInfo($"파일이 생성되었습니다!\n{dlg.FileName}", "성공");
                 }
                 catch (Exception ex)
@@ -121,7 +119,7 @@ namespace DockerDiagram.Helpers
                     }
                 }
 
-                // ★ [수정] 네트워크 정보 조회 로직 변경 (Node -> Group)
+                // ★ 네트워크 정보 조회 로직 변경 (Node -> Group)
                 var connectedNets = GetConnectedNetworks(node, sheet);
                 if (connectedNets.Count > 0)
                 {
@@ -138,7 +136,7 @@ namespace DockerDiagram.Helpers
                 sb.AppendLine();
             }
 
-            // ★ [수정] 네트워크 정의 (Nodes가 아니라 Groups에서 찾기)
+            // ★ 네트워크 정의 (Nodes가 아니라 Groups에서 찾기)
             var networkGroups = sheet.Groups.Where(g => g.Type == GroupType.Network).ToList();
             if (networkGroups.Any())
             {
@@ -219,7 +217,7 @@ namespace DockerDiagram.Helpers
 
         private class NetworkInfo { public string? NetworkName; public string? IpAddress; }
 
-        // ★ [수정] 네트워크 연결 확인 로직 (커넥터 -> 그룹 포함 여부로 변경)
+        // 네트워크 연결 확인 로직 (커넥터 -> 그룹 포함 여부로 변경)
         private static List<NetworkInfo> GetConnectedNetworks(NodeViewModel container, SheetViewModel sheet)
         {
             var list = new List<NetworkInfo>();

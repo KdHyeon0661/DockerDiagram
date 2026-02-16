@@ -5,12 +5,14 @@ using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace DockerDiagram.Helpers
 {
-    public class DockerApiService : IContainerService, IVolumeService, INetworkService, IImageService, ISystemService
+    public class DockerApiService : IDockerService
     {
         private readonly DockerClient _client;
+        private bool _disposedValue; // 중복 해제 방지 플래그
 
         public DockerApiService()
         {
@@ -23,7 +25,6 @@ namespace DockerDiagram.Helpers
         // 1. ISystemService 구현
         // =========================================================
 
-        // 도커 데몬에 핑을 날려서 연결 확인
         public async Task<bool> PingAsync()
         {
             try
@@ -41,30 +42,29 @@ namespace DockerDiagram.Helpers
         // 2. IContainerService 구현
         // =========================================================
 
-        // 도커 컨테이너 목록 조회
         public async Task<List<DockerContainer>> GetContainersAsync()
         {
             var containers = await _client.Containers.ListContainersAsync(
                 new ContainersListParameters { All = true }
-            ); // 모든 컨테이너 조회. false로 하면 running 상태만 조회
+            );
 
             var result = new List<DockerContainer>();
             foreach (var c in containers)
             {
                 string portStr = "";
-                if (c.Ports != null) // 포트 매핑 정보가 있을 경우
+                if (c.Ports != null)
                 {
                     var ports = new List<string>();
-                    foreach (var p in c.Ports ?? Enumerable.Empty<Docker.DotNet.Models.Port>()) // 각 포트 매핑 정보를 문자열로 변환
+                    foreach (var p in c.Ports ?? Enumerable.Empty<Docker.DotNet.Models.Port>())
                     {
                         var proto = string.IsNullOrWhiteSpace(p.Type) ? "tcp" : p.Type;
 
-                        if (p.PublicPort > 0) // Host에 Exposed 된 포트가 있는 경우
+                        if (p.PublicPort > 0)
                         {
                             var ipPrefix = string.IsNullOrWhiteSpace(p.IP) ? "" : $"{p.IP}:";
                             ports.Add($"{ipPrefix}{p.PublicPort}->{p.PrivatePort}/{proto}");
                         }
-                        else // Exposed 된 포트만 있는 경우
+                        else
                         {
                             ports.Add($"{p.PrivatePort}/{proto}");
                         }
@@ -72,7 +72,7 @@ namespace DockerDiagram.Helpers
                     portStr = string.Join(", ", ports);
                 }
 
-                result.Add(new DockerContainer // 도커 컨테이너 정보를 커스텀 모델로 매핑
+                result.Add(new DockerContainer
                 {
                     Id = c.ID,
                     Name = c.Names[0].TrimStart('/'),
@@ -88,10 +88,9 @@ namespace DockerDiagram.Helpers
         // 3. IImageService 구현
         // =========================================================
 
-        // 도커 이미지 목록 조회
         public async Task<List<DockerImage>> GetImagesAsync()
         {
-            var images = await _client.Images.ListImagesAsync(new ImagesListParameters { All = false }); // intermediate 이미지 제외
+            var images = await _client.Images.ListImagesAsync(new ImagesListParameters { All = false });
             var result = new List<DockerImage>();
             foreach (var img in images)
             {
@@ -116,15 +115,13 @@ namespace DockerDiagram.Helpers
         // 4. IVolumeService 구현
         // =========================================================
 
-        // ★ [수정 2] 반환 타입: List<DockerVolume> + 매핑 수정
-        // 도커 볼륨 목록 조회
         public async Task<List<DockerVolume>> GetVolumesAsync()
         {
             var volumes = await _client.Volumes.ListAsync();
             return volumes.Volumes.Select(v => new DockerVolume
             {
                 Name = v.Name,
-                Id = v.Name, // 볼륨은 이름이 곧 ID
+                Id = v.Name,
             }).ToList();
         }
 
@@ -132,43 +129,37 @@ namespace DockerDiagram.Helpers
         // 5. INetworkService 구현
         // =========================================================
 
-        // ★ [수정 3] 반환 타입: List<DockerGroup> + 매핑 수정
-        // 도커 네트워크 목록 조회
         public async Task<List<DockerGroup>> GetNetworksAsync()
         {
             var networks = await _client.Networks.ListNetworksAsync();
             return networks.Select(n => new DockerGroup
             {
                 Name = n.Name,
-                Id = n.ID, // ID 매핑
-                Type = GroupType.Network, // ★ NodeType.Network -> GroupType.Network 변경
-                Driver = n.Driver // ★ Image -> Driver 속성으로 변경
+                Id = n.ID,
+                Type = GroupType.Network,
+                Driver = n.Driver
             }).ToList();
         }
 
         // ---------------------------------------------------------
-        // 아래부터는 원본 로직 100% 유지 (인터페이스 구현)
+        // 상세 기능 구현
         // ---------------------------------------------------------
 
-        // 컨테이너 상세 정보 조회
         public async Task<ContainerInspectResponse> InspectContainerAsync(string containerId)
         {
             return await _client.Containers.InspectContainerAsync(containerId);
         }
 
-        // 볼륨 상세 정보 조회
         public async Task<VolumeResponse> InspectVolumeAsync(string name)
         {
             return await _client.Volumes.InspectAsync(name);
         }
 
-        // 네트워크 상세 정보 조회
         public async Task<NetworkResponse> InspectNetworkAsync(string networkId)
         {
             return await _client.Networks.InspectNetworkAsync(networkId);
         }
 
-        // 이 볼륨을 사용 중인 컨테이너 목록 찾기
         public async Task<List<string>> GetContainersUsingVolumeAsync(string volumeName)
         {
             var containers = await _client.Containers.ListContainersAsync(
@@ -189,33 +180,26 @@ namespace DockerDiagram.Helpers
             return result;
         }
 
-        // 컨테이너 시작
         public async Task StartContainerAsync(string id)
             => await _client.Containers.StartContainerAsync(id, new ContainerStartParameters());
 
-        // 컨테이너 중지
         public async Task StopContainerAsync(string id)
             => await _client.Containers.StopContainerAsync(id, new ContainerStopParameters { WaitBeforeKillSeconds = 5 });
 
-        // 컨테이너 일시정지
         public async Task PauseContainerAsync(string id)
             => await _client.Containers.PauseContainerAsync(id);
 
-        // 컨테이너 일시정지 해제
         public async Task UnpauseContainerAsync(string id)
             => await _client.Containers.UnpauseContainerAsync(id);
 
-        // 컨테이너 재시작
         public async Task RestartContainerAsync(string id)
             => await _client.Containers.RestartContainerAsync(id, new ContainerRestartParameters());
 
-        // 컨테이너 삭제
         public async Task RemoveContainerAsync(string id)
         {
             await _client.Containers.RemoveContainerAsync(id, new ContainerRemoveParameters { Force = true, RemoveVolumes = false });
         }
 
-        // 이미지 풀링
         public async Task PullImageAsync(string image, string tag)
         {
             await _client.Images.CreateImageAsync(
@@ -224,7 +208,6 @@ namespace DockerDiagram.Helpers
                 new Progress<JSONMessage>());
         }
 
-        // 컨테이너 생성 및 시작 (원본 로직 유지)
         public async Task<string> CreateAndStartContainerAsync(
             string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes,
             string restartPolicy, long memoryMb, double cpuCount)
@@ -304,7 +287,6 @@ namespace DockerDiagram.Helpers
             return response.ID;
         }
 
-        // 호스트 -> 컨테이너 복사
         public async Task CopyFromContainerAsync(string containerId, string containerPath, string hostPath)
         {
             var tarResponse = await _client.Containers.GetArchiveFromContainerAsync(containerId, new GetArchiveFromContainerParameters
@@ -315,7 +297,6 @@ namespace DockerDiagram.Helpers
             TarFile.ExtractToDirectory(tarResponse.Stream, hostPath, overwriteFiles: true);
         }
 
-        // 호스트 <- 컨테이너 복사
         public async Task CopyToContainerAsync(string containerId, string hostPath, string containerPath)
         {
             string tempTarFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".tar");
@@ -342,7 +323,6 @@ namespace DockerDiagram.Helpers
             }
         }
 
-        // 볼륨 생성
         public async Task CreateVolumeAsync(string name, string driver)
         {
             await _client.Volumes.CreateAsync(new VolumesCreateParameters
@@ -352,7 +332,6 @@ namespace DockerDiagram.Helpers
             });
         }
 
-        // 네트워크 생성
         public async Task<string> CreateNetworkAsync(string name, string driver)
         {
             var response = await _client.Networks.CreateNetworkAsync(new NetworksCreateParameters
@@ -364,25 +343,21 @@ namespace DockerDiagram.Helpers
             return response.ID;
         }
 
-        // 이미지 삭제
         public async Task DeleteImageAsync(string imageId, bool force = false)
         {
             await _client.Images.DeleteImageAsync(imageId, new ImageDeleteParameters { Force = force });
         }
 
-        // 볼륨 삭제
         public async Task RemoveVolumeAsync(string name)
         {
             await _client.Volumes.RemoveAsync(name, false);
         }
 
-        // 네트워크 삭제
         public async Task RemoveNetworkAsync(string id)
         {
             await _client.Networks.DeleteNetworkAsync(id);
         }
 
-        // 터미널 열기
         public void OpenTerminal(string containerId)
         {
             string commands = $"docker exec -it {containerId} /bin/bash || " +
@@ -399,60 +374,61 @@ namespace DockerDiagram.Helpers
             Process.Start(processInfo);
         }
 
-        // 명령어 실행
         public async Task ExecuteCommandAsync(string containerId, string command)
         {
             try
             {
                 var inspect = await _client.Containers.InspectContainerAsync(containerId);
-                string os = inspect.Platform;
-
-                string[] cmdShell;
-                if (os.Contains("windows", StringComparison.OrdinalIgnoreCase))
-                {
-                    cmdShell = new[] { "cmd", "/c", command };
-                }
-                else
-                {
-                    cmdShell = new[] { "/bin/sh", "-c", command };
-                }
+                string[] cmdShell = inspect.Platform.Contains("windows", StringComparison.OrdinalIgnoreCase)
+                    ? new[] { "cmd", "/c", command }
+                    : new[] { "/bin/sh", "-c", command };
 
                 var execParams = new ContainerExecCreateParameters
                 {
                     Cmd = cmdShell,
                     AttachStdout = true,
                     AttachStderr = true,
+                    Tty = false
                 };
 
                 var execCreateResp = await _client.Exec.ExecCreateContainerAsync(containerId, execParams);
 
-                await _client.Exec.StartContainerExecAsync(execCreateResp.ID, default);
-
-                while (true)
+                using (var stream = await _client.Exec.StartAndAttachContainerExecAsync(execCreateResp.ID, false))
                 {
-                    var status = await _client.Exec.InspectContainerExecAsync(execCreateResp.ID);
-                    if (!status.Running)
-                    {
-                        if (status.ExitCode != 0)
-                        {
-                            Console.WriteLine($"명령 실행 실패 (Code: {status.ExitCode}): {command}");
-                        }
-                        else
-                        {
-                            Console.WriteLine($"명령 실행 성공: {command}");
-                        }
-                        break;
-                    }
-                    await Task.Delay(100);
+                    using var stdoutMs = new MemoryStream();
+                    using var stderrMs = new MemoryStream();
+
+                    await stream.CopyOutputToAsync(default, stdoutMs, stderrMs, CancellationToken.None);
+
+                    stdoutMs.Position = 0;
+                    stderrMs.Position = 0;
+
+                    string output = Encoding.UTF8.GetString(stdoutMs.ToArray());
+                    string error = Encoding.UTF8.GetString(stderrMs.ToArray());
+
+                    if (!string.IsNullOrWhiteSpace(output))
+                        Debug.WriteLine($"[DockerDiscovery] Exec Output:\n{output}");
+
+                    if (!string.IsNullOrWhiteSpace(error))
+                        Debug.WriteLine($"[DockerDiscovery] Exec Error:\n{error}");
+                }
+
+                var finalStatus = await _client.Exec.InspectContainerExecAsync(execCreateResp.ID);
+                if (finalStatus.ExitCode != 0)
+                {
+                    Debug.WriteLine($"[DockerDiscovery] Exec Failed (Code: {finalStatus.ExitCode})");
+                }
+                else
+                {
+                    Debug.WriteLine($"[DockerDiscovery] Exec Success");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DockerDiscovery] ExecuteCommandAsync 에러: {ex.Message}");
+                Debug.WriteLine($"[DockerDiscovery] ExecuteCommandAsync Error: {ex.Message}");
             }
         }
 
-        // 네트워크 연결
         public async Task ConnectNetworkAsync(string networkId, string containerId, string? staticIp = null)
         {
             try
@@ -475,7 +451,7 @@ namespace DockerDiagram.Helpers
 
                 await _client.Networks.ConnectNetworkAsync(networkId, config);
 
-                Console.WriteLine($"Network Connected: {networkId} -> {containerId} (IP: {staticIp ?? "Auto"})");
+                Debug.WriteLine($"[DockerDiscovery] Network Connected: {networkId} -> {containerId} (IP: {staticIp ?? "Auto"})");
             }
             catch (DockerApiException ex)
             {
@@ -487,7 +463,6 @@ namespace DockerDiagram.Helpers
             }
         }
 
-        // 네트워크 해제
         public async Task DisconnectNetworkAsync(string networkId, string containerId)
         {
             await _client.Networks.DisconnectNetworkAsync(networkId, new NetworkDisconnectParameters
@@ -501,20 +476,15 @@ namespace DockerDiagram.Helpers
         {
             try
             {
-                // 1회성 통계를 가져오기 위해 Stream을 false로 설정 (docker stats --no-stream과 동일)
                 var statsParams = new ContainerStatsParameters { Stream = false };
 
-                // CancellationToken을 사용하여 첫 번째 결과만 받고 바로 종료되도록 처리
                 using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
                 {
                     ContainerStatsResponse? stats = null;
-
-                    // GetContainerStatsAsync는 Progress를 통해 데이터를 전달합니다.
                     var progress = new Progress<ContainerStatsResponse>(r => stats = r);
 
                     await _client.Containers.GetContainerStatsAsync(containerId, statsParams, progress, cts.Token);
 
-                    // 데이터가 도착할 때까지 아주 잠깐 대기
                     while (stats == null && !cts.IsCancellationRequested) await Task.Delay(10);
 
                     if (stats != null)
@@ -530,26 +500,44 @@ namespace DockerDiagram.Helpers
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Stats] 에러: {ex.Message}");
+                Debug.WriteLine($"[DockerDiscovery] Stats Error: {ex.Message}");
             }
 
             return new ContainerStats();
         }
 
-        // 도커 엔진이 주는 복잡한 수치를 퍼센트(%)로 변환하는 공식
         private double CalculateCpuPercentage(ContainerStatsResponse stats)
         {
-            // 이전 CPU 값과 현재 값의 차이를 계산
             double cpuDelta = stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage;
             double systemDelta = stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage;
 
             if (systemDelta > 0.0 && cpuDelta > 0.0)
             {
-                // 멀티코어를 고려한 계산 (CPU 사용량 / 시스템 사용량 * 코어 수 * 100)
                 return (cpuDelta / systemDelta) * stats.CPUStats.OnlineCPUs * 100.0;
             }
 
             return 0.0;
+        }
+
+        // =========================================================
+        // ★ [필수] IDisposable 패턴 구현 (사라졌던 부분)
+        // =========================================================
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposedValue)
+            {
+                if (disposing)
+                {
+                    _client?.Dispose();
+                }
+                _disposedValue = true;
+            }
+        }
+
+        public void Dispose()
+        {
+            Dispose(disposing: true);
+            GC.SuppressFinalize(this);
         }
     }
 }

@@ -56,7 +56,6 @@ namespace DockerDiagram
         private GroupViewModel? _movingGroup = null;
         private Point _groupClickOffset;
 
-        // ★ [추가] 네트워크 그리기 모드 변수
         private bool _isNetworkDrawingMode = false;
         private bool _isNetworkDrawingDrag = false;
 
@@ -71,21 +70,32 @@ namespace DockerDiagram
         private DispatcherTimer _dockerMonitorTimer;
         private DispatcherTimer _autoSaveTimer;
 
-        // ★ [수정] 서비스 필드 변경 (IDockerService -> ISystemService)
+        private readonly IContainerService _containerService;
+        private readonly IVolumeService _volumeService;
+        private readonly INetworkService _networkService;
         private readonly ISystemService _systemService;
         private readonly IDialogService _dialogService;
 
-        // ★ [수정] 생성자
-        public MainWindow(MainViewModel viewModel, ISystemService systemService, IDialogService dialogService)
+        // 생성자
+        public MainWindow(MainViewModel viewModel, IDockerService dockerService, IDialogService dialogService)
         {
             InitializeComponent();
 
-            _systemService = systemService ?? throw new ArgumentNullException(nameof(systemService));
+            // 1. 도커 서비스 및 다이얼로그 서비스 검증 및 할당
+            if (dockerService == null) throw new ArgumentNullException(nameof(dockerService));
+
+            _containerService = dockerService;
+            _volumeService = dockerService;
+            _networkService = dockerService;
+            _systemService = dockerService;
+
+            // 님께서 강조하신 Null 체크 구문 유지
             _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
 
+            // 2. 데이터 컨텍스트 설정
             this.DataContext = viewModel;
 
-            // 타이머 초기화
+            // 3. 타이머 초기화 (기존 로직 그대로 유지)
             _dockerMonitorTimer = new DispatcherTimer();
             _dockerMonitorTimer.Interval = TimeSpan.FromSeconds(5);
             _dockerMonitorTimer.Tick += DockerMonitorTimer_Tick;
@@ -102,10 +112,7 @@ namespace DockerDiagram
 
             if (!vm.IsModified) return;
 
-            var result = MessageBox.Show("변경 사항이 저장되지 않았습니다.\n저장하고 종료하시겠습니까?",
-                                         "종료 확인",
-                                         MessageBoxButton.YesNoCancel,
-                                         MessageBoxImage.Warning);
+            var result = _dialogService.ShowYesNoCancel("변경 사항이 저장되지 않았습니다.\n저장하고 종료하시겠습니까?", "종료 확인");
 
             if (result == MessageBoxResult.Cancel)
             {
@@ -115,13 +122,13 @@ namespace DockerDiagram
             {
                 if (!string.IsNullOrEmpty(vm.CurrentFilePath))
                 {
-                    bool saved = Helpers.FileService.QuickSave(vm, vm.CurrentFilePath);
+                    bool saved = FileService.QuickSave(vm, vm.CurrentFilePath);
                     if (!saved) e.Cancel = true;
                 }
                 else
                 {
                     // DialogService 사용을 권장하나 기존 로직 유지
-                    string? savedPath = Helpers.FileService.SaveDiagramAs(vm, _dialogService);
+                    string? savedPath = FileService.SaveDiagramAs(vm, _dialogService);
                     if (string.IsNullOrEmpty(savedPath))
                     {
                         e.Cancel = true;
@@ -142,7 +149,7 @@ namespace DockerDiagram
             bool success = FileService.QuickSave(vm, vm.CurrentFilePath);
             if (success)
             {
-                Debug.WriteLine($"[AutoSave] Saved to {vm.CurrentFilePath} at {DateTime.Now}");
+                Debug.WriteLine($"[DockerDiscovery] Saved to {vm.CurrentFilePath} at {DateTime.Now}");
                 vm.IsModified = false;
             }
         }
@@ -153,10 +160,27 @@ namespace DockerDiagram
             var vm = this.DataContext as MainViewModel;
             if (vm == null) return;
 
+            // 1. 마지막 파일 불러오기 로직 (기존 유지)
+            string lastFile = Properties.Settings.Default.LastFilePath;
+            if (!string.IsNullOrEmpty(lastFile) && System.IO.File.Exists(lastFile))
+            {
+                await FileService.LoadDiagramFromPathAsync(vm, lastFile, _containerService, _volumeService, _networkService, _dialogService);
+                vm.CurrentFilePath = lastFile;
+                vm.IsModified = false;
+            }
+            else
+            {
+                vm.CurrentFilePath = null;
+            }
+
             UpdateTitle();
+
             await CheckDockerStateAsync();
 
+            // 2. 타이머 시작
             if (!_dockerMonitorTimer.IsEnabled) _dockerMonitorTimer.Start();
+
+            // 자동 저장 타이머 시작
             if (!_autoSaveTimer.IsEnabled) _autoSaveTimer.Start();
         }
 
@@ -181,10 +205,8 @@ namespace DockerDiagram
             {
                 try
                 {
-                    // ★ DockerServiceHelper는 static이거나 ISystemService를 받아야 함.
                     await DockerServiceHelper.StartDockerAsync(_systemService, _dialogService);
 
-                    // ★★★ [중요 수정] 도커 실행이 완료되면 ViewModel에게 상태 갱신을 요청 ★★★
                     if (DataContext is MainViewModel vm)
                     {
                         await vm.OnDockerStartedAsync();
@@ -255,7 +277,6 @@ namespace DockerDiagram
         private void OptionButton_Click(object sender, RoutedEventArgs e)
         {
             MapSizePanel.Visibility = Visibility.Collapsed;
-            if (BtnGroupMode != null) BtnGroupMode.IsChecked = _isGroupingMode;
             OptionPopup.IsOpen = true;
         }
 
@@ -343,7 +364,7 @@ namespace DockerDiagram
             }
         }
 
-        // ★ [수정] 3. 캔버스 클릭 (네트워크/그룹 그리기 시작)
+        // 3. 캔버스 클릭 (네트워크/그룹 그리기 시작)
         private void Diagram_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             // 1. 일반 그룹핑 모드
@@ -372,7 +393,7 @@ namespace DockerDiagram
                 return;
             }
 
-            // ★ 2. 네트워크 그리기 모드 (신규)
+            // 2. 네트워크 그리기 모드
             if (_isNetworkDrawingMode)
             {
                 _isNetworkDrawingDrag = true;
@@ -403,7 +424,7 @@ namespace DockerDiagram
             if (!e.Handled) (DataContext as MainViewModel)?.ClearSelection();
         }
 
-        // ★ [수정] 4. 캔버스 드래그 (네트워크 사각형 크기 조절 포함)
+        // 4. 캔버스 드래그 (네트워크 사각형 크기 조절 포함)
         private void Diagram_MouseMove(object sender, MouseEventArgs e)
         {
             var vm = DataContext as MainViewModel;
@@ -586,7 +607,7 @@ namespace DockerDiagram
             }
         }
 
-        // ★ [수정] 5. 마우스 뗌 (네트워크/그룹 생성 완료)
+        // 5. 마우스 뗌 (네트워크/그룹 생성 완료)
         protected override void OnPreviewMouseLeftButtonUp(MouseButtonEventArgs e)
         {
             base.OnPreviewMouseLeftButtonUp(e);
@@ -620,12 +641,11 @@ namespace DockerDiagram
                 DragCanvas.Children.Remove(_tempGroupRect);
                 _tempGroupRect = null;
                 _isGroupingMode = false;
-                if (BtnGroupMode != null) BtnGroupMode.IsChecked = false;
                 Mouse.OverrideCursor = null;
                 return;
             }
 
-            // ★ 1-1. 네트워크 그리기 완료 (신규 로직)
+            // 1-1. 네트워크 그리기 완료 (신규 로직)
             if (_isNetworkDrawingDrag && _tempGroupRect != null)
             {
                 _isNetworkDrawingDrag = false;
@@ -638,7 +658,7 @@ namespace DockerDiagram
 
                 if (w > 30 && h > 30) // 너무 작으면 무시
                 {
-                    var dlg = new DockerDiagram.Views.NetworkDialog();
+                    var dlg = new Views.NetworkDialog();
                     dlg.Owner = this;
                     if (dlg.ShowDialog() == true)
                     {
@@ -891,7 +911,7 @@ namespace DockerDiagram
             if (SheetListBox.SelectedItem != null) SheetListBox.ScrollIntoView(SheetListBox.SelectedItem);
         }
 
-        // ★ [수정] 1. 사이드바 아이콘 클릭 (네트워크면 그리기 모드 진입)
+        // 1. 사이드바 아이콘 클릭 (네트워크면 그리기 모드 진입)
         private void Tool_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             _toolStartPoint = e.GetPosition(null);
@@ -911,7 +931,7 @@ namespace DockerDiagram
             }
         }
 
-        // ★ [수정] 2. 마우스 이동 (네트워크 모드면 드래그 앤 드롭 방지 + 기존 목록 드래그 처리)
+        // 2. 마우스 이동 (네트워크 모드면 드래그 앤 드롭 방지 + 기존 목록 드래그 처리)
         private void Tool_PreviewMouseMove(object sender, MouseEventArgs e)
         {
             if (_isNetworkDrawingMode) return; // 네트워크 그리기 모드 중이면 중단
@@ -987,8 +1007,7 @@ namespace DockerDiagram
                 var border = sender as Border;
                 string typeStr = border?.Tag?.ToString() ?? "";
 
-                // Network는 문자열 체크로 제외 (위에서 handled 처리되었지만 안전장치)
-                if (typeStr == "Network") return;
+                if (typeStr == "Network" || typeStr == "Group") return;
 
                 if (Enum.TryParse(typeStr, out NodeType type))
                 {
@@ -1000,7 +1019,7 @@ namespace DockerDiagram
 
                         if (type == NodeType.Container)
                         {
-                            var dlg = new DockerDiagram.Views.ContainerDialog();
+                            var dlg = new Views.ContainerDialog();
                             dlg.Owner = this;
                             if (dlg.ShowDialog() == true)
                             {
@@ -1010,7 +1029,7 @@ namespace DockerDiagram
                         }
                         else if (type == NodeType.Volume)
                         {
-                            var dlg = new DockerDiagram.Views.VolumeDialog();
+                            var dlg = new Views.VolumeDialog();
                             dlg.Owner = this;
                             if (dlg.ShowDialog() == true)
                             {
@@ -1040,7 +1059,7 @@ namespace DockerDiagram
             // [CASE A] 모든 노드 리소스 처리 (DockerResource로 받기)
             if (e.Data.GetDataPresent("DockerContainerObject"))
             {
-                // ★ 핵심: DockerContainer가 아닌 공통 부모인 DockerResource로 받습니다.
+                // DockerContainer가 아닌 공통 부모인 DockerResource로 받습니다.
                 var d = e.Data.GetData("DockerContainerObject") as DockerResource;
                 if (d == null) return;
 
@@ -1049,7 +1068,7 @@ namespace DockerDiagram
                     // 1. 컨테이너인 경우
                     if (d is DockerContainer container)
                     {
-                        var dlg = new DockerDiagram.Views.ContainerDialog();
+                        var dlg = new Views.ContainerDialog();
                         dlg.Owner = this;
                         if (container.Image != "New Container") dlg.ImageName = container.Image;
 
@@ -1077,7 +1096,7 @@ namespace DockerDiagram
                     {
                         if (volume.Name == "New Volume")
                         {
-                            var dlg = new DockerDiagram.Views.VolumeDialog();
+                            var dlg = new Views.VolumeDialog();
                             dlg.Owner = this;
                             if (dlg.ShowDialog() == true)
                             {
@@ -1367,6 +1386,28 @@ namespace DockerDiagram
             else
             {
                 this.Title = "Visual Docker Manager - New File";
+            }
+        }
+
+        private void ClearSheet_Click(object sender, RoutedEventArgs e)
+        {
+            // 우클릭한 메뉴 아이템에서 데이터(SheetViewModel)를 가져옴
+            if (sender is MenuItem menuItem && menuItem.DataContext is SheetViewModel targetSheet)
+            {
+                // 확인 메시지 띄우기
+                var result = MessageBox.Show(
+                    $"'{targetSheet.Title}' 시트의 모든 내용을 지우시겠습니까?\n(컨테이너, 연결선, 그룹이 모두 삭제됩니다)",
+                    "시트 비우기",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    // 해당 시트의 내용물만 싹 비움
+                    targetSheet.Nodes.Clear();
+                    targetSheet.Connectors.Clear();
+                    targetSheet.Groups.Clear();
+                }
             }
         }
     }

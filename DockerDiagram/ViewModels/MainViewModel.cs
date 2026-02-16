@@ -19,6 +19,8 @@ namespace DockerDiagram.ViewModels
         private readonly ISystemService _systemService;
         private readonly IDialogService _dialogService;
 
+        // public static MainViewModel Instance { get; private set; } // 싱글톤 제거
+
         public System.Windows.Input.ICommand ExportComposeCommand { get; }
 
         private bool _isModified = false;
@@ -64,6 +66,25 @@ namespace DockerDiagram.ViewModels
                 {
                     _activeSheet.Nodes.CollectionChanged -= Nodes_CollectionChanged;
                     _activeSheet.Groups.CollectionChanged -= Groups_CollectionChanged;
+
+                    // 이전 시트의 노드들 감시 해제 (메모리 누수 방지)
+                    foreach (var node in _activeSheet.Nodes)
+                    {
+                        node.OnModified -= Node_OnModified;
+                    }
+
+                    // 이전 시트의 그룹들 감시 해제
+                    foreach (var group in _activeSheet.Groups)
+                    {
+                        group.OnModified -= Node_OnModified;
+                    }
+
+                    // 이전 시트의 커넥터들 감시 해제
+                    _activeSheet.Connectors.CollectionChanged -= Connectors_CollectionChanged;
+                    foreach (var conn in _activeSheet.Connectors)
+                    {
+                        conn.OnModified -= Connector_OnModified;
+                    }
                 }
 
                 _activeSheet = value;
@@ -112,7 +133,6 @@ namespace DockerDiagram.ViewModels
         public bool IsDetailPanelOpen => _selectedElement != null;
 
         // --- 3. 아코디언 데이터 ---
-        // ★ [수정 2] 모델 타입 변경 (DockerContainer -> DockerVolume, DockerGroup)
         public ObservableCollection<TemplateItem> Templates { get; } = new();
         public ObservableCollection<DockerContainer> ExistingContainers { get; } = new();
         public ObservableCollection<DockerVolume> ExistingVolumes { get; } = new();
@@ -174,25 +194,28 @@ namespace DockerDiagram.ViewModels
         public ICommand SaveAsCommand { get; }
         public ICommand LoadCommand { get; }
 
+        public ICommand FlowClearCommand { get; }
+        public ICommand FlowAllClearCommand { get; }
+        public ICommand DeleteAllSheetCommand { get; }
+
         // --- 생성자 ---
-        // ★ [수정 3] 생성자에서 5개 서비스 주입
-        public MainViewModel(
-            IContainerService containerService,
-            IVolumeService volumeService,
-            INetworkService networkService,
-            IImageService imageService,
-            ISystemService systemService,
-            IDialogService dialogService)
+        public MainViewModel(IDockerService dockerService, IDialogService dialogService)
         {
-            _containerService = containerService ?? throw new ArgumentNullException(nameof(containerService));
-            _volumeService = volumeService ?? throw new ArgumentNullException(nameof(volumeService));
-            _networkService = networkService ?? throw new ArgumentNullException(nameof(networkService));
-            _imageService = imageService ?? throw new ArgumentNullException(nameof(imageService));
-            _systemService = systemService ?? throw new ArgumentNullException(nameof(systemService));
+            // Instance = this;
+
+            // 유효성 검사 및 할당
+            if (dockerService == null) throw new ArgumentNullException(nameof(dockerService));
             _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
 
-            // 기본 시트 추가 (필요한 서비스 모두 전달)
-            Sheets.Add(new SheetViewModel("Sheet 1", _containerService, _volumeService, _networkService, _dialogService));
+            // IDockerService를 각 인터페이스 필드에 분배
+            _containerService = dockerService;
+            _volumeService = dockerService;
+            _networkService = dockerService;
+            _imageService = dockerService;
+            _systemService = dockerService;
+
+            // 기본 시트 추가
+            Sheets.Add(new SheetViewModel("Sheet 1", _containerService, _volumeService, _dialogService));
             ActiveSheet = Sheets.First();
 
             // 명령 초기화
@@ -207,25 +230,28 @@ namespace DockerDiagram.ViewModels
             DeleteVolumeItemCommand = new AsyncRelayCommand(DeleteVolumeItemAsync);
             DeleteNetworkItemCommand = new AsyncRelayCommand(DeleteNetworkItemAsync);
 
+            FlowClearCommand = new RelayCommand(ExecuteFlowClear);
+            FlowAllClearCommand = new RelayCommand(ExecuteFlowAllClear);
+            DeleteAllSheetCommand = new RelayCommand(ExecuteDeleteAllSheet);
+
             SaveCommand = new RelayCommand(SaveAction);
             SaveAsCommand = new RelayCommand(SaveAsAction);
             LoadCommand = new AsyncRelayCommand(LoadActionAsync);
 
             if (ActiveSheet != null) AttachSheetEvents();
 
-            ExportComposeCommand = new Helpers.RelayCommand(_ =>
+            ExportComposeCommand = new RelayCommand(_ =>
             {
                 if (ActiveSheet != null)
                 {
-                    // ComposeExportService는 IDialogService가 필요하도록 수정되었다고 가정
-                    Helpers.ComposeExportService.ExportToCompose(ActiveSheet, _dialogService);
+                    ComposeExportService.ExportToCompose(ActiveSheet, _dialogService);
                 }
             });
 
-            // 템플릿 초기화 (기본값)
+            // 템플릿 초기화
             RefreshTemplates();
 
-            // 자동 동기화 타이머 시작 15초 간격
+            // 자동 동기화 타이머 시작
             _autoSyncTimer = new DispatcherTimer();
             _autoSyncTimer.Interval = TimeSpan.FromSeconds(1);
             _autoSyncTimer.Tick += AutoSync_Tick;
@@ -235,6 +261,11 @@ namespace DockerDiagram.ViewModels
             _ = SyncWithDockerEngine();
 
             _ = LoadLastFileIfExistsAsync();
+        }
+
+        public void MarkAsModified()
+        {
+            IsModified = true;
         }
 
         private async Task LoadLastFileIfExistsAsync()
@@ -265,19 +296,19 @@ namespace DockerDiagram.ViewModels
                         // 4. 불러온 노드들의 상태(색상 등)를 도커와 동기화 (회색 -> 녹색/빨강)
                         await RestoreLiveState();
 
-                        Debug.WriteLine($"[AutoLoad] Automatically loaded: {lastPath}");
+                        Debug.WriteLine($"[DockerDiscovery] Automatically loaded: {lastPath}");
                     }
                 }
                 else
                 {
                     // 파일이 없으면 그냥 새 프로젝트(Sheet 1) 상태 유지
-                    Debug.WriteLine("[AutoLoad] No last file found. Starting new.");
+                    Debug.WriteLine("[DockerDiscovery] No last file found. Starting new.");
                 }
             }
             catch (Exception ex)
             {
                 // 자동 로드 실패 시 사용자에게 방해가 되지 않도록 로그만 남기고 무시
-                Debug.WriteLine($"[AutoLoad] Failed: {ex.Message}");
+                Debug.WriteLine($"[DockerDiscovery] Failed: {ex.Message}");
             }
         }
 
@@ -335,7 +366,6 @@ namespace DockerDiagram.ViewModels
         {
             if (param is DockerContainer c)
             {
-                // [변경] DialogService 사용
                 if (_dialogService.ShowConfirm($"컨테이너 '{c.Name}'을 영구 삭제하시겠습니까?", "확인"))
                 {
                     try
@@ -353,7 +383,6 @@ namespace DockerDiagram.ViewModels
 
         private async Task DeleteVolumeItemAsync(object? param)
         {
-            // ★ DockerVolume 타입 확인
             if (param is DockerVolume v)
             {
                 // [변경] DialogService 사용
@@ -374,7 +403,6 @@ namespace DockerDiagram.ViewModels
 
         private async Task DeleteNetworkItemAsync(object? param)
         {
-            // ★ DockerGroup 타입 확인 (네트워크)
             if (param is DockerGroup n)
             {
                 if (_dialogService.ShowConfirm($"네트워크 '{n.Name}'을 영구 삭제하시겠습니까?", "확인"))
@@ -402,7 +430,6 @@ namespace DockerDiagram.ViewModels
         }
 
         // --- 6. Docker 연동 로직 ---
-        // ★ Raw 리스트 타입도 변경
         private List<DockerContainer> _rawContainers = new();
         private List<DockerVolume> _rawVolumes = new();
         private List<DockerGroup> _rawNetworks = new();
@@ -421,7 +448,6 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                // ★ _systemService 사용
                 if (!await _systemService.PingAsync()) return;
 
                 // 1. 원본 데이터 가져오기 (각 서비스 호출)
@@ -447,7 +473,6 @@ namespace DockerDiagram.ViewModels
         {
             if (Sheets == null) return;
 
-            // ★ 그룹 안에 있는 노드들까지 싹 다 긁어모아야 함
             var allNodes = new List<NodeViewModel>();
             foreach (var sheet in Sheets)
             {
@@ -462,7 +487,6 @@ namespace DockerDiagram.ViewModels
             var usedContainerIds = new HashSet<string>(allNodes.Where(n => n.Type == NodeType.Container).Select(n => n.ContainerId));
             var usedVolumeNames = new HashSet<string>(allNodes.Where(n => n.Type == NodeType.Volume).Select(n => n.Name));
 
-            // ★ 네트워크는 이제 Group입니다. 시트의 Groups에서 찾아야 합니다.
             var usedNetworkNames = new HashSet<string>();
             foreach (var sheet in Sheets)
             {
@@ -611,7 +635,7 @@ namespace DockerDiagram.ViewModels
                                     else
                                     {
                                         // 볼륨 노드 생성
-                                        var volModel = new DockerVolume { Name = volName};
+                                        var volModel = new DockerVolume { Name = volName };
                                         ActiveSheet.CreateVolumeAt(volModel, x + 250, y + (volIndex * 120));
                                         targetVolNode = ActiveSheet.Nodes.Last();
                                     }
@@ -724,7 +748,7 @@ namespace DockerDiagram.ViewModels
                 catch (Exception pullEx)
                 {
                     // Pull 실패(권한 없음, 인터넷 없음 등) 시 로그만 남기고 무시 -> 로컬 이미지 확인으로 넘어감
-                    Debug.WriteLine($"[Docker] Pull failed: {pullEx.Message}. Trying to use local image...");
+                    Debug.WriteLine($"[DockerDiscovery] Pull failed: {pullEx.Message}. Trying to use local image...");
                 }
 
                 // [5] 컨테이너 생성 및 실행 (로컬에 이미지가 있으면 여기서 성공함)
@@ -971,7 +995,7 @@ namespace DockerDiagram.ViewModels
         private void AddSheet()
         {
             // ★ SheetViewModel 생성 시 서비스 전달
-            var newSheet = new SheetViewModel($"Sheet {Sheets.Count + 1}", _containerService, _volumeService, _networkService, _dialogService);
+            var newSheet = new SheetViewModel($"Sheet {Sheets.Count + 1}", _containerService, _volumeService, _dialogService);
             Sheets.Add(newSheet);
             ActiveSheet = newSheet;
         }
@@ -1136,7 +1160,7 @@ namespace DockerDiagram.ViewModels
             // =========================================================
             else if (SelectedElement is NodeViewModel node)
             {
-                // ★ [추가] 인터넷 노드 전용 로직: 질문 없이 즉시 삭제
+                // 인터넷 노드 전용 로직: 질문 없이 즉시 삭제
                 if (node.Type == NodeType.Internet)
                 {
                     // 연결된 선(커넥터)들 먼저 제거
@@ -1400,7 +1424,7 @@ namespace DockerDiagram.ViewModels
         public async Task<bool> ConnectVolumeToContainerAsync(NodeViewModel containerNode, NodeViewModel volumeNode)
         {
             // 1. 다이얼로그로 경로와 소유자 정보 입력받기
-            var dlg = new DockerDiagram.Views.MountDialog();
+            var dlg = new Views.MountDialog();
             dlg.Owner = Application.Current.MainWindow;
 
             if (dlg.ShowDialog() != true) return false;
@@ -1597,17 +1621,104 @@ namespace DockerDiagram.ViewModels
 
                 ActiveSheet.Groups.CollectionChanged -= Groups_CollectionChanged;
                 ActiveSheet.Groups.CollectionChanged += Groups_CollectionChanged;
+
+                // 이미 화면에 있는 기존 노드들도 감시를 붙여야 함
+                foreach (var node in ActiveSheet.Nodes)
+                {
+                    node.OnModified -= Node_OnModified; // 중복 구독 방지
+                    node.OnModified += Node_OnModified;
+                }
+
+                // 이미 화면에 있는 기존 그룹들도 감시를 붙여야 함
+                foreach (var group in ActiveSheet.Groups)
+                {
+                    group.OnModified -= Node_OnModified;
+                    group.OnModified += Node_OnModified;
+                }
+
+                // 커넥터 리스트 변경 감시
+                ActiveSheet.Connectors.CollectionChanged -= Connectors_CollectionChanged;
+                ActiveSheet.Connectors.CollectionChanged += Connectors_CollectionChanged;
+
+                // 이미 화면에 있는 기존 커넥터들도 감시를 붙여야 함
+                foreach (var conn in ActiveSheet.Connectors)
+                {
+                    conn.OnModified -= Connector_OnModified;
+                    conn.OnModified += Connector_OnModified;
+                }
             }
         }
 
         private void Nodes_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
+            if (e.NewItems != null)
+            {
+                foreach (NodeViewModel node in e.NewItems)
+                {
+                    node.OnModified -= Node_OnModified;
+                    node.OnModified += Node_OnModified;
+                }
+            }
+            if (e.OldItems != null)
+            {
+                foreach (NodeViewModel node in e.OldItems)
+                {
+                    node.OnModified -= Node_OnModified;
+                }
+            }
             UpdateAvailableItems();
+            MarkAsModified();
+        }
+
+        private void Node_OnModified(object? sender, EventArgs e)
+        {
+            MarkAsModified();
+        }
+
+        private void Connectors_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        {
+            if (e.NewItems != null)
+            {
+                foreach (ConnectorViewModel conn in e.NewItems)
+                {
+                    conn.OnModified -= Connector_OnModified;
+                    conn.OnModified += Connector_OnModified;
+                }
+            }
+            if (e.OldItems != null)
+            {
+                foreach (ConnectorViewModel conn in e.OldItems)
+                {
+                    conn.OnModified -= Connector_OnModified;
+                }
+            }
+            MarkAsModified();
+        }
+
+        private void Connector_OnModified(object? sender, EventArgs e)
+        {
+            MarkAsModified();
         }
 
         private void Groups_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
+            if (e.NewItems != null)
+            {
+                foreach (GroupViewModel group in e.NewItems)
+                {
+                    group.OnModified -= Node_OnModified;
+                    group.OnModified += Node_OnModified;
+                }
+            }
+            if (e.OldItems != null)
+            {
+                foreach (GroupViewModel group in e.OldItems)
+                {
+                    group.OnModified -= Node_OnModified;
+                }
+            }
             UpdateAvailableItems();
+            MarkAsModified();
         }
 
         public async Task OnDockerStartedAsync()
@@ -1622,6 +1733,38 @@ namespace DockerDiagram.ViewModels
 
             // 2. 화면에 있는 노드들의 상태(Running/Stopped/Color) 다시 조회하여 녹색으로 변경
             await RestoreLiveState();
+        }
+
+        private void ExecuteFlowClear(object? obj)
+        {
+            if (ActiveSheet != null && _dialogService.ShowConfirm("현재 시트의 모든 내용을 지우시겠습니까?", "Flow Clear"))
+            {
+                ActiveSheet.Nodes.Clear();
+                ActiveSheet.Connectors.Clear();
+                ActiveSheet.Groups.Clear();
+            }
+        }
+
+        private void ExecuteFlowAllClear(object? obj)
+        {
+            if (_dialogService.ShowConfirm("모든 시트의 내용을 초기화 하시겠습니까?", "Flow All Clear"))
+            {
+                foreach (var sheet in Sheets)
+                {
+                    sheet.Nodes.Clear();
+                    sheet.Connectors.Clear();
+                    sheet.Groups.Clear();
+                }
+            }
+        }
+
+        private void ExecuteDeleteAllSheet(object? obj)
+        {
+            if (_dialogService.ShowConfirm("모든 시트를 삭제하시겠습니까?", "Delete All Sheet"))
+            {
+                Sheets.Clear();
+                if (AddSheetCommand.CanExecute(null)) AddSheetCommand.Execute(null);
+            }
         }
     }
 }

@@ -193,6 +193,14 @@
                         </StackPanel>
                     </Border>
 
+                    <Border Background="White" BorderBrush="#ccc" BorderThickness="1" CornerRadius="5" Height="40" Margin="0,0,0,5" Cursor="Hand" Tag="Internet" 
+                            PreviewMouseLeftButtonDown="Tool_PreviewMouseLeftButtonDown" PreviewMouseMove="Tool_PreviewMouseMove" PreviewMouseLeftButtonUp="Tool_PreviewMouseLeftButtonUp">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0">
+                            <Path Data="{StaticResource GlobeIcon}" Fill="#3498DB" Width="16" Height="16" Stretch="Uniform"/>
+                            <TextBlock Text="New Internet" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+
                     <Border Background="White" BorderBrush="#ccc" BorderThickness="1" CornerRadius="5" Height="40" Margin="0,0,0,5" Cursor="Hand" Tag="Network" 
                     PreviewMouseLeftButtonDown="Tool_PreviewMouseLeftButtonDown" PreviewMouseMove="Tool_PreviewMouseMove" PreviewMouseLeftButtonUp="Tool_PreviewMouseLeftButtonUp">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0">
@@ -201,11 +209,12 @@
                         </StackPanel>
                     </Border>
 
-                    <Border Background="White" BorderBrush="#ccc" BorderThickness="1" CornerRadius="5" Height="40" Margin="0,0,0,5" Cursor="Hand" Tag="Internet" 
+                    <Border Background="White" BorderBrush="#ccc" BorderThickness="1" CornerRadius="5" Height="40" Margin="0,0,0,5" Cursor="Hand" Tag="Group" 
                             PreviewMouseLeftButtonDown="Tool_PreviewMouseLeftButtonDown" PreviewMouseMove="Tool_PreviewMouseMove" PreviewMouseLeftButtonUp="Tool_PreviewMouseLeftButtonUp">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0">
-                            <Path Data="{StaticResource GlobeIcon}" Fill="#3498DB" Width="16" Height="16" Stretch="Uniform"/>
-                            <TextBlock Text="New Internet" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                            <Path Data="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z" 
+                                  Fill="#F1C40F" Width="16" Height="16" Stretch="Uniform"/>
+                            <TextBlock Text="New Group" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Border>
                 </StackPanel>
@@ -425,6 +434,7 @@
                         <Grid.Effect>
                             <DropShadowEffect BlurRadius="20" Color="Black" Opacity="0.3" ShadowDepth="0"/>
                         </Grid.Effect>
+
                         <Rectangle Fill="White"/>
                         <Rectangle IsHitTestVisible="False">
                             <Rectangle.Fill>
@@ -509,6 +519,25 @@
                                             <Ellipse Style="{StaticResource ResizeHandleStyle}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,-6,0" Cursor="SizeWE" Tag="Right" MouseLeftButtonDown="Resize_MouseDown"/>
                                         </Grid>
                                     </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <ItemsControl ItemsSource="{Binding ActiveSheet.Connectors}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <Canvas/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Canvas>
+                                        <Canvas MouseLeftButtonDown="Connector_MouseDown" Background="Transparent" Cursor="Hand">
+                                            <Polyline Points="{Binding Points}" Stroke="Transparent" StrokeThickness="10"/>
+                                            <Polyline Points="{Binding Points}" Stroke="Black" StrokeThickness="2"/>
+                                            <Polygon Points="{Binding ArrowPoints}" Fill="Black" Stroke="Black" />
+                                        </Canvas>
+                                    </Canvas>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
@@ -693,29 +722,21 @@
                                     <Canvas/>
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
-
                             <ItemsControl.ItemContainerStyle>
                                 <Style TargetType="ContentPresenter">
-                                    <Setter Property="Panel.ZIndex" Value="{Binding ZIndex}"/>
+                                    <Setter Property="Panel.ZIndex" Value="1000"/>
                                 </Style>
                             </ItemsControl.ItemContainerStyle>
-
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Canvas>
-                                        <Canvas MouseLeftButtonDown="Connector_MouseDown" Background="Transparent" Cursor="Hand">
-                                            <Polyline Points="{Binding Points}" Stroke="Transparent" StrokeThickness="10"/>
-                                            <Polyline Points="{Binding Points}" Stroke="Black" StrokeThickness="2"/>
-                                            <Polygon Points="{Binding ArrowPoints}" Fill="Black" Stroke="Black" />
-                                        </Canvas>
-
                                         <Canvas Visibility="{Binding IsSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <Ellipse Style="{StaticResource ConnectorGripStyle}" Fill="White" Stroke="#007ACC" StrokeThickness="2"
-     Canvas.Left="{Binding SourcePos.X}" Canvas.Top="{Binding SourcePos.Y}" Margin="-5,-5,0,0"
-     Tag="Source" MouseLeftButtonDown="ConnectorGrip_MouseDown"/>
+                                                 Canvas.Left="{Binding SourcePos.X}" Canvas.Top="{Binding SourcePos.Y}" Margin="-5,-5,0,0"
+                                                 Tag="Source" MouseLeftButtonDown="ConnectorGrip_MouseDown"/>
                                             <Ellipse Style="{StaticResource ConnectorGripStyle}" Fill="#007ACC" Stroke="White" StrokeThickness="2"
-     Canvas.Left="{Binding TargetPos.X}" Canvas.Top="{Binding TargetPos.Y}" Margin="-5,-5,0,0"
-     Tag="Target" MouseLeftButtonDown="ConnectorGrip_MouseDown"/>
+                                                 Canvas.Left="{Binding TargetPos.X}" Canvas.Top="{Binding TargetPos.Y}" Margin="-5,-5,0,0"
+                                                 Tag="Target" MouseLeftButtonDown="ConnectorGrip_MouseDown"/>
                                         </Canvas>
                                     </Canvas>
                                 </DataTemplate>
@@ -747,10 +768,8 @@
                     </Button.Template>
                 </Button>
 
-                <Popup x:Name="OptionPopup" StaysOpen="False" Placement="Bottom" 
-                       PlacementTarget="{Binding ElementName=BtnOption}" 
+                <Popup x:Name="OptionPopup" StaysOpen="False" Placement="Bottom" PlacementTarget="{Binding ElementName=BtnOption}" 
                        VerticalOffset="0" HorizontalOffset="0">
-
                     <Border Background="White" BorderBrush="#AAAAAA" BorderThickness="1">
                         <Border.Effect>
                             <DropShadowEffect BlurRadius="4" ShadowDepth="2" Opacity="0.1"/>
@@ -802,7 +821,58 @@
                                     </DataTemplate>
                                 </Button.ContentTemplate>
                             </Button>
-                            <ToggleButton x:Name="BtnGroupMode" Content="Group Objects" Click="BtnGroupMode_Checked" Style="{StaticResource CheckableMenuItemStyle}"/>
+
+                            <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
+
+                            <Button Command="{Binding FlowClearCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="현재 시트 초기화">
+                                <Button.ContentTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="25"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="🧹" HorizontalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Text="Flow Clear"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
+
+                            <Button Command="{Binding FlowAllClearCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="모든 시트 내용 지우기">
+                                <Button.ContentTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="25"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="🗑️" HorizontalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Text="Flow All Clear"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
+
+                            <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
+
+                            <Button Command="{Binding DeleteAllSheetCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="모든 시트 삭제 후 초기화">
+                                <Button.ContentTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="25"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="❌" HorizontalAlignment="Center" Foreground="#dc3545"/>
+                                            <TextBlock Grid.Column="1" Text="Delete All Sheet" Foreground="#dc3545" FontWeight="SemiBold"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
+
+                            <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
+
                             <Button Content="Auto Arrange" Click="BtnAutoLayout_Click" Style="{StaticResource MenuItemStyle}">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
@@ -816,6 +886,7 @@
                                     </DataTemplate>
                                 </Button.ContentTemplate>
                             </Button>
+
                             <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
                             <Button Command="{Binding ExportComposeCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="Generate docker-compose.yml">
                                 <Button.ContentTemplate>
@@ -831,6 +902,7 @@
                                     </DataTemplate>
                                 </Button.ContentTemplate>
                             </Button>
+
                             <Button Click="BtnShowMapSize_Click" Style="{StaticResource MenuItemStyle}">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
@@ -1580,6 +1652,12 @@
                                                 <Border.ContextMenu>
                                                     <ContextMenu>
                                                         <MenuItem Header="이름 바꾸기" Click="RenameSheet_Click"/>
+
+                                                        <MenuItem Header="시트 비우기" Click="ClearSheet_Click">
+                                                            <MenuItem.Icon>
+                                                                <TextBlock Text="🧹" HorizontalAlignment="Center"/>
+                                                            </MenuItem.Icon>
+                                                        </MenuItem>
                                                         <Separator/>
                                                         <MenuItem Header="삭제" Click="DeleteSheet_Click" Foreground="#dc3545"/>
                                                     </ContextMenu>

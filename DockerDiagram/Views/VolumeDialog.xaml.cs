@@ -7,10 +7,13 @@ namespace DockerDiagram.Views
         public string VolumeName => txtName.Text.Trim(); // 볼륨 이름
         public string Driver => txtDriver.Text.Trim(); // 드라이버. 기본값은 "local"
 
+
+
         public VolumeDialog()
         {
             InitializeComponent();
             txtName.Focus();
+
         }
 
         // 확인 버튼

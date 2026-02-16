@@ -16,7 +16,6 @@ namespace DockerDiagram.ViewModels
 
         private readonly IContainerService _containerService;
         private readonly IVolumeService _volumeService;
-        private readonly INetworkService _networkService;
         private readonly IDialogService _dialogService;
 
         // --- 맵 데이터 ---
@@ -41,7 +40,6 @@ namespace DockerDiagram.ViewModels
         private double _offsetY = 0;
         public double OffsetY { get => _offsetY; set { _offsetY = value; OnPropertyChanged(); } }
 
-        // ★ [핵심 추가] 선택된 노드 처리 (이게 있어야 CPU 갱신 타이머가 돕니다!)
         private NodeViewModel? _selectedNode;
         public NodeViewModel? SelectedNode
         {
@@ -121,13 +119,11 @@ namespace DockerDiagram.ViewModels
         public SheetViewModel(string title,
                               IContainerService containerService,
                               IVolumeService volumeService,
-                              INetworkService networkService,
                               IDialogService dialogService)
         {
             Title = title;
             _containerService = containerService;
             _volumeService = volumeService;
-            _networkService = networkService;
             _dialogService = dialogService;
         }
 
@@ -136,7 +132,7 @@ namespace DockerDiagram.ViewModels
             var nodeVm = new NodeViewModel(_containerService, _volumeService, _dialogService)
             {
                 Name = container.Name,
-                ParentSheet = this, // ★ 부모 시트 연결
+                ParentSheet = this,
                 ImageName = container.Image,
                 StatusColor = container.StateColor,
                 Type = NodeType.Container,

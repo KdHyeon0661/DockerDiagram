@@ -9,6 +9,8 @@ namespace DockerDiagram.ViewModels
     {
         private readonly IDialogService _dialogService;
 
+        public event EventHandler? OnModified;
+
         public NodeViewModel Source { get; private set; }
         public NodeViewModel Target { get; private set; }
         public PortDirection SourceDir { get; private set; }
@@ -65,21 +67,45 @@ namespace DockerDiagram.ViewModels
         public RelationType RelationType
         {
             get => _relationType;
-            set { _relationType = value; OnPropertyChanged(); }
+            set
+            {
+                if (_relationType != value)
+                {
+                    _relationType = value;
+                    OnPropertyChanged();
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
         }
 
         private string? _mountPath;
         public string? MountPath
         {
             get => _mountPath;
-            set { _mountPath = value; OnPropertyChanged(); }
+            set
+            {
+                if (_mountPath != value)
+                {
+                    _mountPath = value;
+                    OnPropertyChanged();
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
         }
 
         private string? _ipAddress;
         public string? IpAddress
         {
             get => _ipAddress;
-            set { _ipAddress = value; OnPropertyChanged(); }
+            set
+            {
+                if (_ipAddress != value)
+                {
+                    _ipAddress = value;
+                    OnPropertyChanged();
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
         }
 
         public ConnectorViewModel(

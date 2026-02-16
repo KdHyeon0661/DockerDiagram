@@ -152,9 +152,14 @@ namespace DockerDiagram.ViewModels
             get => _x;
             set
             {
-                _x = Math.Round(value / GRID_SIZE) * GRID_SIZE;
-                OnPropertyChanged();
-                OnPositionChanged?.Invoke(this, EventArgs.Empty);
+                double newVal = Math.Round(value / GRID_SIZE) * GRID_SIZE;
+                if (_x != newVal)
+                {
+                    _x = newVal;
+                    OnPropertyChanged();
+                    OnPositionChanged?.Invoke(this, EventArgs.Empty);
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
             }
         }
 
@@ -163,9 +168,14 @@ namespace DockerDiagram.ViewModels
             get => _y;
             set
             {
-                _y = Math.Round(value / GRID_SIZE) * GRID_SIZE;
-                OnPropertyChanged();
-                OnPositionChanged?.Invoke(this, EventArgs.Empty);
+                double newVal = Math.Round(value / GRID_SIZE) * GRID_SIZE;
+                if (_y != newVal)
+                {
+                    _y = newVal;
+                    OnPropertyChanged();
+                    OnPositionChanged?.Invoke(this, EventArgs.Empty);
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
             }
         }
 
@@ -181,6 +191,7 @@ namespace DockerDiagram.ViewModels
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(CenterX));
                     OnPositionChanged?.Invoke(this, EventArgs.Empty);
+                    OnModified?.Invoke(this, EventArgs.Empty);
                 }
             }
         }
@@ -197,11 +208,12 @@ namespace DockerDiagram.ViewModels
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(CenterY));
                     OnPositionChanged?.Invoke(this, EventArgs.Empty);
+                    OnModified?.Invoke(this, EventArgs.Empty);
                 }
             }
         }
 
-        // ★ [수정] 선택 시 연결 정보 강제 갱신 추가
+        //  선택 시 연결 정보 강제 갱신 추가
         public bool IsSelected
         {
             get => _isSelected;
@@ -244,6 +256,7 @@ namespace DockerDiagram.ViewModels
         }
 
         public event EventHandler? OnPositionChanged;
+        public event EventHandler? OnModified;
 
         private bool _isRunning;
         public bool IsRunning
@@ -517,7 +530,7 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        // ★ [수정] 볼륨 리스트 필터링 로직 (Bind 마운트 표시 복구)
+        // 볼륨 리스트 필터링 로직 (Bind 마운트 표시 복구)
         private void UpdateVolumeList()
         {
             MountedVolumeList.Clear();

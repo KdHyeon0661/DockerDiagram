@@ -8,36 +8,38 @@ namespace DockerDiagram
     [SupportedOSPlatform("windows")]
     public partial class App : Application
     {
+        // 1. 멤버 변수로 선언 (OnExit에서 접근하기 위해)
+        private DockerApiService? _dockerService;
+
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
 
-            // 1. 통합 서비스 생성
-            // (DockerApiService가 IContainerService, IVolumeService 등을 모두 구현하고 있어야 합니다)
-            var dockerApiService = new DockerApiService();
-
-            // 2. 다이얼로그 서비스 생성
+            // 2. 서비스 생성
+            _dockerService = new DockerApiService();
             IDialogService dialogService = new DialogService();
 
-            // 3. MainViewModel 생성 (순서 중요: Container, Volume, Network, Image, System, Dialog)
-            var mainViewModel = new MainViewModel(
-                dockerApiService, // IContainerService
-                dockerApiService, // IVolumeService
-                dockerApiService, // INetworkService
-                dockerApiService, // IImageService
-                dockerApiService, // ISystemService
-                dialogService     // IDialogService
-            );
+            // 3. MainViewModel 생성
+            // (참고: MainViewModel 생성자도 IDockerService 하나만 받도록 수정해야 합니다)
+            var mainViewModel = new MainViewModel(_dockerService, dialogService);
 
-            // 4. MainWindow 생성 (ViewModel, SystemService, DialogService)
+            // 4. MainWindow 생성
             var mainWindow = new MainWindow(
                 mainViewModel,
-                dockerApiService, // ISystemService (도커 상태 체크용)
+                _dockerService, // ISystemService
                 dialogService
             );
 
-            // 5. 화면 띄우기
             mainWindow.Show();
+        }
+
+        // 5. 앱이 종료될 때 호출됨 (여기가 Dispose의 제자리입니다)
+        protected override void OnExit(ExitEventArgs e)
+        {
+            // 도커 클라이언트 연결 안전하게 종료
+            _dockerService?.Dispose();
+
+            base.OnExit(e);
         }
     }
 }

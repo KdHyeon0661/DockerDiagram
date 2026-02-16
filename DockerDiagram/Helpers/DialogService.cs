@@ -18,5 +18,10 @@ namespace DockerDiagram.Helpers
         {
             MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Information);
         }
+
+        public MessageBoxResult ShowYesNoCancel(string message, string title)
+        {
+            return MessageBox.Show(message, title, MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+        }
     }
 }

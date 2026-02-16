@@ -122,12 +122,12 @@ namespace DockerDiagram.Helpers
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[FileService] Save Error: {ex.Message}");
+                Debug.WriteLine($"[DockerDiscovery] Save Error: {ex.Message}");
                 return false;
             }
         }
 
-        // [불러오기 기능 1] 다이얼로그 (수정됨: 성공 여부 확인 후 경로 반환)
+        // [불러오기 기능 1] 다이얼로그 (성공 여부 확인 후 경로 반환)
         public static async Task<string?> LoadDiagramWithDialogAsync(
             MainViewModel mainVm,
             IContainerService containerService,
@@ -142,7 +142,7 @@ namespace DockerDiagram.Helpers
 
             if (dlg.ShowDialog() == true)
             {
-                // ★ 여기서 true가 리턴되어야만 파일 경로를 반환함
+                // 여기서 true가 리턴되어야만 파일 경로를 반환함
                 bool success = await LoadDiagramFromPathAsync(mainVm, dlg.FileName, containerService, volumeService, networkService, dialogService);
 
                 if (success)
@@ -176,7 +176,7 @@ namespace DockerDiagram.Helpers
 
                 foreach (var sheetData in fileData.Sheets)
                 {
-                    var sheetVm = new SheetViewModel(sheetData.Title, containerService, volumeService, networkService, dialogService);
+                    var sheetVm = new SheetViewModel(sheetData.Title, containerService, volumeService, dialogService);
 
                     sheetVm.MapWidth = sheetData.MapWidth;
                     sheetVm.MapHeight = sheetData.MapHeight;
@@ -256,19 +256,14 @@ namespace DockerDiagram.Helpers
                     mainVm.ActiveSheet = mainVm.Sheets[fileData.ActiveSheetIndex];
                 }
 
-                return true; // ★ 성공 시 true 반환
+                return true;
             }
             catch (Exception ex)
             {
                 dialogService.ShowMessage($"파일 불러오기 실패 ({filePath}):\n{ex.Message}");
-                return false; // ★ 실패 시 false 반환
+                return false;
             }
         }
-
-        // [신규 추가] 파일을 직접 로드하여 MainViewModel을 반환하는 메서드 (자동 로드용)
-        // 주의: 이 메서드는 ViewModel을 생성하지 않고 데이터 구조체만 반환하거나,
-        // 기존 LoadDiagramFromPathAsync를 재활용하는 것이 좋습니다.
-        // MainViewModel에서 호출할 때는 LoadDiagramFromPathAsync를 쓰면 되므로 이 메서드는 필수 아님.
 
         private static void SaveLastFilePath(string path)
         {
