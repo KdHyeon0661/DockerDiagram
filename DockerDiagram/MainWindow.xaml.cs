@@ -19,6 +19,8 @@ namespace DockerDiagram
         private Point _toolStartPoint;
         private bool _isToolDragging = false;
 
+        private Point _startPoint;
+
         private bool _isNodeDragging = false;
         private Point _nodeClickOffset;
         private FrameworkElement? _draggedNodeElement = null;
@@ -48,9 +50,6 @@ namespace DockerDiagram
 
         // --- 2. 그룹핑(Grouping) 관련 변수 ---
         private bool _isGroupingMode = false;
-        private bool _isGroupingDrag = false;
-        private Point _groupStartPoint;
-        private Rectangle? _tempGroupRect;
 
         private bool _isGroupMoving = false;
         private GroupViewModel? _movingGroup = null;
@@ -167,6 +166,7 @@ namespace DockerDiagram
                 await FileService.LoadDiagramFromPathAsync(vm, lastFile, _containerService, _volumeService, _networkService, _dialogService);
                 vm.CurrentFilePath = lastFile;
                 vm.IsModified = false;
+                vm.ActiveSheet?.UpdateGroupLayering();
             }
             else
             {
@@ -365,74 +365,97 @@ namespace DockerDiagram
         }
 
         // 3. 캔버스 클릭 (네트워크/그룹 그리기 시작)
-        private void Diagram_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private void Diagram_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            // 1. 일반 그룹핑 모드
-            if (_isGroupingMode)
+            // 1. [그리기 모드] (그룹 또는 네트워크)
+            // -> 기존 요소(그룹/노드)가 클릭 이벤트를 받기 전에 가로채서 그리기를 시작합니다.
+            if (_isGroupingMode || _isNetworkDrawingMode)
             {
-                _isGroupingDrag = true;
-                _groupStartPoint = GetWorldPosition(e);
+                // 화면 좌표 계산
+                _startPoint = e.GetPosition(ZoomPanGrid);
 
-                _tempGroupRect = new Rectangle
+                // XAML에 미리 만들어둔 임시 사각형(TempGroupRect) 재사용 및 초기화
+                if (TempGroupRect != null)
                 {
-                    Stroke = Brushes.Gray,
-                    StrokeThickness = 2,
-                    StrokeDashArray = new DoubleCollection { 4, 2 },
-                    RadiusX = 10,
-                    RadiusY = 10,
-                    Fill = new SolidColorBrush(Color.FromArgb(30, 0, 0, 0)),
-                    IsHitTestVisible = false
-                };
+                    TempGroupRect.Visibility = Visibility.Visible;
+                    TempGroupRect.Width = 0;
+                    TempGroupRect.Height = 0;
+                    Canvas.SetLeft(TempGroupRect, _startPoint.X);
+                    Canvas.SetTop(TempGroupRect, _startPoint.Y);
 
-                Canvas.SetLeft(_tempGroupRect, _groupStartPoint.X);
-                Canvas.SetTop(_tempGroupRect, _groupStartPoint.Y);
-                DragCanvas.Children.Add(_tempGroupRect);
+                    if (_isGroupingMode)
+                    {
+                        // 그룹 스타일 (노란색 점선)
+                        TempGroupRect.Stroke = Brushes.Orange;
+                        TempGroupRect.StrokeDashArray = new DoubleCollection { 4, 2 };
+                        TempGroupRect.Fill = new SolidColorBrush(Color.FromArgb(30, 255, 165, 0));
+                    }
+                    else if (_isNetworkDrawingMode)
+                    {
+                        // 네트워크 스타일 (보라색 점선)
+                        TempGroupRect.Stroke = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#9B59B6"));
+                        TempGroupRect.StrokeDashArray = new DoubleCollection { 2, 2 };
+                        TempGroupRect.Fill = new SolidColorBrush(Color.FromArgb(30, 155, 89, 182));
+                    }
+                }
 
-                Mouse.Capture(ViewportCanvas);
+                // 마우스 가두기 및 이벤트 종료(자식에게 전파 금지)
+                ViewportCanvas.CaptureMouse();
                 e.Handled = true;
                 return;
             }
 
-            // 2. 네트워크 그리기 모드
-            if (_isNetworkDrawingMode)
+            // 2. [일반 모드] 배경 클릭 체크
+            // Preview 이벤트는 노드를 클릭해도 실행되므로, 클릭한 대상이 '진짜 배경'인지 확인해야 합니다.
+            var clickedElement = e.OriginalSource as DependencyObject;
+
+            // 클릭한 것이 캔버스 배경(ZoomPanGrid)이나 ViewportCanvas, 또는 배경용 흰색 Rectangle인 경우
+            if (clickedElement == ZoomPanGrid || clickedElement == ViewportCanvas ||
+               (clickedElement is System.Windows.Shapes.Rectangle rect && rect.Fill == Brushes.White))
             {
-                _isNetworkDrawingDrag = true;
-                _groupStartPoint = GetWorldPosition(e);
-
-                // 보라색 점선 사각형
-                _tempGroupRect = new Rectangle
-                {
-                    Stroke = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#9B59B6")),
-                    StrokeThickness = 2,
-                    StrokeDashArray = new DoubleCollection { 2, 2 },
-                    RadiusX = 10,
-                    RadiusY = 10,
-                    Fill = new SolidColorBrush(Color.FromArgb(30, 155, 89, 182)),
-                    IsHitTestVisible = false
-                };
-
-                Canvas.SetLeft(_tempGroupRect, _groupStartPoint.X);
-                Canvas.SetTop(_tempGroupRect, _groupStartPoint.Y);
-                DragCanvas.Children.Add(_tempGroupRect);
-
-                Mouse.Capture(ViewportCanvas);
-                e.Handled = true;
-                return;
+                // 선택 해제
+                (DataContext as MainViewModel)?.ClearSelection();
             }
 
-            // 3. 일반 선택 해제
-            if (!e.Handled) (DataContext as MainViewModel)?.ClearSelection();
+            // 주의: 일반 모드일 때는 e.Handled = true를 하지 않습니다.
+            // 그래야 노드를 클릭했을 때 노드 선택/드래그 로직이 정상 작동합니다.
         }
 
         // 4. 캔버스 드래그 (네트워크 사각형 크기 조절 포함)
         private void Diagram_MouseMove(object sender, MouseEventArgs e)
         {
+            // 1. [최우선] 그리기 모드 (그룹 또는 네트워크 생성 중)
+            // PreviewDown에서 CaptureMouse()를 했으므로, 마우스가 잡혀있는 동안 임시 사각형을 업데이트합니다.
+            if (ViewportCanvas.IsMouseCaptured && (_isGroupingMode || _isNetworkDrawingMode))
+            {
+                // 방어 코드: 임시 사각형이 없으면 중단
+                if (TempGroupRect == null) return;
+
+                var currentPoint = e.GetPosition(ZoomPanGrid);
+
+                // 시작점(_startPoint)과 현재점(currentPoint)을 이용해 사각형의 위치와 크기 계산
+                double x = Math.Min(_startPoint.X, currentPoint.X);
+                double y = Math.Min(_startPoint.Y, currentPoint.Y);
+                double w = Math.Abs(_startPoint.X - currentPoint.X);
+                double h = Math.Abs(_startPoint.Y - currentPoint.Y);
+
+                // 임시 사각형 UI 업데이트
+                Canvas.SetLeft(TempGroupRect, x);
+                Canvas.SetTop(TempGroupRect, y);
+                TempGroupRect.Width = w;
+                TempGroupRect.Height = h;
+
+                return; // 그리기 중에는 다른 로직(패닝, 이동 등)을 실행하지 않음
+            }
+
+            // --- 아래는 기존 기능들입니다 ---
+
             var vm = DataContext as MainViewModel;
             if (vm?.ActiveSheet == null) return;
 
             Point current = GetWorldPosition(e);
 
-            // 1. 패닝
+            // 2. 화면 패닝 (우클릭 드래그)
             if (_isPanning)
             {
                 Point currentMouse = e.GetPosition(this);
@@ -443,25 +466,10 @@ namespace DockerDiagram
                 return;
             }
 
-            // 2. 그룹/네트워크 생성 드래그
-            // (로직이 동일하므로 OR 조건으로 처리)
-            if ((_isGroupingDrag || _isNetworkDrawingDrag) && _tempGroupRect != null)
-            {
-                double x = Math.Min(_groupStartPoint.X, current.X);
-                double y = Math.Min(_groupStartPoint.Y, current.Y);
-                double w = Math.Abs(current.X - _groupStartPoint.X);
-                double h = Math.Abs(current.Y - _groupStartPoint.Y);
-
-                Canvas.SetLeft(_tempGroupRect, x);
-                Canvas.SetTop(_tempGroupRect, y);
-                _tempGroupRect.Width = w;
-                _tempGroupRect.Height = h;
-                return;
-            }
-
             // 3. 그룹 전체 이동
             if (_isGroupMoving && _movingGroup != null)
             {
+                // 10픽셀 단위 스냅 적용
                 double rawTargetX = current.X - _groupClickOffset.X;
                 double rawTargetY = current.Y - _groupClickOffset.Y;
 
@@ -471,6 +479,7 @@ namespace DockerDiagram
                 double dx = snappedTargetX - _movingGroup.X;
                 double dy = snappedTargetY - _movingGroup.Y;
 
+                // 미세 떨림 방지 (1픽셀 이상 움직였을 때만 처리)
                 if (Math.Abs(dx) >= 1 || Math.Abs(dy) >= 1)
                 {
                     _movingGroup.MoveBy(dx, dy);
@@ -478,7 +487,7 @@ namespace DockerDiagram
                 return;
             }
 
-            // 4. 리사이징
+            // 4. 리사이징 (노드 또는 그룹 크기 조절)
             if (_isResizing)
             {
                 double diffX = current.X - _resizeStartWorldPos.X;
@@ -486,36 +495,42 @@ namespace DockerDiagram
 
                 if (_resizingNode != null)
                 {
+                    // 노드 리사이징 (최소 크기 50 제한)
                     if (_resizeDir.Contains("Right")) _resizingNode.Width = Math.Max(50, _resizeStartNodeRect.Width + diffX);
                     if (_resizeDir.Contains("Bottom")) _resizingNode.Height = Math.Max(50, _resizeStartNodeRect.Height + diffY);
-                    if (_resizeDir.Contains("Left")) { double w = _resizeStartNodeRect.Width - diffX; if (w >= 50) { _resizingNode.X = _resizeStartNodeRect.X + diffX; _resizingNode.Width = w; } }
-                    if (_resizeDir.Contains("Top")) { double h = _resizeStartNodeRect.Height - diffY; if (h >= 50) { _resizingNode.Y = _resizeStartNodeRect.Y + diffY; _resizingNode.Height = h; } }
+                    if (_resizeDir.Contains("Left"))
+                    {
+                        double w = _resizeStartNodeRect.Width - diffX;
+                        if (w >= 50) { _resizingNode.X = _resizeStartNodeRect.X + diffX; _resizingNode.Width = w; }
+                    }
+                    if (_resizeDir.Contains("Top"))
+                    {
+                        double h = _resizeStartNodeRect.Height - diffY;
+                        if (h >= 50) { _resizingNode.Y = _resizeStartNodeRect.Y + diffY; _resizingNode.Height = h; }
+                    }
                 }
                 else if (_resizingGroup != null)
                 {
+                    // 그룹 리사이징 (내용물이 잘리지 않도록 최소 크기 제한)
                     Rect contentBounds = GetGroupContentBounds(_resizingGroup);
                     double padding = 20;
 
                     if (_resizeDir.Contains("Right"))
                     {
                         double newWidth = _resizeStartGroupRect.Width + diffX;
-                        double minRequiredWidth = (contentBounds.Right - _resizeStartGroupRect.X) + padding;
-                        double limit = _resizingGroup.ContainedNodes.Count > 0 ? minRequiredWidth : 50;
-                        _resizingGroup.Width = Math.Max(limit, newWidth);
+                        double minRequiredWidth = (_resizingGroup.ContainedNodes.Count > 0 ? (contentBounds.Right - _resizeStartGroupRect.X) + padding : 50);
+                        _resizingGroup.Width = Math.Max(minRequiredWidth, newWidth);
                     }
                     if (_resizeDir.Contains("Bottom"))
                     {
                         double newHeight = _resizeStartGroupRect.Height + diffY;
-                        double minRequiredHeight = (contentBounds.Bottom - _resizeStartGroupRect.Y) + padding;
-                        double limit = _resizingGroup.ContainedNodes.Count > 0 ? minRequiredHeight : 50;
-                        _resizingGroup.Height = Math.Max(limit, newHeight);
+                        double minRequiredHeight = (_resizingGroup.ContainedNodes.Count > 0 ? (contentBounds.Bottom - _resizeStartGroupRect.Y) + padding : 50);
+                        _resizingGroup.Height = Math.Max(minRequiredHeight, newHeight);
                     }
                     if (_resizeDir.Contains("Left"))
                     {
                         double rawNewX = _resizeStartGroupRect.X + diffX;
-                        double maxAllowedX = _resizingGroup.ContainedNodes.Count > 0
-                                                                                ? contentBounds.Left - padding
-                                                                                : _resizeStartGroupRect.Right - 50;
+                        double maxAllowedX = _resizingGroup.ContainedNodes.Count > 0 ? contentBounds.Left - padding : _resizeStartGroupRect.Right - 50;
                         double constrainedX = Math.Min(rawNewX, maxAllowedX);
                         double newWidth = _resizeStartGroupRect.Right - constrainedX;
                         _resizingGroup.X = constrainedX;
@@ -524,9 +539,7 @@ namespace DockerDiagram
                     if (_resizeDir.Contains("Top"))
                     {
                         double rawNewY = _resizeStartGroupRect.Y + diffY;
-                        double maxAllowedY = _resizingGroup.ContainedNodes.Count > 0
-                                                                                ? contentBounds.Top - padding
-                                                                                : _resizeStartGroupRect.Bottom - 50;
+                        double maxAllowedY = _resizingGroup.ContainedNodes.Count > 0 ? contentBounds.Top - padding : _resizeStartGroupRect.Bottom - 50;
                         double constrainedY = Math.Min(rawNewY, maxAllowedY);
                         double newHeight = _resizeStartGroupRect.Bottom - constrainedY;
                         _resizingGroup.Y = constrainedY;
@@ -536,10 +549,9 @@ namespace DockerDiagram
                 return;
             }
 
-            // 5. 재연결 (Grip Drag)
+            // 5. 재연결 (기존 연결선의 끝점을 드래그해서 다른 곳에 붙이기)
             if (_isReconnecting && _reconnectingConn != null)
             {
-                // (기존 재연결 로직 유지)
                 Point startP, endP;
                 Rect r1, r2;
                 PortDirection d1, d2;
@@ -563,6 +575,7 @@ namespace DockerDiagram
                     r2 = new Rect(current.X, current.Y, 0, 0);
                 }
 
+                // 마우스 아래에 있는 노드 감지 (자석 효과)
                 var hitResult = VisualTreeHelper.HitTest(ZoomPanGrid, e.GetPosition(ZoomPanGrid));
                 if (hitResult != null)
                 {
@@ -581,7 +594,7 @@ namespace DockerDiagram
                 return;
             }
 
-            // 6. 신규 연결
+            // 6. 신규 연결 (새로운 연결선 그리기)
             if (_isConnecting && _sourceNode != null)
             {
                 Point startP = GetExactBorderPoint(_sourceNode, _sourceDir);
@@ -592,6 +605,7 @@ namespace DockerDiagram
 
                 if (_lastHitPort != null) { _lastHitPort.Background = Brushes.Transparent; _lastHitPort = null; }
 
+                // 마우스 아래 타겟 노드 감지
                 var hitResult = VisualTreeHelper.HitTest(ZoomPanGrid, e.GetPosition(ZoomPanGrid));
                 if (hitResult != null)
                 {
@@ -608,72 +622,67 @@ namespace DockerDiagram
         }
 
         // 5. 마우스 뗌 (네트워크/그룹 생성 완료)
-        protected override void OnPreviewMouseLeftButtonUp(MouseButtonEventArgs e)
+        private async void Diagram_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            base.OnPreviewMouseLeftButtonUp(e);
             _isClickedOnTab = false;
 
-            // 1. 일반 그룹핑 생성 완료
-            if (_isGroupingDrag && _tempGroupRect != null)
+            // 1. [그리기 모드 완료] (그룹 또는 네트워크)
+            if (ViewportCanvas.IsMouseCaptured && (_isGroupingMode || _isNetworkDrawingMode))
             {
-                _isGroupingDrag = false;
-                Mouse.Capture(null);
+                ViewportCanvas.ReleaseMouseCapture();
 
-                double w = _tempGroupRect.Width;
-                double h = _tempGroupRect.Height;
+                // 임시 도형 숨기기
+                if (TempGroupRect != null) TempGroupRect.Visibility = Visibility.Collapsed;
+                if (TempPolyline != null) TempPolyline.Visibility = Visibility.Collapsed;
 
-                if (w > 20 && h > 20)
+                var vm = DataContext as MainViewModel;
+
+                // 임시 사각형이 있고 ViewModel이 연결된 경우 생성 로직 실행
+                if (vm != null && TempGroupRect != null)
                 {
-                    double x = Canvas.GetLeft(_tempGroupRect);
-                    double y = Canvas.GetTop(_tempGroupRect);
+                    double w = TempGroupRect.Width;
+                    double h = TempGroupRect.Height;
+                    double x = Canvas.GetLeft(TempGroupRect);
+                    double y = Canvas.GetTop(TempGroupRect);
 
-                    var vm = DataContext as MainViewModel;
-                    if (vm?.ActiveSheet != null)
+                    // 너무 작게(단순 클릭) 한 경우 생성 방지 (최소 20x20)
+                    if (w > 20 && h > 20)
                     {
-                        var newGroup = new GroupViewModel(x, y, w, h, null, _dialogService); // null: 일반 그룹
-                        newGroup.ParentSheet = vm.ActiveSheet;
-                        vm.ActiveSheet.Groups.Add(newGroup);
-                        vm.ActiveSheet.RefreshGroupContainment(newGroup);
-                        vm.SelectedElement = newGroup;
+                        // A) 그룹 생성
+                        if (_isGroupingMode)
+                        {
+                            var newGroup = new GroupViewModel(x, y, w, h, null, _dialogService);
+                            newGroup.ParentSheet = vm.ActiveSheet;
+                            vm.ActiveSheet.Groups.Add(newGroup);
+                            vm.ActiveSheet.RefreshGroupContainment(newGroup);
+                            vm.SelectedElement = newGroup;
+
+                            vm.ActiveSheet.UpdateGroupLayering();
+                        }
+                        // B) 네트워크 생성
+                        else if (_isNetworkDrawingMode)
+                        {
+                            var dlg = new Views.NetworkDialog();
+                            dlg.Owner = this;
+                            if (dlg.ShowDialog() == true)
+                            {
+                                // MainViewModel의 함수 내부에서 이미 UpdateGroupLayering을 호출하도록 수정했으므로 여기선 호출만 하면 됨
+                                await vm.CreateNewNetworkGroupAsync(dlg.NetworkName, dlg.Driver, x, y, w, h);
+                            }
+                        }
                     }
                 }
 
-                DragCanvas.Children.Remove(_tempGroupRect);
-                _tempGroupRect = null;
+                // 모드 초기화 및 커서 복구
                 _isGroupingMode = false;
-                Mouse.OverrideCursor = null;
-                return;
-            }
-
-            // 1-1. 네트워크 그리기 완료 (신규 로직)
-            if (_isNetworkDrawingDrag && _tempGroupRect != null)
-            {
-                _isNetworkDrawingDrag = false;
-                Mouse.Capture(null);
-
-                double w = _tempGroupRect.Width;
-                double h = _tempGroupRect.Height;
-                double x = Canvas.GetLeft(_tempGroupRect);
-                double y = Canvas.GetTop(_tempGroupRect);
-
-                if (w > 30 && h > 30) // 너무 작으면 무시
-                {
-                    var dlg = new Views.NetworkDialog();
-                    dlg.Owner = this;
-                    if (dlg.ShowDialog() == true)
-                    {
-                        var vm = DataContext as MainViewModel;
-                        // 좌표와 크기까지 전달하는 새 함수 호출 (MainViewModel에 해당 함수 오버로딩 필요)
-                        vm?.CreateNewNetworkNodeAsync(dlg.NetworkName, dlg.Driver, x, y, w, h);
-                    }
-                }
-
-                DragCanvas.Children.Remove(_tempGroupRect);
-                _tempGroupRect = null;
                 _isNetworkDrawingMode = false;
                 Mouse.OverrideCursor = null;
+
+                e.Handled = true;
                 return;
             }
+
+            // --- 기존 기능들 ---
 
             // 2. 그룹 이동 종료
             if (_isGroupMoving)
@@ -684,34 +693,41 @@ namespace DockerDiagram
             }
 
             // 3. 노드 드래그 종료
-            if (_isNodeDragging && _draggedNodeElement != null)
+            if (_isNodeDragging)
             {
-                var nodeVm = _draggedNodeElement.DataContext as NodeViewModel;
-                var sheet = (DataContext as MainViewModel)?.ActiveSheet;
-
-                if (nodeVm != null && sheet != null)
+                if (_draggedNodeElement != null && _draggedNodeElement.DataContext is NodeViewModel nodeVm)
                 {
-                    var targetGroup = sheet.FindGroupAt(nodeVm.X, nodeVm.Y, nodeVm.Width, nodeVm.Height);
-                    foreach (var group in sheet.Groups)
+                    var sheet = (DataContext as MainViewModel)?.ActiveSheet;
+                    if (sheet != null)
                     {
-                        if (group == targetGroup) group.AddNode(nodeVm);
-                        else group.RemoveNode(nodeVm);
-                    }
-                }
+                        var targetGroups = sheet.FindGroupsAt(nodeVm.X, nodeVm.Y, nodeVm.Width, nodeVm.Height);
 
+                        foreach (var group in sheet.Groups)
+                        {
+                            if (targetGroups.Contains(group))
+                            {
+                                group.AddNode(nodeVm);
+                            }
+                            else
+                            {
+                                group.RemoveNode(nodeVm);
+                            }
+                        }
+                    }
+                    _draggedNodeElement.ReleaseMouseCapture();
+                }
                 _isNodeDragging = false;
-                _draggedNodeElement?.ReleaseMouseCapture();
                 _draggedNodeElement = null;
             }
 
-            // 4. 재연결 완료 (기존 로직)
+            // 4. 재연결 종료
             if (_isReconnecting && _reconnectingConn != null)
             {
                 _isReconnecting = false;
-                var el = Mouse.Captured as FrameworkElement;
-                el?.ReleaseMouseCapture();
-                TempPolyline.Visibility = Visibility.Collapsed;
+                (Mouse.Captured as FrameworkElement)?.ReleaseMouseCapture();
+                if (TempPolyline != null) TempPolyline.Visibility = Visibility.Collapsed;
 
+                // 히트 테스트 및 연결 업데이트
                 var hitResult = VisualTreeHelper.HitTest(ZoomPanGrid, e.GetPosition(ZoomPanGrid));
                 if (hitResult != null)
                 {
@@ -735,8 +751,14 @@ namespace DockerDiagram
             if (_isResizing)
             {
                 _isResizing = false;
-                var el = Mouse.Captured as FrameworkElement;
-                el?.ReleaseMouseCapture();
+                (Mouse.Captured as FrameworkElement)?.ReleaseMouseCapture();
+
+                if (_resizingGroup != null)
+                {
+                    var vm = DataContext as MainViewModel;
+                    vm?.ActiveSheet?.UpdateGroupLayering();
+                }
+
                 _resizingNode = null;
                 _resizingGroup = null;
             }
@@ -746,7 +768,7 @@ namespace DockerDiagram
             {
                 _isConnecting = false;
                 Mouse.Capture(null);
-                TempPolyline.Visibility = Visibility.Collapsed;
+                if (TempPolyline != null) TempPolyline.Visibility = Visibility.Collapsed;
                 if (_lastHitPort != null) { _lastHitPort.Background = Brushes.Transparent; _lastHitPort = null; }
 
                 var hitResult = VisualTreeHelper.HitTest(ZoomPanGrid, e.GetPosition(ZoomPanGrid));
@@ -755,11 +777,7 @@ namespace DockerDiagram
                     var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, el => el.DataContext is NodeViewModel);
                     if (hitNodeObj != null && hitNodeObj.DataContext is NodeViewModel targetNode)
                     {
-                        if (targetNode.IsCreating)
-                        {
-                            _dialogService.ShowMessage("생성 중인 객체에는 연결할 수 없습니다.");
-                        }
-                        else if (targetNode != _sourceNode && _sourceNode != null)
+                        if (!targetNode.IsCreating && targetNode != _sourceNode && _sourceNode != null)
                         {
                             Rect targetRect = new Rect(targetNode.X, targetNode.Y, targetNode.Width, targetNode.Height);
                             PortDirection targetDir = GetClosestDirection(GetWorldPosition(e), targetRect);
@@ -914,21 +932,39 @@ namespace DockerDiagram
         // 1. 사이드바 아이콘 클릭 (네트워크면 그리기 모드 진입)
         private void Tool_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
+            // 1. 드래그 시작 위치 저장 및 초기화
             _toolStartPoint = e.GetPosition(null);
             _isToolDragging = false;
 
+            // 2. 클릭한 도구의 타입 확인 (Tag 속성 가져오기)
             var border = sender as Border;
             string typeStr = border?.Tag?.ToString() ?? "";
 
-            // ★ 네트워크인 경우: 드래그 앤 드롭(DoDragDrop) 하지 않고, 그리기 모드 활성화
+            // 1) Network 버튼 클릭
             if (typeStr == "Network")
             {
                 _isNetworkDrawingMode = true;
-                Mouse.OverrideCursor = Cursors.Cross;
+                _isGroupingMode = false;       // 그룹 모드 끄기
+                Mouse.OverrideCursor = Cursors.Cross; // 십자가 커서
                 (DataContext as MainViewModel)?.ClearSelection();
                 e.Handled = true; // 이벤트 소비 (DoDragDrop 방지)
                 return;
             }
+
+            // 2) Group 버튼 클릭
+            if (typeStr == "Group")
+            {
+                _isGroupingMode = true;
+                _isNetworkDrawingMode = false; // 네트워크 모드 끄기
+                Mouse.OverrideCursor = Cursors.Cross; // 십자가 커서
+                (DataContext as MainViewModel)?.ClearSelection();
+                e.Handled = true; // 이벤트 소비 (DoDragDrop 방지)
+                return;
+            }
+
+            _isNetworkDrawingMode = false;
+            _isGroupingMode = false;
+            Mouse.OverrideCursor = null;   // 커서 원래대로 (화살표)
         }
 
         // 2. 마우스 이동 (네트워크 모드면 드래그 앤 드롭 방지 + 기존 목록 드래그 처리)
@@ -1056,16 +1092,16 @@ namespace DockerDiagram
             double snapX = Math.Round((worldPos.X - 80) / 10) * 10;
             double snapY = Math.Round((worldPos.Y - 40) / 10) * 10;
 
+            bool needsLayerUpdate = false; // 레이어 업데이트 필요 여부 체크
+
             // [CASE A] 모든 노드 리소스 처리 (DockerResource로 받기)
             if (e.Data.GetDataPresent("DockerContainerObject"))
             {
-                // DockerContainer가 아닌 공통 부모인 DockerResource로 받습니다.
                 var d = e.Data.GetData("DockerContainerObject") as DockerResource;
                 if (d == null) return;
 
-                if (string.IsNullOrEmpty(d.Id)) // "New" 아이템 (템플릿에서 끌어온 경우)
+                if (string.IsNullOrEmpty(d.Id)) // "New" 아이템
                 {
-                    // 1. 컨테이너인 경우
                     if (d is DockerContainer container)
                     {
                         var dlg = new Views.ContainerDialog();
@@ -1091,7 +1127,6 @@ namespace DockerDiagram
                             finally { Mouse.OverrideCursor = null; }
                         }
                     }
-                    // 2. 볼륨인 경우
                     else if (d is DockerVolume volume)
                     {
                         if (volume.Name == "New Volume")
@@ -1108,22 +1143,19 @@ namespace DockerDiagram
                             await vm.CreateNodeAtAsync(volume, snapX, snapY);
                         }
                     }
-                    // 3. 인터넷 노드인 경우 (아무 정보 없으므로 바로 생성)
                     else if (d is DockerInternet internet)
                     {
-                        await vm.CreateNodeAtAsync(internet, snapX, snapY);
+                        vm.ActiveSheet.CreateInternetAt(new DockerInternet { Name = "Internet" }, snapX, snapY);
                     }
                 }
-                else // 기존 아이템 (목록에서 끌어온 경우)
+                else // 기존 아이템
                 {
-                    // 컨테이너일 때만 상태 색상을 계산 (볼륨/인터넷은 State가 없으므로)
                     if (d is DockerContainer existingContainer)
                     {
                         if (string.Equals(existingContainer.State, "running", StringComparison.OrdinalIgnoreCase)) existingContainer.StateColor = "#28a745";
                         else if (string.Equals(existingContainer.State, "exited", StringComparison.OrdinalIgnoreCase) || string.Equals(existingContainer.State, "dead", StringComparison.OrdinalIgnoreCase)) existingContainer.StateColor = "#dc3545";
                         else existingContainer.StateColor = "#808080";
                     }
-
                     await vm.CreateNodeAtAsync(d, snapX, snapY);
                 }
             }
@@ -1134,7 +1166,13 @@ namespace DockerDiagram
                 if (group != null)
                 {
                     await vm.CreateNodeAtAsync(group, snapX, snapY);
+                    needsLayerUpdate = true; // ★ [체크] 그룹이 추가되었으니 레이어 정리 필요
                 }
+            }
+
+            if (needsLayerUpdate)
+            {
+                vm.ActiveSheet.UpdateGroupLayering();
             }
         }
 

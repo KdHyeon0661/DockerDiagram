@@ -422,20 +422,24 @@ namespace DockerDiagram.ViewModels
             return clusters;
         }
 
-        public GroupViewModel? FindGroupAt(double x, double y, double w, double h)
+        public List<GroupViewModel> FindGroupsAt(double x, double y, double w, double h)
         {
+            var foundGroups = new List<GroupViewModel>();
+
             double centerX = x + w / 2;
             double centerY = y + h / 2;
 
             foreach (var group in Groups)
             {
+                // 노드의 중심점이 그룹 영역 안에 들어오는지 확인
                 if (centerX >= group.X && centerX <= group.X + group.Width &&
                     centerY >= group.Y && centerY <= group.Y + group.Height)
                 {
-                    return group;
+                    foundGroups.Add(group); // 찾았어도 멈추지 않고 계속 탐색!
                 }
             }
-            return null;
+
+            return foundGroups;
         }
 
         public void RefreshGroupContainment(GroupViewModel group)
@@ -447,6 +451,16 @@ namespace DockerDiagram.ViewModels
                 Point nodeCenter = new Point(node.X + node.Width / 2, node.Y + node.Height / 2);
                 if (groupRect.Contains(nodeCenter)) group.AddNode(node);
                 else group.RemoveNode(node);
+            }
+        }
+
+        public void UpdateGroupLayering()
+        {
+            var sortedGroups = Groups.OrderByDescending(g => g.Width * g.Height).ToList();
+
+            for (int i = 0; i < sortedGroups.Count; i++)
+            {
+                sortedGroups[i].ZIndex = i;
             }
         }
     }

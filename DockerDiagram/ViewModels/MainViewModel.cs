@@ -19,8 +19,6 @@ namespace DockerDiagram.ViewModels
         private readonly ISystemService _systemService;
         private readonly IDialogService _dialogService;
 
-        // public static MainViewModel Instance { get; private set; } // 싱글톤 제거
-
         public System.Windows.Input.ICommand ExportComposeCommand { get; }
 
         private bool _isModified = false;
@@ -97,6 +95,7 @@ namespace DockerDiagram.ViewModels
                 {
                     AttachSheetEvents();
                     UpdateAvailableItems();
+                    _activeSheet.UpdateGroupLayering();
                 }
             }
         }
@@ -1764,6 +1763,34 @@ namespace DockerDiagram.ViewModels
             {
                 Sheets.Clear();
                 if (AddSheetCommand.CanExecute(null)) AddSheetCommand.Execute(null);
+            }
+        }
+
+        public async Task CreateNewNetworkGroupAsync(string name, string driver, double x, double y, double w, double h)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return;
+
+            try
+            {
+                string networkId = await _networkService.CreateNetworkAsync(name, driver);
+                var newNetworkGroup = new GroupViewModel(x, y, w, h, _networkService, _dialogService, name)
+                {
+                    Id = networkId,           // 도커 ID 저장
+                    Type = GroupType.Network, // ★ 중요: 파란 점선 모양 적용
+                    Driver = driver,
+                    ParentSheet = this.ActiveSheet
+                };
+
+                ActiveSheet.Groups.Add(newNetworkGroup);
+                ActiveSheet.UpdateGroupLayering();
+                ActiveSheet.RefreshGroupContainment(newNetworkGroup);
+
+                SelectedElement = newNetworkGroup;
+                IsModified = true;
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowMessage($"네트워크 생성 실패: {ex.Message}");
             }
         }
     }

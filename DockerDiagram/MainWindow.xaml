@@ -414,7 +414,8 @@
               Background="#EFEFEF"
               MouseRightButtonDown="Diagram_MouseRightButtonDown"
               MouseRightButtonUp="Diagram_MouseRightButtonUp"
-              MouseLeftButtonDown="Diagram_MouseLeftButtonDown"
+              PreviewMouseLeftButtonDown="Diagram_PreviewMouseLeftButtonDown"
+              PreviewMouseLeftButtonUp="Diagram_PreviewMouseLeftButtonUp" 
               MouseMove="Diagram_MouseMove"
               PreviewMouseWheel="Diagram_PreviewMouseWheel">
 
@@ -464,8 +465,9 @@
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemContainerStyle>
                                 <Style TargetType="ContentPresenter">
-                                    <Setter Property="Canvas.Left" Value="{Binding X}"/>
-                                    <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                                    <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                    <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                    <Setter Property="Panel.ZIndex" Value="{Binding ZIndex}" />
                                 </Style>
                             </ItemsControl.ItemContainerStyle>
                             <ItemsControl.ItemTemplate>
@@ -745,6 +747,7 @@
 
                         <Canvas x:Name="DragCanvas" IsHitTestVisible="False">
                             <Polyline x:Name="TempPolyline" Stroke="Gray" StrokeThickness="2" StrokeDashArray="4 2" Opacity="0.6" Visibility="Collapsed"/>
+                            <Rectangle x:Name="TempGroupRect" Stroke="#F1C40F" StrokeThickness="2" StrokeDashArray="2 2" Fill="#20F1C40F" Visibility="Collapsed"/>
                         </Canvas>
                     </Grid>
                 </Grid>
