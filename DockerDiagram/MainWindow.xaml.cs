@@ -56,7 +56,6 @@ namespace DockerDiagram
         private Point _groupClickOffset;
 
         private bool _isNetworkDrawingMode = false;
-        private bool _isNetworkDrawingDrag = false;
 
         // --- 3. 재연결(Reconnection) 관련 변수 ---
         private bool _isReconnecting = false;
