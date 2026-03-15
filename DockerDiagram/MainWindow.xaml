@@ -875,22 +875,6 @@
                             </Button>
 
                             <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
-
-                            <Button Content="Auto Arrange" Click="BtnAutoLayout_Click" Style="{StaticResource MenuItemStyle}">
-                                <Button.ContentTemplate>
-                                    <DataTemplate>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="25"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="1" Text="{Binding}"/>
-                                        </Grid>
-                                    </DataTemplate>
-                                </Button.ContentTemplate>
-                            </Button>
-
-                            <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
                             <Button Command="{Binding ExportComposeCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="Generate docker-compose.yml">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
@@ -1195,7 +1179,7 @@
                                     <Button Command="{Binding ArrangeCommand}" Height="30" Background="#F0F0F0" BorderBrush="#CCC" BorderThickness="1" Cursor="Hand">
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Text="▦" Margin="0,0,5,0"/>
-                                            <TextBlock Text="Auto Arrange"/>
+                                            <TextBlock Text="Arrange in Grid"/>
                                         </StackPanel>
                                     </Button>
                                 </StackPanel>

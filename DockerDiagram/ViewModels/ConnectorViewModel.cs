@@ -176,7 +176,6 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        // ★ [수정] 벡터 기반 화살표 계산 메서드 (교체됨)
         private void CalculateArrowHead()
         {
             // 점이 2개 미만이면 방향 계산 불가

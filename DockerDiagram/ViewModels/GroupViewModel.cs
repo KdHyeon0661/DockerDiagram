@@ -256,29 +256,123 @@ namespace DockerDiagram.ViewModels
             if (dlg.ShowDialog() == true)
             {
                 int cols = dlg.Columns;
+
                 double padding = 20;
-                double headerHeight = 40;
-                double gap = 15;
+                double headerHeight = 20;
+                double gap = 20;
+                double nestIndent = 20;
 
-                double maxNodeW = ContainedNodes.Max(n => n.Width);
-                double maxNodeH = ContainedNodes.Max(n => n.Height);
+                double maxNodeW = ContainedNodes.Any() ? ContainedNodes.Max(n => n.Width) : 100;
+                double maxNodeH = ContainedNodes.Any() ? ContainedNodes.Max(n => n.Height) : 50;
 
-                for (int i = 0; i < ContainedNodes.Count; i++)
+                // 1. 트리 구조 구축 
+                var allGroups = new List<GroupViewModel> { this };
+                if (ParentSheet != null)
                 {
-                    var node = ContainedNodes[i];
-                    int row = i / cols;
-                    int col = i % cols;
-
-                    node.X = this.X + padding + (col * (maxNodeW + gap));
-                    node.Y = this.Y + headerHeight + (row * (maxNodeH + gap));
+                    foreach (var g in ParentSheet.Groups)
+                    {
+                        if (g != this && g.ContainedNodes.Any() &&
+                            g.ContainedNodes.All(n => this.ContainedNodes.Contains(n)))
+                        {
+                            allGroups.Add(g);
+                        }
+                    }
                 }
 
-                int totalRows = (int)Math.Ceiling((double)ContainedNodes.Count / cols);
-                double reqWidth = (padding * 2) + (cols * maxNodeW) + (gap * (cols - 1));
-                double reqHeight = headerHeight + padding + (totalRows * maxNodeH) + (gap * (totalRows - 1));
+                var nodeToGroup = new Dictionary<NodeViewModel, GroupViewModel>();
+                foreach (var node in ContainedNodes)
+                {
+                    var parentGroup = allGroups
+                        .Where(g => g.ContainedNodes.Contains(node))
+                        .OrderBy(g => g.ContainedNodes.Count)
+                        .First();
+                    nodeToGroup[node] = parentGroup;
+                }
 
-                this.Width = Math.Max(reqWidth, 150);
-                this.Height = Math.Max(reqHeight, 100);
+                var groupTree = new Dictionary<GroupViewModel, List<GroupViewModel>>();
+                foreach (var g in allGroups) { groupTree[g] = new List<GroupViewModel>(); }
+
+                foreach (var g in allGroups)
+                {
+                    if (g == this) continue;
+                    var parentGroup = allGroups
+                        .Where(p => p != g && p.ContainedNodes.Count > g.ContainedNodes.Count &&
+                                    g.ContainedNodes.All(n => p.ContainedNodes.Contains(n)))
+                        .OrderBy(p => p.ContainedNodes.Count)
+                        .FirstOrDefault() ?? this;
+
+                    groupTree[parentGroup].Add(g);
+                }
+
+                // 2. 최대 깊이(Depth) 계산
+                int maxDepth = 0;
+                void CalcMaxDepth(GroupViewModel g, int currentDepth)
+                {
+                    maxDepth = Math.Max(maxDepth, currentDepth);
+                    foreach (var child in groupTree[g]) CalcMaxDepth(child, currentDepth + 1);
+                }
+                CalcMaxDepth(this, 0);
+
+                // 3. 진정한 바텀-업(Bottom-Up) 기반의 전역 좌표계
+                double globalNodeGridWidth = (cols * maxNodeW) + (gap * (cols - 1));
+                double globalNodeStartX = this.X + padding + (maxDepth * nestIndent);
+
+                // 4. 재귀적 렌더링
+                double LayoutTree(GroupViewModel currentGroup, double startY, int depth)
+                {
+                    int depthFromBottom = maxDepth - depth;
+
+                    // ★ [수정1] 폭/X좌표뿐만 아니라 Y좌표도 명시적으로 업데이트!
+                    currentGroup.X = globalNodeStartX - padding - (depthFromBottom * nestIndent);
+                    currentGroup.Y = startY;
+                    currentGroup.Width = globalNodeGridWidth + (padding * 2) + (depthFromBottom * nestIndent * 2);
+
+                    // ★ [수정2] 헤더 아래에 padding을 더해 '제일 위의 것'이 천장에 붙지 않게 숨통을 터줌
+                    double currentYPos = startY + headerHeight + padding;
+                    bool hasElements = false;
+
+                    foreach (var childGroup in groupTree[currentGroup])
+                    {
+                        currentYPos = LayoutTree(childGroup, currentYPos, depth + 1);
+                        hasElements = true;
+                    }
+
+                    var directNodes = ContainedNodes.Where(n => nodeToGroup[n] == currentGroup).ToList();
+                    if (directNodes.Any())
+                    {
+                        hasElements = true;
+                        int col = 0;
+                        foreach (var node in directNodes)
+                        {
+                            node.X = globalNodeStartX + (col * (maxNodeW + gap));
+                            node.Y = currentYPos;
+
+                            col++;
+                            if (col >= cols)
+                            {
+                                col = 0;
+                                currentYPos += maxNodeH + gap;
+                            }
+                        }
+                        if (col > 0) currentYPos += maxNodeH + gap;
+                    }
+
+                    // ★ [수정3] 마지막 요소 뒤에 불필요하게 더해진 gap을 빼서 하단 여백을 상단과 대칭으로 맞춤
+                    if (hasElements)
+                    {
+                        currentYPos -= gap;
+                    }
+
+                    currentGroup.Height = currentYPos - startY + padding;
+
+                    // 다음 형제 요소를 위해 Y좌표 + 자신의 높이 + gap 반환
+                    return currentGroup.Y + currentGroup.Height + gap;
+                }
+
+                LayoutTree(this, this.Y, 0);
+
+                this.Width = Math.Max(this.Width, 150);
+                this.Height = Math.Max(this.Height, 100);
 
                 OnModified?.Invoke(this, EventArgs.Empty);
             }

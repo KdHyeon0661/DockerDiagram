@@ -293,13 +293,6 @@ namespace DockerDiagram
             Mouse.OverrideCursor = null;
         }
 
-        private void BtnAutoLayout_Click(object sender, RoutedEventArgs e)
-        {
-            var vm = DataContext as MainViewModel;
-            vm?.ActiveSheet?.AutoLayout();
-            OptionPopup.IsOpen = false;
-        }
-
         private void BtnShowMapSize_Click(object sender, RoutedEventArgs e)
         {
             if (MapSizePanel.Visibility == Visibility.Visible)
