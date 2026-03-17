@@ -539,5 +539,45 @@ namespace DockerDiagram.Helpers
             Dispose(disposing: true);
             GC.SuppressFinalize(this);
         }
+
+        public async Task<string> GetContainerLogsAsync(string containerId, int tailCount = 500)
+        {
+            try
+            {
+                // 로그 요청 파라미터 (최근 N줄, 타임스탬프 포함, 표준 입출력/에러 모두 가져옴)
+                var parameters = new ContainerLogsParameters
+                {
+                    ShowStdout = true,
+                    ShowStderr = true,
+                    Tail = tailCount.ToString(),
+                    Timestamps = true
+                };
+
+                // 도커 클라이언트에서 로그 스트림 받아오기
+                using (var stream = await _client.Containers.GetContainerLogsAsync(containerId, false, parameters))
+                {
+                    using (var stdoutMs = new MemoryStream())
+                    using (var stderrMs = new MemoryStream())
+                    {
+                        // 도커 로그는 특수 헤더가 붙어있어 CopyOutputToAsync로 분리해서 읽어야 함
+                        await stream.CopyOutputToAsync(default, stdoutMs, stderrMs, CancellationToken.None);
+
+                        stdoutMs.Position = 0;
+                        stderrMs.Position = 0;
+
+                        string stdout = Encoding.UTF8.GetString(stdoutMs.ToArray());
+                        string stderr = Encoding.UTF8.GetString(stderrMs.ToArray());
+
+                        // 일반 출력(stdout)과 에러 출력(stderr)을 합쳐서 반환
+                        return stdout + stderr;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[DockerDiscovery] GetContainerLogsAsync Error: {ex.Message}");
+                return $"로그를 가져오는 중 오류가 발생했습니다:\n{ex.Message}";
+            }
+        }
     }
 }

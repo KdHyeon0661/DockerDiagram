@@ -1194,15 +1194,15 @@
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="*"/>
                                     <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
 
-                                <StackPanel Grid.Row="0" Margin="0,0,0,5">
+                                <StackPanel Grid.Row="0" Margin="0,0,0,10">
                                     <TextBox MaxLength="25" Padding="0,2" FontSize="16" FontWeight="Bold">
                                         <TextBox.Style>
                                             <Style TargetType="TextBox">
-                                                <Setter Property="Text" Value="{Binding Name, StringFormat='Name : {0}', UpdateSourceTrigger=PropertyChanged}"/>
+                                                <Setter Property="Text" Value="{Binding Name, StringFormat='Name: {0}', UpdateSourceTrigger=PropertyChanged}"/>
                                                 <Setter Property="IsReadOnly" Value="True"/>
                                                 <Setter Property="BorderThickness" Value="0"/>
                                                 <Setter Property="Background" Value="Transparent"/>
@@ -1220,9 +1220,9 @@
                                         </TextBox.Style>
                                     </TextBox>
 
-                                    <TextBlock Text="{Binding ShortContainerId, StringFormat='Id: {0}'}" FontSize="11" Foreground="#999" Margin="5,0,0,0" FontFamily="Consolas">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
+                                    <StackPanel Orientation="Horizontal" Margin="5,0,0,0">
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
                                                 <Setter Property="Visibility" Value="Collapsed"/>
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding Type}" Value="Container">
@@ -1230,49 +1230,14 @@
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                    <Separator Margin="0,8,0,8" Background="#EEE"/>
+                                        </StackPanel.Style>
+                                        <TextBlock Text="{Binding ShortContainerId, StringFormat='Id: {0}'}" FontSize="11" Foreground="#555555" FontFamily="Consolas" VerticalAlignment="Center"/>
+                                        <Button Content="📋" ToolTip="ID 복사" Background="Transparent" BorderThickness="0" Margin="5,0,0,0" Padding="0" Cursor="Hand" Foreground="#555555"/>
+                                    </StackPanel>
+                                    <Separator Margin="0,8,0,0" Background="#EEE"/>
                                 </StackPanel>
 
-                                <StackPanel Grid.Row="1">
-                                    <StackPanel.Style>
-                                        <Style TargetType="StackPanel">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Type}" Value="Container">
-                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </StackPanel.Style>
-                                    <Border Background="#F9F9F9" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Padding="8,5" Margin="0,0,0,5">
-                                        <StackPanel>
-                                            <Grid Margin="0,0,0,3">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="30"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="45"/>
-                                                </Grid.ColumnDefinitions>
-                                                <TextBlock Text="cpu" FontSize="11" Foreground="#555" VerticalAlignment="Center"/>
-                                                <ProgressBar Grid.Column="1" Value="{Binding CpuValue, FallbackValue=0}" Height="6" Foreground="#28a745" Background="#EEE" BorderThickness="0" VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Column="2" Text="{Binding CpuValue, StringFormat={}{0:0.0}%}" FontSize="11" Foreground="#28a745" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold"/>
-                                            </Grid>
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="30"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="45"/>
-                                                </Grid.ColumnDefinitions>
-                                                <TextBlock Text="mem" FontSize="11" Foreground="#555" VerticalAlignment="Center"/>
-                                                <ProgressBar Grid.Column="1" Value="{Binding MemoryValue, FallbackValue=0}" Height="6" Foreground="#007ACC" Background="#EEE" BorderThickness="0" VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Column="2" Text="{Binding MemoryValue, StringFormat={}{0:0.0}%}" ToolTip="{Binding MemoryUsage}" FontSize="11" Foreground="#007ACC" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold"/>
-                                            </Grid>
-                                        </StackPanel>
-                                    </Border>
-                                </StackPanel>
-
-                                <Border Grid.Row="2" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Background="#FDFDFD" Padding="8" Margin="0,0,0,8">
+                                <Border Grid.Row="1" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Background="#FDFDFD" Padding="8" Margin="0,0,0,8">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="Visibility" Value="Collapsed"/>
@@ -1299,9 +1264,9 @@
                                     </Grid>
                                 </Border>
 
-                                <UniformGrid Grid.Row="3" Columns="4" Margin="0,0,0,8">
-                                    <UniformGrid.Style>
-                                        <Style TargetType="UniformGrid">
+                                <Border Grid.Row="2" Background="#F9F9F9" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Padding="8,5" Margin="0,0,0,10">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
                                             <Setter Property="Visibility" Value="Collapsed"/>
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding Type}" Value="Container">
@@ -1309,31 +1274,150 @@
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
-                                    </UniformGrid.Style>
-                                    <UniformGrid.Resources>
-                                        <Style TargetType="Button">
-                                            <Setter Property="Margin" Value="1"/>
-                                            <Setter Property="Height" Value="22"/>
-                                            <Setter Property="Background" Value="White"/>
-                                            <Setter Property="BorderBrush" Value="#DDD"/>
-                                            <Setter Property="Cursor" Value="Hand"/>
-                                        </Style>
-                                    </UniformGrid.Resources>
-                                    <Button Command="{Binding StartCommand}">
-                                        <TextBlock Text="▶" Foreground="#28a745" FontSize="11"/>
-                                    </Button>
-                                    <Button Command="{Binding StopCommand}">
-                                        <TextBlock Text="■" Foreground="#dc3545" FontSize="11"/>
-                                    </Button>
-                                    <Button Command="{Binding PauseCommand}">
-                                        <TextBlock Text="⏸" Foreground="#ffc107" FontSize="11"/>
-                                    </Button>
-                                    <Button Command="{Binding RestartCommand}">
-                                        <TextBlock Text="🔄" Foreground="#17a2b8" FontSize="11"/>
-                                    </Button>
-                                </UniformGrid>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,3">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="30"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="45"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="cpu" FontSize="11" Foreground="#555" VerticalAlignment="Center"/>
+                                            <ProgressBar Grid.Column="1" Value="{Binding CpuValue, FallbackValue=0}" Height="6" Foreground="#28a745" Background="#EEE" BorderThickness="0" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding CpuValue, StringFormat={}{0:0.0}%}" FontSize="11" Foreground="#28a745" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                        </Grid>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="30"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="45"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="mem" FontSize="11" Foreground="#555" VerticalAlignment="Center"/>
+                                            <ProgressBar Grid.Column="1" Value="{Binding MemoryValue, FallbackValue=0}" Height="6" Foreground="#007ACC" Background="#EEE" BorderThickness="0" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding MemoryValue, StringFormat={}{0:0.0}%}" ToolTip="{Binding MemoryUsage}" FontSize="11" Foreground="#007ACC" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
 
-                                <Button Grid.Row="4" Command="{Binding TerminalCommand}" Height="38" Background="#333" BorderThickness="0" Margin="0,0,0,5" Cursor="Hand">
+                                <StackPanel Grid.Row="3" Margin="0,0,0,10">
+                                    <StackPanel.Style>
+                                        <Style TargetType="StackPanel">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Type}" Value="Container">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </StackPanel.Style>
+
+                                    <Border BorderBrush="#DDD" BorderThickness="1" CornerRadius="4" ClipToBounds="True" Margin="0,0,0,5">
+                                        <UniformGrid Rows="1" Columns="4">
+                                            <Button Command="{Binding StartCommand}" Background="White" BorderThickness="0,0,1,0" BorderBrush="#EEE" Cursor="Hand" Height="30" ToolTip="Start">
+                                                <TextBlock Text="▶" Foreground="#28a745" FontSize="12"/>
+                                            </Button>
+                                            <Button Command="{Binding StopCommand}" Background="White" BorderThickness="0,0,1,0" BorderBrush="#EEE" Cursor="Hand" Height="30" ToolTip="Stop">
+                                                <TextBlock Text="■" Foreground="#dc3545" FontSize="12"/>
+                                            </Button>
+                                            <Button Command="{Binding PauseCommand}" Background="White" BorderThickness="0,0,1,0" BorderBrush="#EEE" Cursor="Hand" Height="30" ToolTip="Pause">
+                                                <TextBlock Text="⏸" Foreground="#ffc107" FontSize="12"/>
+                                            </Button>
+                                            <Button Command="{Binding RestartCommand}" Background="White" BorderThickness="0" Cursor="Hand" Height="30" ToolTip="Restart">
+                                                <TextBlock Text="🔄" Foreground="#17a2b8" FontSize="12"/>
+                                            </Button>
+                                        </UniformGrid>
+                                    </Border>
+
+                                    <Button Command="{Binding TerminalCommand}" Height="32" Background="#333333" Foreground="White" BorderThickness="0" Cursor="Hand" ToolTip="Open Terminal">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text=">_" Foreground="#00FF00" Margin="0,0,8,0" FontWeight="Bold" FontFamily="Consolas" FontSize="14" VerticalAlignment="Center"/>
+                                            <TextBlock Text="Terminal" FontWeight="Bold" FontSize="12" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+
+                                <Border Grid.Row="4" Background="#F9F9F9" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="12,10" Margin="0,0,0,10">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Type}" Value="Container">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="📍 IP Address:" Foreground="#888" FontSize="11" Margin="0,0,10,0"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding IPAddress, FallbackValue='172.17.0.x'}" 
+                               FontSize="11" FontWeight="SemiBold" Foreground="#333" FontFamily="Consolas"/>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="🔌 Ports:" Foreground="#888" FontSize="11" Margin="0,0,10,0"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding PortInfo, TargetNullValue='No published ports'}" 
+                               FontSize="11" FontWeight="SemiBold" Foreground="#007ACC" TextWrapping="Wrap"/>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="🔁 Restart:" Foreground="#888" FontSize="11" Margin="0,0,10,0"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding RestartPolicy, FallbackValue='unless-stopped'}" 
+                               FontSize="11" Foreground="#555"/>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="⏱️ Uptime:" Foreground="#888" FontSize="11" Margin="0,0,10,0"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding CreatedDate, StringFormat='Created at {0}'}"
+                               FontSize="11" Foreground="#555"/>
+                                        </Grid>
+                                        
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="🩺 Health:" Foreground="#888" FontSize="11" Margin="0,0,10,0"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding HealthStatus, FallbackValue='No Check'}" 
+                               FontSize="11" FontWeight="SemiBold" Foreground="{Binding HealthColor, FallbackValue='#888'}"/>
+                                        </Grid>
+
+                                        <Separator Background="#E5E5E5" Margin="0,4,0,10"/>
+
+                                        <UniformGrid Columns="3">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                <TextBlock Text="💾 Vol:" Foreground="#888" FontSize="11" Margin="0,0,4,0"/>
+                                                <TextBlock Text="{Binding MountedVolumeList.Count, FallbackValue='0'}" FontSize="11" FontWeight="Bold" Foreground="#333"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                <TextBlock Text="🌐 Net:" Foreground="#888" FontSize="11" Margin="0,0,4,0"/>
+                                                <TextBlock Text="{Binding NetworkDetailList.Count, FallbackValue='0'}" FontSize="11" FontWeight="Bold" Foreground="#333"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                <TextBlock Text="⚙️ Env:" Foreground="#888" FontSize="11" Margin="0,0,4,0"/>
+                                                <TextBlock Text="{Binding EnvList.Count, FallbackValue='0'}" FontSize="11" FontWeight="Bold" Foreground="#333"/>
+                                            </StackPanel>
+                                        </UniformGrid>
+                                    </StackPanel>
+                                </Border>
+
+                                <Button Grid.Row="5" Command="{Binding OpenDetailWindowCommand}" Height="36" Background="#007ACC" Foreground="White" BorderThickness="0" Margin="0,0,0,5" Cursor="Hand">
                                     <Button.Style>
                                         <Style TargetType="Button">
                                             <Setter Property="Visibility" Value="Collapsed"/>
@@ -1345,127 +1429,10 @@
                                         </Style>
                                     </Button.Style>
                                     <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text=">_" Foreground="#00FF00" Margin="0,0,10,0" FontWeight="Bold" FontFamily="Consolas" FontSize="18"/>
-                                        <TextBlock Text="Terminal" Foreground="White" FontWeight="Bold" FontSize="14"/>
+                                        <TextBlock Text="📄" Margin="0,0,8,0" FontSize="14" VerticalAlignment="Center"/>
+                                        <TextBlock Text="View Details &amp; Logs" FontWeight="Bold" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
-
-                                <Separator Grid.Row="4" Margin="0,45,0,5" Background="#EEE" VerticalAlignment="Bottom">
-                                    <Separator.Style>
-                                        <Style TargetType="Separator">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Type}" Value="Container">
-                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Separator.Style>
-                                </Separator>
-
-                                <Grid Grid.Row="5" Margin="0,5,0,5">
-                                    <Grid.Style>
-                                        <Style TargetType="Grid">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Type}" Value="Container">
-                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Grid.Style>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="Auto"/>
-                                    </Grid.RowDefinitions>
-
-                                    <Grid Grid.Row="0" Margin="0,0,0,5" Height="100">
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto"/>
-                                            <RowDefinition Height="*"/>
-                                        </Grid.RowDefinitions>
-                                        <Grid Margin="0,0,0,2">
-                                            <TextBlock Text="Networks" FontWeight="Bold" FontSize="12" Foreground="#555"/>
-                                            <Button Command="{Binding ToggleNetworkModeCommand}" HorizontalAlignment="Right" Background="Transparent" BorderThickness="0" Cursor="Hand">
-                                                <TextBlock Text="View ⟳" FontSize="10" Foreground="#007ACC"/>
-                                            </Button>
-                                        </Grid>
-                                        <Border Grid.Row="1" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Background="#FAFAFA">
-                                            <ListBox ItemsSource="{Binding NetworkDetailList}" Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Hidden" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                                <ListBox.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <TextBlock FontSize="11" Margin="2">
-                                                            <TextBlock.Style>
-                                                                <Style TargetType="TextBlock">
-                                                                    <Setter Property="Text" Value="{Binding NetworkName}"/>
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding DataContext.NetworkDisplayMode, RelativeSource={RelativeSource AncestorType=ListBox}}" Value="1">
-                                                                            <Setter Property="Text" Value="{Binding IPv4}"/>
-                                                                        </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding DataContext.NetworkDisplayMode, RelativeSource={RelativeSource AncestorType=ListBox}}" Value="2">
-                                                                            <Setter Property="Text" Value="{Binding IPv6}"/>
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </TextBlock.Style>
-                                                        </TextBlock>
-                                                    </DataTemplate>
-                                                </ListBox.ItemTemplate>
-                                            </ListBox>
-                                        </Border>
-                                    </Grid>
-
-                                    <Grid Grid.Row="1" Margin="0,0,0,5" Height="100">
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto"/>
-                                            <RowDefinition Height="*"/>
-                                        </Grid.RowDefinitions>
-                                        <Grid Margin="0,0,0,2">
-                                            <TextBlock FontWeight="Bold" FontSize="12" Foreground="#555">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="Text" Value="Volumes (Named)"/>
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding VolumeDisplayMode}" Value="1">
-                                                                <Setter Property="Text" Value="Volumes (Bind)"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
-                                            <Button Command="{Binding ToggleVolumeModeCommand}" HorizontalAlignment="Right" Background="Transparent" BorderThickness="0" Cursor="Hand">
-                                                <TextBlock Text="Switch ⟳" FontSize="10" Foreground="#007ACC"/>
-                                            </Button>
-                                        </Grid>
-                                        <Border Grid.Row="1" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Background="#FAFAFA">
-                                            <ListBox ItemsSource="{Binding MountedVolumeList}" Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Hidden" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                                <ListBox.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <TextBlock Text="{Binding}" FontSize="11" Margin="2" Foreground="#CE9178" TextTrimming="CharacterEllipsis" ToolTip="{Binding}"/>
-                                                    </DataTemplate>
-                                                </ListBox.ItemTemplate>
-                                            </ListBox>
-                                        </Border>
-                                    </Grid>
-
-                                    <Grid Grid.Row="2" Height="100">
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto"/>
-                                            <RowDefinition Height="*"/>
-                                        </Grid.RowDefinitions>
-                                        <TextBlock Text="Connected Nodes" FontWeight="Bold" FontSize="12" Foreground="#555" Margin="0,0,0,2"/>
-                                        <Border Grid.Row="1" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Background="#FAFAFA">
-                                            <ListBox ItemsSource="{Binding ConnectedNodes}" Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Hidden" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                                <ListBox.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <TextBlock Text="{Binding}" FontSize="11" Margin="2" Foreground="#333" TextTrimming="CharacterEllipsis"/>
-                                                    </DataTemplate>
-                                                </ListBox.ItemTemplate>
-                                            </ListBox>
-                                        </Border>
-                                    </Grid>
-                                </Grid>
 
                                 <ScrollViewer Grid.Row="6" VerticalScrollBarVisibility="Auto">
                                     <StackPanel>
@@ -1494,7 +1461,6 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </StackPanel.Style>
-
                                             <TextBlock Text="Volume Details" FontWeight="Bold" FontSize="14" Margin="0,0,0,10" Foreground="#555"/>
                                             <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Padding="10">
                                                 <StackPanel>
@@ -1524,7 +1490,6 @@
                                                     </Grid>
                                                 </StackPanel>
                                             </Border>
-
                                             <TextBlock Text="Used By Containers" FontWeight="Bold" FontSize="12" Margin="0,15,0,5" Foreground="#555"/>
                                             <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Height="160">
                                                 <ListBox ItemsSource="{Binding UsedByContainers}" Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Hidden" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
@@ -1548,10 +1513,8 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </StackPanel.Style>
-
                                             <TextBlock Text="External Network" FontWeight="Bold" FontSize="12" Foreground="#555" Margin="0,0,0,5"/>
                                             <TextBlock Text="Represents an external connection or the public internet." TextWrapping="Wrap" Foreground="#888" FontSize="11" Margin="0,0,0,15"/>
-
                                             <TextBlock Text="Connected Nodes" FontWeight="Bold" FontSize="12" Foreground="#555" Margin="0,0,0,5"/>
                                             <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Height="160">
                                                 <ListBox ItemsSource="{Binding ConnectedNodes}" Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Hidden" ScrollViewer.HorizontalScrollBarVisibility="Disabled">

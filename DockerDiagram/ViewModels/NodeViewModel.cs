@@ -134,12 +134,43 @@ namespace DockerDiagram.ViewModels
             set { _environmentVariables = value; OnPropertyChanged(); }
         }
 
+        public List<string> EnvList => EnvironmentVariables;
+
+        private string _uptime = "-";
+        public string Uptime { get => _uptime; set { _uptime = value; OnPropertyChanged(); } }
+
+        private string _ipAddress = "-";
+        public string IPAddress { get => _ipAddress; set { _ipAddress = value; OnPropertyChanged(); } }
+
         private string _restartPolicy = "no";
         public string RestartPolicy
         {
             get => _restartPolicy;
             set { _restartPolicy = value; OnPropertyChanged(); }
         }
+
+        private string _healthStatus = "No Check";
+        public string HealthStatus { get => _healthStatus; set { _healthStatus = value; OnPropertyChanged(); } }
+
+        private string _healthColor = "#888888";
+        public string HealthColor { get => _healthColor; set { _healthColor = value; OnPropertyChanged(); } }
+
+        private string _containerLogs = "Loading logs...";
+        public string ContainerLogs
+        {
+            get => _containerLogs;
+            set { _containerLogs = value; OnPropertyChanged(); }
+        }
+
+        // ★ [추가] 팝업창 전용 파일 입출력 및 환경변수 속성
+        private string _hostFilePath = @"C:\temp\";
+        public string HostFilePath { get => _hostFilePath; set { _hostFilePath = value; OnPropertyChanged(); } }
+
+        private string _containerFilePath = @"/app/data";
+        public string ContainerFilePath { get => _containerFilePath; set { _containerFilePath = value; OnPropertyChanged(); } }
+
+        private string _newEnvInput = "";
+        public string NewEnvInput { get => _newEnvInput; set { _newEnvInput = value; OnPropertyChanged(); } }
 
         public NodeType Type
         {
@@ -351,6 +382,7 @@ namespace DockerDiagram.ViewModels
             RefreshConnections();
         }
 
+
         // --- Commands ---
         public AsyncRelayCommand StartCommand { get; }
         public AsyncRelayCommand StopCommand { get; }
@@ -359,6 +391,15 @@ namespace DockerDiagram.ViewModels
         public RelayCommand TerminalCommand { get; }
         public ICommand ToggleNetworkModeCommand { get; }
         public ICommand ToggleVolumeModeCommand { get; }
+        public ICommand OpenDetailWindowCommand { get; }
+        public ICommand RefreshLogsCommand { get; }
+
+        // ★ [추가] 팝업창 전용 액션 커맨드
+        public ICommand CopyLogsCommand { get; }
+        public ICommand ExportLogsCommand { get; }
+        public ICommand CopyToContainerCommand { get; }
+        public ICommand CopyFromContainerCommand { get; }
+        public ICommand AddEnvAndRecreateCommand { get; }
 
         public NodeViewModel(IContainerService? containerService = null,
                              IVolumeService? volumeService = null,
@@ -382,6 +423,66 @@ namespace DockerDiagram.ViewModels
             ToggleVolumeModeCommand = new RelayCommand(_ => {
                 VolumeDisplayMode = (VolumeDisplayMode + 1) % 2;
             });
+
+            OpenDetailWindowCommand = new AsyncRelayCommand(_ => OpenDetailWindowAsync(), _ => Type == NodeType.Container);
+            RefreshLogsCommand = new AsyncRelayCommand(_ => LoadLogsAsync(), _ => Type == NodeType.Container);
+
+            // ★ [추가] 팝업창 전용 액션 초기화
+            CopyLogsCommand = new RelayCommand(_ => {
+                if (!string.IsNullOrEmpty(ContainerLogs))
+                {
+                    System.Windows.Clipboard.SetText(ContainerLogs);
+                    _dialogService?.ShowInfo("로그가 클립보드에 복사되었습니다.", "복사 완료");
+                }
+            });
+
+            ExportLogsCommand = new RelayCommand(_ => {
+                if (string.IsNullOrEmpty(ContainerLogs)) return;
+
+                var dlg = new Microsoft.Win32.SaveFileDialog
+                {
+                    Filter = "Text File|*.txt",
+                    FileName = $"{Name}_logs.txt",
+                    Title = "Export Logs"
+                };
+
+                if (dlg.ShowDialog() == true)
+                {
+                    System.IO.File.WriteAllText(dlg.FileName, ContainerLogs);
+                    _dialogService?.ShowInfo("로그가 파일로 저장되었습니다.", "저장 완료");
+                }
+            });
+
+            CopyToContainerCommand = new AsyncRelayCommand(async _ => {
+                if (string.IsNullOrWhiteSpace(HostFilePath) || string.IsNullOrWhiteSpace(ContainerFilePath)) return;
+                try
+                {
+                    await _containerService!.CopyToContainerAsync(ContainerId, HostFilePath, ContainerFilePath);
+                    _dialogService?.ShowInfo("컨테이너로 파일 복사가 완료되었습니다.", "업로드 성공");
+                }
+                catch (Exception ex)
+                {
+                    _dialogService?.ShowMessage($"업로드 실패: {ex.Message}");
+                }
+            });
+
+            CopyFromContainerCommand = new AsyncRelayCommand(async _ => {
+                if (string.IsNullOrWhiteSpace(HostFilePath) || string.IsNullOrWhiteSpace(ContainerFilePath)) return;
+                try
+                {
+                    await _containerService!.CopyFromContainerAsync(ContainerId, ContainerFilePath, HostFilePath);
+                    _dialogService?.ShowInfo("컨테이너에서 파일 다운로드가 완료되었습니다.", "다운로드 성공");
+                }
+                catch (Exception ex)
+                {
+                    _dialogService?.ShowMessage($"다운로드 실패: {ex.Message}");
+                }
+            });
+
+            AddEnvAndRecreateCommand = new RelayCommand(_ => {
+                if (string.IsNullOrWhiteSpace(NewEnvInput)) return;
+                _dialogService?.ShowInfo($"이 기능은 기존 설정을 바탕으로 컨테이너를 삭제하고 [{NewEnvInput}] 환경변수를 추가하여 다시 생성합니다.\n(기능 연결 필요)", "Recreate");
+            });
         }
 
         // --- 상세 정보 로드 ---
@@ -404,6 +505,50 @@ namespace DockerDiagram.ViewModels
 
                     StartedAt = DateTime.TryParse(info.State.StartedAt, out var sTime) ? sTime.ToString("yyyy-MM-dd HH:mm:ss") : info.State.StartedAt;
                     FinishedAt = DateTime.TryParse(info.State.FinishedAt, out var fTime) ? fTime.ToString("yyyy-MM-dd HH:mm:ss") : info.State.FinishedAt;
+
+                    CreatedDate = info.Created.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+
+                    if (IsRunning && DateTime.TryParse(info.State.StartedAt, out var startTime))
+                    {
+                        var duration = DateTime.UtcNow - startTime.ToUniversalTime();
+                        Uptime = $"Up {duration.Days}d {duration.Hours}h {duration.Minutes}m";
+                    }
+                    else
+                    {
+                        // 꺼져있으면 생성일로 표시 (연도를 두 자리로 줄여서 요약 패널에 딱 맞게 축소)
+                        Uptime = $"Created {info.Created.ToLocalTime():yy-MM-dd}";
+                    }
+
+                    // ★ 헬스 체크(Health Check) 상태 확인 로직
+                    if (info.State.Health != null && !string.IsNullOrEmpty(info.State.Health.Status))
+                    {
+                        string status = info.State.Health.Status.ToLower();
+                        if (status == "healthy")
+                        {
+                            HealthStatus = "Healthy 💚";
+                            HealthColor = "#28a745";
+                        }
+                        else if (status == "starting")
+                        {
+                            HealthStatus = "Starting 💛";
+                            HealthColor = "#ffc107";
+                        }
+                        else if (status == "unhealthy")
+                        {
+                            HealthStatus = "Unhealthy 💔";
+                            HealthColor = "#dc3545";
+                        }
+                        else
+                        {
+                            HealthStatus = info.State.Health.Status;
+                            HealthColor = "#555555";
+                        }
+                    }
+                    else
+                    {
+                        HealthStatus = "No Check";
+                        HealthColor = "#888888";
+                    }
 
                     if (info.HostConfig?.RestartPolicy != null)
                     {
@@ -463,6 +608,7 @@ namespace DockerDiagram.ViewModels
                     }
                     ConnectedNetworksString = nets.Count > 0 ? string.Join(", ", nets) : "None";
                     IpAddresses = ips.Count > 0 ? string.Join(", ", ips) : "-";
+                    IPAddress = ips.Count > 0 ? ips[0] : "-";
 
                     // 볼륨 정보 로드 (캐싱 후 UpdateVolumeList 호출)
                     var vols = new List<string>();
@@ -489,6 +635,7 @@ namespace DockerDiagram.ViewModels
 
                     OnPropertyChanged(nameof(NetworkIpMap));
                     OnPropertyChanged(nameof(NetworkDetailList));
+                    OnPropertyChanged(nameof(EnvList));
                 }
                 else if (Type == NodeType.Volume && _volumeService != null)
                 {
@@ -662,6 +809,45 @@ namespace DockerDiagram.ViewModels
                         ConnectedNodes.Add(otherNode.Name);
                     }
                 }
+            }
+        }
+
+        private async Task OpenDetailWindowAsync()
+        {
+            if (Type != NodeType.Container || string.IsNullOrEmpty(ContainerId)) return;
+
+            // 1. 창을 먼저 띄움 (DataContext를 자기 자신(this)으로 넘겨줌)
+            var detailWindow = new ContainerDetailWindow
+            {
+                DataContext = this,
+                Owner = App.Current.MainWindow // 부모 창 설정
+            };
+
+            // 비동기로 로그를 불러오는 동안 창은 먼저 보여줌
+            detailWindow.Show();
+
+            // 2. 로그 불러오기 실행
+            await LoadLogsAsync();
+        }
+
+        private async Task LoadLogsAsync()
+        {
+            if (_containerService == null || string.IsNullOrEmpty(ContainerId))
+            {
+                ContainerLogs = "Container Service is not available.";
+                return;
+            }
+
+            try
+            {
+                ContainerLogs = "Fetching logs from Docker engine...";
+                string logs = await _containerService.GetContainerLogsAsync(ContainerId, tailCount: 500);
+
+                ContainerLogs = string.IsNullOrEmpty(logs) ? "(No logs found)" : logs;
+            }
+            catch (Exception ex)
+            {
+                ContainerLogs = $"Error fetching logs: {ex.Message}";
             }
         }
     }

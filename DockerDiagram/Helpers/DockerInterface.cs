@@ -27,6 +27,7 @@ namespace DockerDiagram.Helpers
         void OpenTerminal(string containerId);
         Task ExecuteCommandAsync(string containerId, string command);
         Task<ContainerStats> GetContainerStatsAsync(string containerId);
+        Task<string> GetContainerLogsAsync(string containerId, int tailCount = 500);
     }
 
     // 2. 볼륨 전용 인터페이스
