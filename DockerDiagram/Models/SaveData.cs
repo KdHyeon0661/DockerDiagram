@@ -64,6 +64,8 @@ namespace DockerDiagram.Models
     // 그룹 데이터
     public class GroupData
     {
+        public string Id { get; set; } = string.Empty;
+
         public string Title { get; set; } = "Group";
         public GroupType Type { get; set; } = GroupType.General;
 

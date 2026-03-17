@@ -9,7 +9,7 @@ using DockerDiagram.Views;
 
 namespace DockerDiagram.ViewModels
 {
-    public class GroupViewModel : ViewModelBase
+    public class GroupViewModel : ViewModelBase, IConnectableItem
     {
         // 서비스
         private readonly INetworkService _networkService;
@@ -33,6 +33,12 @@ namespace DockerDiagram.ViewModels
         public double Area => Width * Height;
 
         public event EventHandler? OnModified;
+
+        // ★ [IConnectableItem 인터페이스 구현부]
+        public event EventHandler? OnPositionChanged;
+        public string Name => Title; // 인터페이스의 Name을 Group의 Title로 연결
+        public double CenterX => X + (Width / 2);
+        public double CenterY => Y + (Height / 2);
 
         // 부모 시트 (실행 순서 계산용)
         public SheetViewModel? ParentSheet { get; set; }
@@ -78,13 +84,17 @@ namespace DockerDiagram.ViewModels
         public DoubleCollection? StrokeDashArray { get => _strokeDashArray; set => SetProperty(ref _strokeDashArray, value); }
 
 
-        // --- 위치/크기 속성 (Setter 단순화) ---
+        // --- 위치/크기 속성 (Setter 단순화 + 위치 변경 이벤트 발생 추가) ---
         public double X
         {
             get => _x;
             set
             {
-                if (SetProperty(ref _x, value)) OnModified?.Invoke(this, EventArgs.Empty);
+                if (SetProperty(ref _x, value))
+                {
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                    OnPositionChanged?.Invoke(this, EventArgs.Empty); // ★ 선이 따라오도록 알림
+                }
             }
         }
 
@@ -93,7 +103,11 @@ namespace DockerDiagram.ViewModels
             get => _y;
             set
             {
-                if (SetProperty(ref _y, value)) OnModified?.Invoke(this, EventArgs.Empty);
+                if (SetProperty(ref _y, value))
+                {
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                    OnPositionChanged?.Invoke(this, EventArgs.Empty); // ★ 선이 따라오도록 알림
+                }
             }
         }
 
@@ -105,6 +119,7 @@ namespace DockerDiagram.ViewModels
                 if (SetProperty(ref _width, value))
                 {
                     OnModified?.Invoke(this, EventArgs.Empty);
+                    OnPositionChanged?.Invoke(this, EventArgs.Empty); // ★ 선이 따라오도록 알림
                     ParentSheet?.UpdateGroupLayering();
                 }
             }
@@ -118,6 +133,7 @@ namespace DockerDiagram.ViewModels
                 if (SetProperty(ref _height, value))
                 {
                     OnModified?.Invoke(this, EventArgs.Empty);
+                    OnPositionChanged?.Invoke(this, EventArgs.Empty); // ★ 선이 따라오도록 알림
                     ParentSheet?.UpdateGroupLayering();
                 }
             }
@@ -178,52 +194,66 @@ namespace DockerDiagram.ViewModels
 
         // --- 노드 추가/삭제 로직 (네트워크 연동 포함) ---
 
-        public async void AddNode(NodeViewModel node)
+        public async void AddNode(NodeViewModel node, bool isRestoring = false)
         {
             if (!ContainedNodes.Contains(node))
             {
                 ContainedNodes.Add(node);
                 OnModified?.Invoke(this, EventArgs.Empty);
 
-                // 2. [수정] 네트워크 타입이고, 유효한 ID가 있을 때만 연결 시도
-                if (Type == GroupType.Network &&
-                    !string.IsNullOrEmpty(node.ContainerId) &&
-                    !string.IsNullOrEmpty(this.Id))
+                if (!isRestoring && Type == GroupType.Network &&
+                    !string.IsNullOrEmpty(node.ContainerId))
                 {
+                    if (!DockerServiceHelper.IsDockerRunning()) return;
+
                     try
                     {
-                        // ★ Title(이름)이 아니라 Id(도커 ID)로 연결해야 안전함
-                        await _networkService.ConnectNetworkAsync(this.Id, node.ContainerId);
+                        await _networkService.ConnectNetworkAsync(this.Title, node.ContainerId);
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"Network Attach Fail: {ex.Message}");
-                        _dialogService.ShowMessage($"네트워크 연결 실패: {ex.Message}");
+                        // ★ [수정] 도커가 "이미 연결되어 있다"고 하면 에러가 아니므로 조용히 무시합니다.
+                        if (ex.Message.Contains("이미 연결") || ex.Message.Contains("already") || ex.Message.Contains("in use"))
+                        {
+                            Debug.WriteLine($"[Info] {node.Name}은(는) 이미 {this.Title} 네트워크에 연결되어 있습니다.");
+                        }
+                        else
+                        {
+                            Debug.WriteLine($"Network Attach Fail: {ex.Message}");
+                            _dialogService.ShowMessage($"네트워크 연결 실패: {ex.Message}");
+                        }
                     }
                 }
             }
         }
 
-        public async void RemoveNode(NodeViewModel node)
+        public async void RemoveNode(NodeViewModel node, bool isRestoring = false)
         {
             if (ContainedNodes.Contains(node))
             {
                 ContainedNodes.Remove(node);
                 OnModified?.Invoke(this, EventArgs.Empty);
 
-                // 2. [수정] 네트워크 연결 해제
-                if (Type == GroupType.Network &&
-                    !string.IsNullOrEmpty(node.ContainerId) &&
-                    !string.IsNullOrEmpty(this.Id))
+                if (!isRestoring && Type == GroupType.Network &&
+                    !string.IsNullOrEmpty(node.ContainerId))
                 {
+                    if (!DockerServiceHelper.IsDockerRunning()) return;
+
                     try
                     {
-                        // ★ Title 대신 Id 사용
-                        await _networkService.DisconnectNetworkAsync(this.Id, node.ContainerId);
+                        await _networkService.DisconnectNetworkAsync(this.Title, node.ContainerId);
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"Network Detach Fail: {ex.Message}");
+                        // ★ [수정] 빼려고 했는데 "원래 연결 안 되어있음"이라고 하면 조용히 무시합니다.
+                        if (ex.Message.Contains("is not connected") || ex.Message.Contains("연결되어 있지"))
+                        {
+                            Debug.WriteLine($"[Info] {node.Name}은(는) 원래 {this.Title} 네트워크에 없습니다.");
+                        }
+                        else
+                        {
+                            Debug.WriteLine($"Network Detach Fail: {ex.Message}");
+                        }
                     }
                 }
             }
@@ -231,11 +261,9 @@ namespace DockerDiagram.ViewModels
 
         public void MoveBy(double dx, double dy)
         {
-            // SetProperty를 타면서 OnModified는 자동으로 발생함
             X += dx;
             Y += dy;
 
-            // 내부 노드들도 같이 이동
             foreach (var node in ContainedNodes)
             {
                 node.X += dx;
@@ -265,7 +293,6 @@ namespace DockerDiagram.ViewModels
                 double maxNodeW = ContainedNodes.Any() ? ContainedNodes.Max(n => n.Width) : 100;
                 double maxNodeH = ContainedNodes.Any() ? ContainedNodes.Max(n => n.Height) : 50;
 
-                // 1. 트리 구조 구축 
                 var allGroups = new List<GroupViewModel> { this };
                 if (ParentSheet != null)
                 {
@@ -304,7 +331,6 @@ namespace DockerDiagram.ViewModels
                     groupTree[parentGroup].Add(g);
                 }
 
-                // 2. 최대 깊이(Depth) 계산
                 int maxDepth = 0;
                 void CalcMaxDepth(GroupViewModel g, int currentDepth)
                 {
@@ -313,21 +339,17 @@ namespace DockerDiagram.ViewModels
                 }
                 CalcMaxDepth(this, 0);
 
-                // 3. 진정한 바텀-업(Bottom-Up) 기반의 전역 좌표계
                 double globalNodeGridWidth = (cols * maxNodeW) + (gap * (cols - 1));
                 double globalNodeStartX = this.X + padding + (maxDepth * nestIndent);
 
-                // 4. 재귀적 렌더링
                 double LayoutTree(GroupViewModel currentGroup, double startY, int depth)
                 {
                     int depthFromBottom = maxDepth - depth;
 
-                    // ★ [수정1] 폭/X좌표뿐만 아니라 Y좌표도 명시적으로 업데이트!
                     currentGroup.X = globalNodeStartX - padding - (depthFromBottom * nestIndent);
                     currentGroup.Y = startY;
                     currentGroup.Width = globalNodeGridWidth + (padding * 2) + (depthFromBottom * nestIndent * 2);
 
-                    // ★ [수정2] 헤더 아래에 padding을 더해 '제일 위의 것'이 천장에 붙지 않게 숨통을 터줌
                     double currentYPos = startY + headerHeight + padding;
                     bool hasElements = false;
 
@@ -357,7 +379,6 @@ namespace DockerDiagram.ViewModels
                         if (col > 0) currentYPos += maxNodeH + gap;
                     }
 
-                    // ★ [수정3] 마지막 요소 뒤에 불필요하게 더해진 gap을 빼서 하단 여백을 상단과 대칭으로 맞춤
                     if (hasElements)
                     {
                         currentYPos -= gap;
@@ -365,7 +386,6 @@ namespace DockerDiagram.ViewModels
 
                     currentGroup.Height = currentYPos - startY + padding;
 
-                    // 다음 형제 요소를 위해 Y좌표 + 자신의 높이 + gap 반환
                     return currentGroup.Y + currentGroup.Height + gap;
                 }
 
@@ -388,8 +408,8 @@ namespace DockerDiagram.ViewModels
                 if (node.IsRunning) continue;
                 if (node.StartCommand.CanExecute(null))
                 {
-                    await node.StartCommand.ExecuteAsync(null); // Async 실행 권장
-                    await Task.Delay(1000); // 딜레이
+                    await node.StartCommand.ExecuteAsync(null);
+                    await Task.Delay(1000);
                 }
             }
             _dialogService.ShowMessage("실행 완료");
@@ -414,7 +434,7 @@ namespace DockerDiagram.ViewModels
             _dialogService.ShowMessage("정지 완료");
         }
 
-        // 위상 정렬 (의존성 순서) - 기존 로직 유지
+        // 위상 정렬 (의존성 순서)
         private List<NodeViewModel>? GetExecutionOrder()
         {
             if (ParentSheet == null) return null;
@@ -431,13 +451,16 @@ namespace DockerDiagram.ViewModels
                 inDegree[c] = 0;
             }
 
-            // 시트 전체 연결선 중에서, 내 그룹 안에 있는 컨테이너 간의 연결만 확인
             foreach (var conn in ParentSheet.Connectors)
             {
-                if (containers.Contains(conn.Source) && containers.Contains(conn.Target))
+                // ★ [수정] Connector의 Source/Target이 IConnectableItem이므로 NodeViewModel인지 안전하게 캐스팅해야 함
+                if (conn.Source is NodeViewModel sourceNode && conn.Target is NodeViewModel targetNode)
                 {
-                    dependencies[conn.Target].Add(conn.Source);
-                    inDegree[conn.Source]++;
+                    if (containers.Contains(sourceNode) && containers.Contains(targetNode))
+                    {
+                        dependencies[targetNode].Add(sourceNode);
+                        inDegree[sourceNode]++;
+                    }
                 }
             }
 
@@ -457,7 +480,6 @@ namespace DockerDiagram.ViewModels
                 }
             }
 
-            // 순환 참조 등으로 빠진 노드들 추가
             foreach (var c in containers) { if (!order.Contains(c)) order.Add(c); }
             return order;
         }

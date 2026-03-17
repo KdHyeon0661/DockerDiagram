@@ -8,7 +8,7 @@ using System.Windows.Threading;
 
 namespace DockerDiagram.ViewModels
 {
-    public class NodeViewModel : ViewModelBase
+    public class NodeViewModel : ViewModelBase, IConnectableItem
     {
         private const int GRID_SIZE = 10;
         private const double MIN_SIZE = 50;
@@ -244,7 +244,6 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        //  선택 시 연결 정보 강제 갱신 추가
         public bool IsSelected
         {
             get => _isSelected;
@@ -255,7 +254,7 @@ namespace DockerDiagram.ViewModels
                 if (value)
                 {
                     StartMonitoring();
-                    RefreshConnections(); // 클릭 시점에 연결 리스트 갱신
+                    RefreshConnections();
                 }
                 else
                 {
@@ -355,7 +354,6 @@ namespace DockerDiagram.ViewModels
         private string _mountpoint = "-";
         public string Mountpoint { get => _mountpoint; set { _mountpoint = value; OnPropertyChanged(); } }
 
-        // ParentSheet 변경 시 이벤트 구독/해제
         private SheetViewModel? _parentSheet;
         public SheetViewModel? ParentSheet
         {
@@ -394,7 +392,6 @@ namespace DockerDiagram.ViewModels
         public ICommand OpenDetailWindowCommand { get; }
         public ICommand RefreshLogsCommand { get; }
 
-        // ★ [추가] 팝업창 전용 액션 커맨드
         public ICommand CopyLogsCommand { get; }
         public ICommand ExportLogsCommand { get; }
         public ICommand CopyToContainerCommand { get; }
@@ -427,7 +424,6 @@ namespace DockerDiagram.ViewModels
             OpenDetailWindowCommand = new AsyncRelayCommand(_ => OpenDetailWindowAsync(), _ => Type == NodeType.Container);
             RefreshLogsCommand = new AsyncRelayCommand(_ => LoadLogsAsync(), _ => Type == NodeType.Container);
 
-            // ★ [추가] 팝업창 전용 액션 초기화
             CopyLogsCommand = new RelayCommand(_ => {
                 if (!string.IsNullOrEmpty(ContainerLogs))
                 {
@@ -515,11 +511,9 @@ namespace DockerDiagram.ViewModels
                     }
                     else
                     {
-                        // 꺼져있으면 생성일로 표시 (연도를 두 자리로 줄여서 요약 패널에 딱 맞게 축소)
                         Uptime = $"Created {info.Created.ToLocalTime():yy-MM-dd}";
                     }
 
-                    // ★ 헬스 체크(Health Check) 상태 확인 로직
                     if (info.State.Health != null && !string.IsNullOrEmpty(info.State.Health.Status))
                     {
                         string status = info.State.Health.Status.ToLower();
@@ -578,7 +572,6 @@ namespace DockerDiagram.ViewModels
                     }
                     this.PortBindings = portsList;
 
-                    // 네트워크 정보
                     var nets = new List<string>();
                     var ips = new List<string>();
                     NetworkDetailList.Clear();
@@ -610,12 +603,11 @@ namespace DockerDiagram.ViewModels
                     IpAddresses = ips.Count > 0 ? string.Join(", ", ips) : "-";
                     IPAddress = ips.Count > 0 ? ips[0] : "-";
 
-                    // 볼륨 정보 로드 (캐싱 후 UpdateVolumeList 호출)
                     var vols = new List<string>();
 
                     if (info.Mounts != null)
                     {
-                        _cachedMounts = info.Mounts.ToList(); // 원본 데이터 저장
+                        _cachedMounts = info.Mounts.ToList();
                         foreach (var m in info.Mounts)
                         {
                             vols.Add($"{m.Source} -> {m.Destination}");
@@ -626,7 +618,7 @@ namespace DockerDiagram.ViewModels
                         _cachedMounts = new List<Docker.DotNet.Models.MountPoint>();
                     }
 
-                    UpdateVolumeList(); // 필터링하여 리스트 갱신
+                    UpdateVolumeList();
                     MountedVolumes = vols.Count > 0 ? string.Join("\n", vols) : "None";
 
                     if (IsRunning) StatusColor = "#28a745";
@@ -646,7 +638,6 @@ namespace DockerDiagram.ViewModels
                     Mountpoint = vol.Mountpoint;
                     CreatedDate = DateTime.TryParse(vol.CreatedAt, out var cTime) ? cTime.ToString("yyyy-MM-dd HH:mm:ss") : vol.CreatedAt;
 
-                    // UsedByContainers 리스트 업데이트
                     var usedList = await _volumeService.GetContainersUsingVolumeAsync(Name);
                     UsedByContainers.Clear();
 
@@ -677,14 +668,12 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        // 볼륨 리스트 필터링 로직 (Bind 마운트 표시 복구)
         private void UpdateVolumeList()
         {
             MountedVolumeList.Clear();
 
             if (ParentSheet == null) return;
 
-            // 현재 시트에 있는 "볼륨 노드" 이름들 (Named Volume 필터링용)
             var validVolumeNames = ParentSheet.Nodes
                                               .Where(n => n.Type == NodeType.Volume)
                                               .Select(n => n.Name)
@@ -692,7 +681,6 @@ namespace DockerDiagram.ViewModels
 
             foreach (var m in _cachedMounts)
             {
-                // [Mode 0] Named Volume: 시트에 있는 볼륨 노드와 매칭되는 것만 표시
                 if (VolumeDisplayMode == 0)
                 {
                     if (m.Type == "volume" && validVolumeNames.Contains(m.Name))
@@ -700,10 +688,8 @@ namespace DockerDiagram.ViewModels
                         MountedVolumeList.Add($"{m.Name} : {m.Destination}");
                     }
                 }
-                // [Mode 1] Bind Mount: 호스트 경로 연결 표시
                 else
                 {
-                    // bind 타입인 경우만 표시
                     if (m.Type == "bind")
                     {
                         MountedVolumeList.Add($"{m.Source} -> {m.Destination}");
@@ -789,6 +775,7 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        // ★ [수정됨] 연결된 대상이 노드인지 그룹인지 안전하게 확인하도록 수정!
         public void RefreshConnections()
         {
             ConnectedNodes.Clear();
@@ -800,13 +787,25 @@ namespace DockerDiagram.ViewModels
 
             foreach (var conn in relatedConnectors)
             {
-                var otherNode = (conn.Source == this) ? conn.Target : conn.Source;
+                var otherItem = (conn.Source == this) ? conn.Target : conn.Source;
 
-                if (otherNode.Type == NodeType.Container || otherNode.Type == NodeType.Internet)
+                // 1. 만약 연결된 대상이 Node라면
+                if (otherItem is NodeViewModel otherNode)
                 {
-                    if (!ConnectedNodes.Contains(otherNode.Name))
+                    if (otherNode.Type == NodeType.Container || otherNode.Type == NodeType.Internet)
                     {
-                        ConnectedNodes.Add(otherNode.Name);
+                        if (!ConnectedNodes.Contains(otherNode.Name))
+                        {
+                            ConnectedNodes.Add(otherNode.Name);
+                        }
+                    }
+                }
+                // 2. 만약 연결된 대상이 Group(네트워크)라면
+                else if (otherItem is GroupViewModel groupNode)
+                {
+                    if (!ConnectedNodes.Contains(groupNode.Name))
+                    {
+                        ConnectedNodes.Add($"[Network] {groupNode.Name}");
                     }
                 }
             }
@@ -816,17 +815,13 @@ namespace DockerDiagram.ViewModels
         {
             if (Type != NodeType.Container || string.IsNullOrEmpty(ContainerId)) return;
 
-            // 1. 창을 먼저 띄움 (DataContext를 자기 자신(this)으로 넘겨줌)
             var detailWindow = new ContainerDetailWindow
             {
                 DataContext = this,
-                Owner = App.Current.MainWindow // 부모 창 설정
+                Owner = App.Current.MainWindow
             };
 
-            // 비동기로 로그를 불러오는 동안 창은 먼저 보여줌
             detailWindow.Show();
-
-            // 2. 로그 불러오기 실행
             await LoadLogsAsync();
         }
 

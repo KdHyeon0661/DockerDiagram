@@ -1,7 +1,11 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
+using System.Collections.Generic;
 using System.Text.Json;
 using Microsoft.Win32;
 using System.Diagnostics;
+using System.Linq;
+using System.Threading.Tasks;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
@@ -97,8 +101,12 @@ namespace DockerDiagram.Helpers
 
                     foreach (var group in sheetVm.Groups)
                     {
+                        // ★ [수정] 선이 그룹을 식별할 수 있도록 빈 ID가 있으면 고유 ID 발급
+                        if (string.IsNullOrEmpty(group.Id)) group.Id = Guid.NewGuid().ToString();
+
                         var gData = new GroupData
                         {
+                            Id = group.Id, // ★ [수정] 그룹 ID도 파일에 함께 저장해야 합니다!
                             Title = group.Title,
                             X = group.X,
                             Y = group.Y,
@@ -127,7 +135,7 @@ namespace DockerDiagram.Helpers
             }
         }
 
-        // [불러오기 기능 1] 다이얼로그 (성공 여부 확인 후 경로 반환)
+        // [불러오기 기능 1] 다이얼로그
         public static async Task<string?> LoadDiagramWithDialogAsync(
             MainViewModel mainVm,
             IContainerService containerService,
@@ -142,7 +150,6 @@ namespace DockerDiagram.Helpers
 
             if (dlg.ShowDialog() == true)
             {
-                // 여기서 true가 리턴되어야만 파일 경로를 반환함
                 bool success = await LoadDiagramFromPathAsync(mainVm, dlg.FileName, containerService, volumeService, networkService, dialogService);
 
                 if (success)
@@ -154,7 +161,7 @@ namespace DockerDiagram.Helpers
             return null;
         }
 
-        // [불러오기 기능 2] 경로 로드 (수정됨: bool 반환)
+        // [불러오기 기능 2] 경로 로드 (불러오기 순서 완벽 수정)
         public static async Task<bool> LoadDiagramFromPathAsync(
             MainViewModel mainVm,
             string filePath,
@@ -184,8 +191,10 @@ namespace DockerDiagram.Helpers
                     sheetVm.OffsetY = sheetData.OffsetY;
                     sheetVm.Scale = sheetData.Scale;
 
-                    var nodeMap = new Dictionary<string, NodeViewModel>();
+                    // ★ [수정] 노드뿐만 아니라 그룹도 찾아야 하므로 IConnectableItem 딕셔너리로 변경
+                    var itemMap = new Dictionary<string, IConnectableItem>();
 
+                    // 1. 노드 먼저 불러오기
                     foreach (var nodeData in sheetData.Nodes)
                     {
                         var nodeVm = new NodeViewModel(containerService, volumeService, dialogService)
@@ -206,24 +215,10 @@ namespace DockerDiagram.Helpers
                         };
 
                         sheetVm.Nodes.Add(nodeVm);
-                        nodeMap[nodeVm.Id] = nodeVm;
+                        itemMap[nodeVm.Id] = nodeVm;
                     }
 
-                    foreach (var connData in sheetData.Connections)
-                    {
-                        if (nodeMap.TryGetValue(connData.SourceNodeId, out var source) &&
-                            nodeMap.TryGetValue(connData.TargetNodeId, out var target))
-                        {
-                            var connVm = new ConnectorViewModel(source, target, connData.SourceDir, connData.TargetDir, dialogService);
-
-                            connVm.RelationType = connData.RelationType;
-                            connVm.MountPath = connData.MountPath;
-                            connVm.IpAddress = connData.IpAddress;
-
-                            sheetVm.Connectors.Add(connVm);
-                        }
-                    }
-
+                    // 2. 그룹을 두 번째로 불러오기 (선보다 먼저 생성되어야 함!)
                     foreach (var groupData in sheetData.Groups)
                     {
                         var groupVm = new GroupViewModel(
@@ -236,18 +231,39 @@ namespace DockerDiagram.Helpers
                             groupData.Title
                         );
 
+                        // 파일에 ID가 없다면 새로 생성, 있다면 복원
+                        groupVm.Id = string.IsNullOrEmpty(groupData.Id) ? Guid.NewGuid().ToString() : groupData.Id;
                         groupVm.Type = groupData.Type;
                         groupVm.ParentSheet = sheetVm;
 
                         foreach (var nodeId in groupData.ContainedNodeIds)
                         {
-                            if (nodeMap.TryGetValue(nodeId, out var node))
+                            if (itemMap.TryGetValue(nodeId, out var item) && item is NodeViewModel node)
                             {
                                 groupVm.AddNode(node);
                             }
                         }
                         sheetVm.Groups.Add(groupVm);
+                        itemMap[groupVm.Id] = groupVm; // 그룹도 맵에 추가!
                     }
+
+                    // 3. 선(Connection)을 가장 마지막에 불러오기
+                    foreach (var connData in sheetData.Connections)
+                    {
+                        // 이제 노드와 그룹 모두 itemMap에서 안전하게 찾을 수 있습니다.
+                        if (itemMap.TryGetValue(connData.SourceNodeId, out var source) &&
+                            itemMap.TryGetValue(connData.TargetNodeId, out var target))
+                        {
+                            var connVm = new ConnectorViewModel(source, target, connData.SourceDir, connData.TargetDir, dialogService);
+
+                            connVm.RelationType = connData.RelationType;
+                            connVm.MountPath = connData.MountPath;
+                            connVm.IpAddress = connData.IpAddress;
+
+                            sheetVm.Connectors.Add(connVm);
+                        }
+                    }
+
                     mainVm.Sheets.Add(sheetVm);
                 }
 

@@ -472,7 +472,7 @@
                             </ItemsControl.ItemContainerStyle>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Grid Width="{Binding Width}" Height="{Binding Height}">
+                                    <Grid Width="{Binding Width}" Height="{Binding Height}" Background="Transparent">
                                         <Grid.Triggers>
                                             <EventTrigger RoutedEvent="Loaded">
                                                 <BeginStoryboard>
@@ -520,7 +520,39 @@
                                             <Ellipse Style="{StaticResource ResizeHandleStyle}" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="-6,0,0,0" Cursor="SizeWE" Tag="Left" MouseLeftButtonDown="Resize_MouseDown"/>
                                             <Ellipse Style="{StaticResource ResizeHandleStyle}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,-6,0" Cursor="SizeWE" Tag="Right" MouseLeftButtonDown="Resize_MouseDown"/>
                                         </Grid>
+
+                                        <Grid x:Name="CanvasGroupPortGrid" Opacity="1.0" Visibility="Hidden" Panel.ZIndex="100">
+                                            <Grid.Resources>
+                                                <Style TargetType="Border" BasedOn="{StaticResource ArrowPortStyle}"/>
+                                            </Grid.Resources>
+                                            <Border VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,-25,0,0" Tag="Top" MouseLeftButtonDown="Port_MouseDown">
+                                                <Viewbox Width="16" Height="16" Stretch="Uniform">
+                                                    <Path Stroke="#007ACC" StrokeThickness="3" Fill="White" Data="{StaticResource ArrowUp}"/>
+                                                </Viewbox>
+                                            </Border>
+                                            <Border VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,-25" Tag="Bottom" MouseLeftButtonDown="Port_MouseDown">
+                                                <Viewbox Width="16" Height="16" Stretch="Uniform">
+                                                    <Path Stroke="#007ACC" StrokeThickness="3" Fill="White" Data="{StaticResource ArrowDown}"/>
+                                                </Viewbox>
+                                            </Border>
+                                            <Border HorizontalAlignment="Left" VerticalAlignment="Center" Margin="-25,0,0,0" Tag="Left" MouseLeftButtonDown="Port_MouseDown">
+                                                <Viewbox Width="16" Height="16" Stretch="Uniform">
+                                                    <Path Stroke="#007ACC" StrokeThickness="3" Fill="White" Data="{StaticResource ArrowLeft}"/>
+                                                </Viewbox>
+                                            </Border>
+                                            <Border HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,-25,0" Tag="Right" MouseLeftButtonDown="Port_MouseDown">
+                                                <Viewbox Width="16" Height="16" Stretch="Uniform">
+                                                    <Path Stroke="#007ACC" StrokeThickness="3" Fill="White" Data="{StaticResource ArrowRight}"/>
+                                                </Viewbox>
+                                            </Border>
+                                        </Grid>
                                     </Grid>
+
+                                    <DataTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="CanvasGroupPortGrid" Property="Visibility" Value="Visible"/>
+                                        </Trigger>
+                                    </DataTemplate.Triggers>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
@@ -1024,12 +1056,12 @@
 
                                             <TextBlock Text="Type: Execution Dependency" FontWeight="Bold" Foreground="#007ACC" Margin="0,0,0,5"/>
                                             <Border Background="#E3F2FD" Padding="8" CornerRadius="3">
-                                                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#0D47A1">
-                                                    <Run FontWeight="Bold" Text="{Binding Source.Name}"/>
-                                                    <Run Text=" will start after "/>
-                                                    <Run FontWeight="Bold" Text="{Binding Target.Name}"/>
-                                                    <Run Text=" is running."/>
-                                                </TextBlock>
+                                                <WrapPanel>
+                                                    <TextBlock FontWeight="Bold" Text="{Binding Source.Name}" Foreground="#0D47A1" FontSize="11"/>
+                                                    <TextBlock Text=" will start after " Foreground="#0D47A1" FontSize="11"/>
+                                                    <TextBlock FontWeight="Bold" Text="{Binding Target.Name}" Foreground="#0D47A1" FontSize="11"/>
+                                                    <TextBlock Text=" is running." Foreground="#0D47A1" FontSize="11"/>
+                                                </WrapPanel>
                                             </Border>
                                         </StackPanel>
 

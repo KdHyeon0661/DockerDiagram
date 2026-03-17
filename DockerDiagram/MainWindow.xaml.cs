@@ -26,7 +26,7 @@ namespace DockerDiagram
         private FrameworkElement? _draggedNodeElement = null;
 
         private bool _isConnecting = false;
-        private NodeViewModel? _sourceNode = null;
+        private IConnectableItem? _sourceItem = null;
         private Point _startPointCanvas;
         private Border? _lastHitPort = null;
         private PortDirection _sourceDir = PortDirection.None;
@@ -417,30 +417,23 @@ namespace DockerDiagram
         private void Diagram_MouseMove(object sender, MouseEventArgs e)
         {
             // 1. [최우선] 그리기 모드 (그룹 또는 네트워크 생성 중)
-            // PreviewDown에서 CaptureMouse()를 했으므로, 마우스가 잡혀있는 동안 임시 사각형을 업데이트합니다.
             if (ViewportCanvas.IsMouseCaptured && (_isGroupingMode || _isNetworkDrawingMode))
             {
-                // 방어 코드: 임시 사각형이 없으면 중단
                 if (TempGroupRect == null) return;
 
                 var currentPoint = e.GetPosition(ZoomPanGrid);
-
-                // 시작점(_startPoint)과 현재점(currentPoint)을 이용해 사각형의 위치와 크기 계산
                 double x = Math.Min(_startPoint.X, currentPoint.X);
                 double y = Math.Min(_startPoint.Y, currentPoint.Y);
                 double w = Math.Abs(_startPoint.X - currentPoint.X);
                 double h = Math.Abs(_startPoint.Y - currentPoint.Y);
 
-                // 임시 사각형 UI 업데이트
                 Canvas.SetLeft(TempGroupRect, x);
                 Canvas.SetTop(TempGroupRect, y);
                 TempGroupRect.Width = w;
                 TempGroupRect.Height = h;
 
-                return; // 그리기 중에는 다른 로직(패닝, 이동 등)을 실행하지 않음
+                return;
             }
-
-            // --- 아래는 기존 기능들입니다 ---
 
             var vm = DataContext as MainViewModel;
             if (vm?.ActiveSheet == null) return;
@@ -461,7 +454,6 @@ namespace DockerDiagram
             // 3. 그룹 전체 이동
             if (_isGroupMoving && _movingGroup != null)
             {
-                // 10픽셀 단위 스냅 적용
                 double rawTargetX = current.X - _groupClickOffset.X;
                 double rawTargetY = current.Y - _groupClickOffset.Y;
 
@@ -471,7 +463,6 @@ namespace DockerDiagram
                 double dx = snappedTargetX - _movingGroup.X;
                 double dy = snappedTargetY - _movingGroup.Y;
 
-                // 미세 떨림 방지 (1픽셀 이상 움직였을 때만 처리)
                 if (Math.Abs(dx) >= 1 || Math.Abs(dy) >= 1)
                 {
                     _movingGroup.MoveBy(dx, dy);
@@ -479,7 +470,7 @@ namespace DockerDiagram
                 return;
             }
 
-            // 4. 리사이징 (노드 또는 그룹 크기 조절)
+            // 4. 리사이징 (노드 또는 그룹 크기 조절) - ★ 삭제된 것 없이 원상 복구 완료
             if (_isResizing)
             {
                 double diffX = current.X - _resizeStartWorldPos.X;
@@ -487,61 +478,67 @@ namespace DockerDiagram
 
                 if (_resizingNode != null)
                 {
-                    // 노드 리사이징 (최소 크기 50 제한)
-                    if (_resizeDir.Contains("Right")) _resizingNode.Width = Math.Max(50, _resizeStartNodeRect.Width + diffX);
-                    if (_resizeDir.Contains("Bottom")) _resizingNode.Height = Math.Max(50, _resizeStartNodeRect.Height + diffY);
+                    if (_resizeDir.Contains("Right"))
+                    {
+                        _resizingNode.Width = Math.Max(50, _resizeStartNodeRect.Width + diffX);
+                    }
+                    if (_resizeDir.Contains("Bottom"))
+                    {
+                        _resizingNode.Height = Math.Max(50, _resizeStartNodeRect.Height + diffY);
+                    }
                     if (_resizeDir.Contains("Left"))
                     {
                         double w = _resizeStartNodeRect.Width - diffX;
-                        if (w >= 50) { _resizingNode.X = _resizeStartNodeRect.X + diffX; _resizingNode.Width = w; }
+                        if (w >= 50)
+                        {
+                            _resizingNode.X = _resizeStartNodeRect.X + diffX;
+                            _resizingNode.Width = w;
+                        }
                     }
                     if (_resizeDir.Contains("Top"))
                     {
                         double h = _resizeStartNodeRect.Height - diffY;
-                        if (h >= 50) { _resizingNode.Y = _resizeStartNodeRect.Y + diffY; _resizingNode.Height = h; }
+                        if (h >= 50)
+                        {
+                            _resizingNode.Y = _resizeStartNodeRect.Y + diffY;
+                            _resizingNode.Height = h;
+                        }
                     }
                 }
                 else if (_resizingGroup != null)
                 {
-                    // 그룹 리사이징 (내용물이 잘리지 않도록 최소 크기 제한)
                     Rect contentBounds = GetGroupContentBounds(_resizingGroup);
                     double padding = 20;
 
                     if (_resizeDir.Contains("Right"))
                     {
-                        double newWidth = _resizeStartGroupRect.Width + diffX;
-                        double minRequiredWidth = (_resizingGroup.ContainedNodes.Count > 0 ? (contentBounds.Right - _resizeStartGroupRect.X) + padding : 50);
-                        _resizingGroup.Width = Math.Max(minRequiredWidth, newWidth);
+                        double minW = (_resizingGroup.ContainedNodes.Count > 0 ? (contentBounds.Right - _resizeStartGroupRect.X) + padding : 50);
+                        _resizingGroup.Width = Math.Max(minW, _resizeStartGroupRect.Width + diffX);
                     }
                     if (_resizeDir.Contains("Bottom"))
                     {
-                        double newHeight = _resizeStartGroupRect.Height + diffY;
-                        double minRequiredHeight = (_resizingGroup.ContainedNodes.Count > 0 ? (contentBounds.Bottom - _resizeStartGroupRect.Y) + padding : 50);
-                        _resizingGroup.Height = Math.Max(minRequiredHeight, newHeight);
+                        double minH = (_resizingGroup.ContainedNodes.Count > 0 ? (contentBounds.Bottom - _resizeStartGroupRect.Y) + padding : 50);
+                        _resizingGroup.Height = Math.Max(minH, _resizeStartGroupRect.Height + diffY);
                     }
                     if (_resizeDir.Contains("Left"))
                     {
-                        double rawNewX = _resizeStartGroupRect.X + diffX;
                         double maxAllowedX = _resizingGroup.ContainedNodes.Count > 0 ? contentBounds.Left - padding : _resizeStartGroupRect.Right - 50;
-                        double constrainedX = Math.Min(rawNewX, maxAllowedX);
-                        double newWidth = _resizeStartGroupRect.Right - constrainedX;
-                        _resizingGroup.X = constrainedX;
-                        _resizingGroup.Width = newWidth;
+                        double cX = Math.Min(_resizeStartGroupRect.X + diffX, maxAllowedX);
+                        _resizingGroup.X = cX;
+                        _resizingGroup.Width = _resizeStartGroupRect.Right - cX;
                     }
                     if (_resizeDir.Contains("Top"))
                     {
-                        double rawNewY = _resizeStartGroupRect.Y + diffY;
                         double maxAllowedY = _resizingGroup.ContainedNodes.Count > 0 ? contentBounds.Top - padding : _resizeStartGroupRect.Bottom - 50;
-                        double constrainedY = Math.Min(rawNewY, maxAllowedY);
-                        double newHeight = _resizeStartGroupRect.Bottom - constrainedY;
-                        _resizingGroup.Y = constrainedY;
-                        _resizingGroup.Height = newHeight;
+                        double cY = Math.Min(_resizeStartGroupRect.Y + diffY, maxAllowedY);
+                        _resizingGroup.Y = cY;
+                        _resizingGroup.Height = _resizeStartGroupRect.Bottom - cY;
                     }
                 }
                 return;
             }
 
-            // 5. 재연결 (기존 연결선의 끝점을 드래그해서 다른 곳에 붙이기)
+            // ★ 5. 재연결 (그룹 크기를 0x0으로 속여서 직각 선을 정상 작동시킴)
             if (_isReconnecting && _reconnectingConn != null)
             {
                 Point startP, endP;
@@ -554,8 +551,10 @@ namespace DockerDiagram
                     endP = _reconnectingConn.TargetPos;
                     d1 = PortDirection.None;
                     d2 = _reconnectingConn.TargetDir;
-                    r1 = new Rect(current.X, current.Y, 0, 0);
-                    r2 = new Rect(_reconnectingConn.Target.X, _reconnectingConn.Target.Y, _reconnectingConn.Target.Width, _reconnectingConn.Target.Height);
+                    r1 = new Rect(current.X, current.Y, 0, 0); // 드래그 중인 임시 지점
+
+                    // 타겟이 그룹이면 알고리즘이 뻗지 않도록 0x0 크기로 전달
+                    r2 = _reconnectingConn.Target is GroupViewModel ? new Rect(endP.X, endP.Y, 0, 0) : new Rect(_reconnectingConn.Target.X, _reconnectingConn.Target.Y, _reconnectingConn.Target.Width, _reconnectingConn.Target.Height);
                 }
                 else
                 {
@@ -563,53 +562,90 @@ namespace DockerDiagram
                     endP = current;
                     d1 = _reconnectingConn.SourceDir;
                     d2 = PortDirection.None;
-                    r1 = new Rect(_reconnectingConn.Source.X, _reconnectingConn.Source.Y, _reconnectingConn.Source.Width, _reconnectingConn.Source.Height);
-                    r2 = new Rect(current.X, current.Y, 0, 0);
+
+                    // 소스가 그룹이면 알고리즘이 뻗지 않도록 0x0 크기로 전달
+                    r1 = _reconnectingConn.Source is GroupViewModel ? new Rect(startP.X, startP.Y, 0, 0) : new Rect(_reconnectingConn.Source.X, _reconnectingConn.Source.Y, _reconnectingConn.Source.Width, _reconnectingConn.Source.Height);
+                    r2 = new Rect(current.X, current.Y, 0, 0); // 드래그 중인 임시 지점
                 }
 
-                // 마우스 아래에 있는 노드 감지 (자석 효과)
                 var hitResult = VisualTreeHelper.HitTest(ZoomPanGrid, e.GetPosition(ZoomPanGrid));
                 if (hitResult != null)
                 {
-                    var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, el => el.DataContext is NodeViewModel);
-                    if (hitNodeObj != null && hitNodeObj.DataContext is NodeViewModel hoverNode)
+                    var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, el => el.DataContext is IConnectableItem);
+                    if (hitNodeObj != null && hitNodeObj.DataContext is IConnectableItem hoverItem)
                     {
-                        Rect nodeRect = new Rect(hoverNode.X, hoverNode.Y, hoverNode.Width, hoverNode.Height);
-                        PortDirection hoverDir = GetClosestDirection(current, nodeRect);
-                        Point hoverPoint = GetExactBorderPoint(hoverNode, hoverDir);
+                        Rect physicalRect = new Rect(hoverItem.X, hoverItem.Y, hoverItem.Width, hoverItem.Height);
+                        PortDirection hoverDir = GetClosestDirection(current, physicalRect);
+                        Point hoverPoint = GetExactBorderPoint(hoverItem, hoverDir);
 
-                        if (_reconnectType == "Source") { startP = hoverPoint; d1 = hoverDir; r1 = nodeRect; }
-                        else { endP = hoverPoint; d2 = hoverDir; r2 = nodeRect; }
+                        if (_reconnectType == "Source")
+                        {
+                            startP = hoverPoint;
+                            d1 = hoverDir;
+                            r1 = hoverItem is GroupViewModel ? new Rect(startP.X, startP.Y, 0, 0) : physicalRect;
+                        }
+                        else
+                        {
+                            endP = hoverPoint;
+                            d2 = hoverDir;
+                            r2 = hoverItem is GroupViewModel ? new Rect(endP.X, endP.Y, 0, 0) : physicalRect;
+                        }
                     }
                 }
-                TempPolyline.Points = OrthogonalRouter.GetRoute(startP, d1, endP, d2, r1, r2);
+
+                try
+                {
+                    var route = OrthogonalRouter.GetRoute(startP, d1, endP, d2, r1, r2);
+                    TempPolyline.Points = (route != null && route.Count >= 2) ? route : new PointCollection { startP, endP };
+                }
+                catch
+                {
+                    TempPolyline.Points = new PointCollection { startP, endP };
+                }
                 return;
             }
 
-            // 6. 신규 연결 (새로운 연결선 그리기)
-            if (_isConnecting && _sourceNode != null)
+            // ★ 6. 신규 연결 (그룹 크기를 0x0으로 속여서 직각 선을 정상 작동시킴)
+            if (_isConnecting && _sourceItem != null)
             {
-                Point startP = GetExactBorderPoint(_sourceNode, _sourceDir);
+                Point startP = GetExactBorderPoint(_sourceItem, _sourceDir);
                 PortDirection targetDir = PortDirection.None;
-                Rect sourceRect = new Rect(_sourceNode.X, _sourceNode.Y, _sourceNode.Width, _sourceNode.Height);
+
+                // 출발지가 그룹이면 투명 껍데기(0x0)로 처리
+                Rect sourceRect = _sourceItem is GroupViewModel ? new Rect(startP.X, startP.Y, 0, 0) : new Rect(_sourceItem.X, _sourceItem.Y, _sourceItem.Width, _sourceItem.Height);
                 Rect targetRect = new Rect(current.X, current.Y, 0, 0);
                 Point endPoint = current;
 
-                if (_lastHitPort != null) { _lastHitPort.Background = Brushes.Transparent; _lastHitPort = null; }
+                if (_lastHitPort != null)
+                {
+                    _lastHitPort.Background = Brushes.Transparent;
+                    _lastHitPort = null;
+                }
 
-                // 마우스 아래 타겟 노드 감지
                 var hitResult = VisualTreeHelper.HitTest(ZoomPanGrid, e.GetPosition(ZoomPanGrid));
                 if (hitResult != null)
                 {
-                    var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, el => el.DataContext is NodeViewModel);
-                    if (hitNodeObj != null && hitNodeObj.DataContext is NodeViewModel targetNode && targetNode != _sourceNode)
+                    var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, el => el.DataContext is IConnectableItem);
+                    if (hitNodeObj != null && hitNodeObj.DataContext is IConnectableItem targetItem && targetItem != _sourceItem)
                     {
-                        targetRect = new Rect(targetNode.X, targetNode.Y, targetNode.Width, targetNode.Height);
-                        targetDir = GetClosestDirection(current, targetRect);
-                        endPoint = GetExactBorderPoint(targetNode, targetDir);
+                        Rect physicalRect = new Rect(targetItem.X, targetItem.Y, targetItem.Width, targetItem.Height);
+                        targetDir = GetClosestDirection(current, physicalRect);
+                        endPoint = GetExactBorderPoint(targetItem, targetDir);
+
+                        // 도착지가 그룹이면 투명 껍데기(0x0)로 처리
+                        targetRect = targetItem is GroupViewModel ? new Rect(endPoint.X, endPoint.Y, 0, 0) : physicalRect;
                     }
                 }
-                TempPolyline.Points = OrthogonalRouter.GetRoute(startP, _sourceDir, endPoint, targetDir, sourceRect, targetRect);
+
+                try
+                {
+                    var route = OrthogonalRouter.GetRoute(startP, _sourceDir, endPoint, targetDir, sourceRect, targetRect);
+                    TempPolyline.Points = (route != null && route.Count >= 2) ? route : new PointCollection { startP, endPoint };
+                }
+                catch
+                {
+                    TempPolyline.Points = new PointCollection { startP, endPoint };
+                }
             }
         }
 
@@ -712,7 +748,7 @@ namespace DockerDiagram
                 _draggedNodeElement = null;
             }
 
-            // 4. 재연결 종료
+            // ★ 4. 재연결 종료 (IConnectableItem 적용)
             if (_isReconnecting && _reconnectingConn != null)
             {
                 _isReconnecting = false;
@@ -723,16 +759,16 @@ namespace DockerDiagram
                 var hitResult = VisualTreeHelper.HitTest(ZoomPanGrid, e.GetPosition(ZoomPanGrid));
                 if (hitResult != null)
                 {
-                    var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, x => x.DataContext is NodeViewModel);
-                    if (hitNodeObj != null && hitNodeObj.DataContext is NodeViewModel hitNode)
+                    var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, x => x.DataContext is IConnectableItem);
+                    if (hitNodeObj != null && hitNodeObj.DataContext is IConnectableItem hitItem)
                     {
-                        Rect nodeRect = new Rect(hitNode.X, hitNode.Y, hitNode.Width, hitNode.Height);
+                        Rect nodeRect = new Rect(hitItem.X, hitItem.Y, hitItem.Width, hitItem.Height);
                         PortDirection newDir = GetClosestDirection(GetWorldPosition(e), nodeRect);
 
                         if (_reconnectType == "Source")
-                            _reconnectingConn.UpdateConnection(hitNode, newDir, _reconnectingConn.Target, _reconnectingConn.TargetDir);
+                            _reconnectingConn.UpdateConnection(hitItem, newDir, _reconnectingConn.Target, _reconnectingConn.TargetDir);
                         else
-                            _reconnectingConn.UpdateConnection(_reconnectingConn.Source, _reconnectingConn.SourceDir, hitNode, newDir);
+                            _reconnectingConn.UpdateConnection(_reconnectingConn.Source, _reconnectingConn.SourceDir, hitItem, newDir);
                     }
                 }
                 _reconnectingConn = null;
@@ -755,7 +791,7 @@ namespace DockerDiagram
                 _resizingGroup = null;
             }
 
-            // 6. 신규 연결 종료
+            // ★ 6. 신규 연결 종료 (IConnectableItem 적용 및 _sourceItem 사용)
             if (_isConnecting)
             {
                 _isConnecting = false;
@@ -766,18 +802,21 @@ namespace DockerDiagram
                 var hitResult = VisualTreeHelper.HitTest(ZoomPanGrid, e.GetPosition(ZoomPanGrid));
                 if (hitResult != null)
                 {
-                    var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, el => el.DataContext is NodeViewModel);
-                    if (hitNodeObj != null && hitNodeObj.DataContext is NodeViewModel targetNode)
+                    var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, el => el.DataContext is IConnectableItem);
+                    if (hitNodeObj != null && hitNodeObj.DataContext is IConnectableItem targetItem)
                     {
-                        if (!targetNode.IsCreating && targetNode != _sourceNode && _sourceNode != null)
+                        // 그룹은 IsCreating 속성이 없으므로, NodeViewModel일 때만 확인하도록 캐스팅 처리
+                        bool isCreating = (targetItem as NodeViewModel)?.IsCreating ?? false;
+
+                        if (!isCreating && targetItem != _sourceItem && _sourceItem != null)
                         {
-                            Rect targetRect = new Rect(targetNode.X, targetNode.Y, targetNode.Width, targetNode.Height);
+                            Rect targetRect = new Rect(targetItem.X, targetItem.Y, targetItem.Width, targetItem.Height);
                             PortDirection targetDir = GetClosestDirection(GetWorldPosition(e), targetRect);
-                            (DataContext as MainViewModel)?.AddConnection(_sourceNode, targetNode, _sourceDir, targetDir);
+                            (DataContext as MainViewModel)?.AddConnection(_sourceItem, targetItem, _sourceDir, targetDir);
                         }
                     }
                 }
-                _sourceNode = null;
+                _sourceItem = null;
             }
         }
 
@@ -1269,19 +1308,19 @@ namespace DockerDiagram
         private void Port_MouseDown(object sender, MouseButtonEventArgs e)
         {
             var port = sender as FrameworkElement;
-            _sourceNode = port?.DataContext as NodeViewModel;
+            _sourceItem = port?.DataContext as IConnectableItem;
             if (port?.Tag is string dirStr) Enum.TryParse(dirStr, out _sourceDir);
 
-            if (_sourceNode != null && _sourceNode.IsCreating)
+            if (_sourceItem is NodeViewModel nv && nv.IsCreating)
             {
                 _dialogService.ShowMessage("생성 중인 객체는 연결할 수 없습니다.");
                 return;
             }
 
-            if (_sourceNode != null)
+            if (_sourceItem != null)
             {
                 _isConnecting = true;
-                _startPointCanvas = GetExactBorderPoint(_sourceNode, _sourceDir);
+                _startPointCanvas = GetExactBorderPoint(_sourceItem, _sourceDir);
                 TempPolyline.Visibility = Visibility.Visible;
                 Mouse.Capture(ZoomPanGrid);
                 e.Handled = true;
@@ -1351,15 +1390,15 @@ namespace DockerDiagram
         }
 
         // --- 헬퍼 메서드들 ---
-        private Point GetExactBorderPoint(NodeViewModel node, PortDirection dir)
+        private Point GetExactBorderPoint(IConnectableItem item, PortDirection dir)
         {
             switch (dir)
             {
-                case PortDirection.Left: return new Point(node.X, node.CenterY);
-                case PortDirection.Right: return new Point(node.X + node.Width, node.CenterY);
-                case PortDirection.Top: return new Point(node.CenterX, node.Y);
-                case PortDirection.Bottom: return new Point(node.CenterX, node.Y + node.Height);
-                default: return new Point(node.CenterX, node.CenterY);
+                case PortDirection.Left: return new Point(item.X, item.CenterY);
+                case PortDirection.Right: return new Point(item.X + item.Width, item.CenterY);
+                case PortDirection.Top: return new Point(item.CenterX, item.Y);
+                case PortDirection.Bottom: return new Point(item.CenterX, item.Y + item.Height);
+                default: return new Point(item.CenterX, item.CenterY);
             }
         }
 

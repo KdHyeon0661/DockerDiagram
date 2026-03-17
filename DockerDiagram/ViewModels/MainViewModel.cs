@@ -1032,25 +1032,25 @@ namespace DockerDiagram.ViewModels
             if (newIndex >= 0 && newIndex < Sheets.Count) ActiveSheet = Sheets[newIndex];
         }
 
-        public async void AddConnection(NodeViewModel source, NodeViewModel target, PortDirection sourceDir, PortDirection targetDir)
+        public async void AddConnection(IConnectableItem source, IConnectableItem target, PortDirection sourceDir, PortDirection targetDir)
         {
             if (ActiveSheet == null || source == target) return;
 
-            // 1. 유효성 검사 (네트워크 관련 로직 완전 삭제)
-            if (!IsValidConnection(source.Type, target.Type))
+            // 1. 유효성 검사 (볼륨과 관련된 불가능한 조합 차단)
+            if (!IsValidConnection(source, target))
             {
-                _dialogService.ShowMessage("연결할 수 없는 조합입니다.\n(볼륨끼리는 연결할 수 없으며, 네트워크 연결은 그룹 안으로 드래그하여 넣으세요.)");
+                _dialogService.ShowMessage("연결할 수 없는 조합입니다.\n(볼륨끼리 연결하거나, 인터넷과 볼륨은 연결할 수 없습니다.)");
                 return;
             }
 
-            // 2. 방향 정규화 (Container가 항상 Source가 되도록)
-            NodeViewModel finalSource = source;
-            NodeViewModel finalTarget = target;
+            // 2. 방향 정규화 (항상 컨테이너가 Source가 되도록, 타겟이 컨테이너면 뒤집기)
+            IConnectableItem finalSource = source;
+            IConnectableItem finalTarget = target;
             PortDirection finalSourceDir = sourceDir;
             PortDirection finalTargetDir = targetDir;
 
-            // 만약 타겟이 컨테이너고 소스가 다른거라면(예: 볼륨) 방향 반대로 뒤집기
-            if (source.Type != NodeType.Container && target.Type == NodeType.Container)
+            if (!(source is NodeViewModel sNode && sNode.Type == NodeType.Container) &&
+                 (target is NodeViewModel tNode && tNode.Type == NodeType.Container))
             {
                 finalSource = target;
                 finalTarget = source;
@@ -1059,17 +1059,14 @@ namespace DockerDiagram.ViewModels
             }
 
             // =========================================================
-            // [CASE 1] 컨테이너 <-> 볼륨 (물리적 연결 시도)
+            // [CASE 1] 볼륨 마운트 연결 처리 (반드시 NodeViewModel끼리만 성립)
             // =========================================================
-            if (finalSource.Type == NodeType.Container && finalTarget.Type == NodeType.Volume)
+            if (finalSource is NodeViewModel fsNode && fsNode.Type == NodeType.Container &&
+                finalTarget is NodeViewModel ftNode && ftNode.Type == NodeType.Volume)
             {
-                bool isSuccess = await ConnectVolumeToContainerAsync(finalSource, finalTarget);
-                if (!isSuccess) return; // 실패하면 선 안 그음
+                bool isSuccess = await ConnectVolumeToContainerAsync(fsNode, ftNode);
+                if (!isSuccess) return; // 사용자가 취소하거나 실패하면 선 안 그음
             }
-
-            // [삭제됨] CASE 2: 네트워크 연결 로직
-            // 이유: 님 말씀대로 네트워크는 '그룹 영역'이므로 선(Connector)으로 연결하지 않음.
-            //       MainViewModel.CreateNodeAtAsync나 GroupViewModel.AddNode에서 처리됨.
 
             // 3. 중복 연결 방지 및 실제 선(Connector) 추가
             bool exists = ActiveSheet.Connectors.Any(c =>
@@ -1078,20 +1075,16 @@ namespace DockerDiagram.ViewModels
 
             if (!exists)
             {
-                // ConnectorViewModel 생성 (서비스는 DialogService만 필요)
                 var newConnector = new ConnectorViewModel(finalSource, finalTarget, finalSourceDir, finalTargetDir, _dialogService);
 
-                // 관계 타입 설정
-                if (finalTarget.Type == NodeType.Volume)
+                if (finalTarget is NodeViewModel targetNode && targetNode.Type == NodeType.Volume)
                 {
                     newConnector.RelationType = RelationType.VolumeMount;
-                    // 볼륨 마운트 경로는 ConnectVolumeToContainerAsync 내부 로직에서 결정되지만,
-                    // UI상 표시를 위해 기본값 혹은 추후 동기화 로직 필요
                     newConnector.MountPath = "/data";
                 }
                 else
                 {
-                    // 남은 경우의 수는 컨테이너 <-> 컨테이너 (Dependency) 뿐임
+                    // 그룹(네트워크) ↔ 컨테이너, 그룹 ↔ 인터넷 등은 모두 Dependency로 처리하여 선 표시
                     newConnector.RelationType = RelationType.Dependency;
                 }
 
@@ -1102,13 +1095,20 @@ namespace DockerDiagram.ViewModels
         }
 
         // 네트워크 타입 검사 로직 삭제 -> 오직 컨테이너와 볼륨 관계만 정의
-        private bool IsValidConnection(NodeType t1, NodeType t2)
+        private bool IsValidConnection(IConnectableItem t1, IConnectableItem t2)
         {
-            // 연결 설정 불가능(볼륨 + 인터넷, 볼륨 + 볼륨)
-            if (t1 == NodeType.Volume && t2 == NodeType.Volume || ((t1 == NodeType.Internet && t2 == NodeType.Volume) ||
-                (t1 == NodeType.Volume && t2 == NodeType.Internet))) return false;
+            bool isT1Volume = t1 is NodeViewModel n1 && n1.Type == NodeType.Volume;
+            bool isT2Volume = t2 is NodeViewModel n2 && n2.Type == NodeType.Volume;
+            bool isT1Internet = t1 is NodeViewModel i1 && i1.Type == NodeType.Internet;
+            bool isT2Internet = t2 is NodeViewModel i2 && i2.Type == NodeType.Internet;
 
-            // 그 외 모든 경우 가능
+            // 연결 불가능: 볼륨 ↔ 볼륨
+            if (isT1Volume && isT2Volume) return false;
+
+            // 연결 불가능: 볼륨 ↔ 인터넷
+            if ((isT1Internet && isT2Volume) || (isT1Volume && isT2Internet)) return false;
+
+            // 나머지는 모두 허용 (그룹 ↔ 컨테이너 연결 포함!)
             return true;
         }
 
@@ -1123,12 +1123,10 @@ namespace DockerDiagram.ViewModels
             // =========================================================
             if (SelectedElement is ConnectorViewModel conn)
             {
-                // 1. 컨테이너 ↔ 컨테이너 (단순 의존성)
                 if (conn.RelationType == RelationType.Dependency)
                 {
                     ActiveSheet.Connectors.Remove(conn);
                 }
-                // 2. 컨테이너 ↔ 볼륨 (Volume Mount)
                 else if (conn.RelationType == RelationType.VolumeMount)
                 {
                     var result = MessageBox.Show(
@@ -1144,8 +1142,16 @@ namespace DockerDiagram.ViewModels
 
                     if (result == MessageBoxResult.Yes)
                     {
-                        bool success = await UnmountVolumeFromContainerAsync(conn.Source, conn.Target);
-                        if (success) ActiveSheet.Connectors.Remove(conn);
+                        // ★ [핵심] 볼륨 연결은 NodeViewModel 간의 관계이므로 안전하게 캐스팅하여 해제
+                        if (conn.Source is NodeViewModel srcNode && conn.Target is NodeViewModel tgtNode)
+                        {
+                            bool success = await UnmountVolumeFromContainerAsync(srcNode, tgtNode);
+                            if (success) ActiveSheet.Connectors.Remove(conn);
+                        }
+                        else
+                        {
+                            ActiveSheet.Connectors.Remove(conn);
+                        }
                     }
                     else
                     {
@@ -1159,22 +1165,18 @@ namespace DockerDiagram.ViewModels
             // =========================================================
             else if (SelectedElement is NodeViewModel node)
             {
-                // 인터넷 노드 전용 로직: 질문 없이 즉시 삭제
                 if (node.Type == NodeType.Internet)
                 {
-                    // 연결된 선(커넥터)들 먼저 제거
                     var related = ActiveSheet.Connectors
-                        .Where(c => c.Source == node || c.Target == node).ToList();
+                        .Where(c => c.Source == (IConnectableItem)node || c.Target == (IConnectableItem)node).ToList();
                     foreach (var c in related) ActiveSheet.Connectors.Remove(c);
 
-                    // 시트에서 노드 제거
                     ActiveSheet.Nodes.Remove(node);
                     IsModified = true;
                     SelectedElement = null;
-                    return; // 인터넷 노드는 여기서 로직 종료
+                    return;
                 }
 
-                // --- 실체가 있는 노드(컨테이너/볼륨) 삭제 로직 ---
                 var result = MessageBox.Show(
                     "선택한 항목을 삭제하시겠습니까?\n" +
                     "[예(Yes)] : Docker에서도 영구 삭제\n" +
@@ -1196,7 +1198,6 @@ namespace DockerDiagram.ViewModels
                             {
                                 if (node.Type == NodeType.Container)
                                     await _containerService.RemoveContainerAsync(node.ContainerId);
-                                // 볼륨 등 추가 리소스 삭제가 필요하다면 여기에 추가
                             });
                         }
                         catch (Exception ex)
@@ -1207,9 +1208,8 @@ namespace DockerDiagram.ViewModels
                     }
                 }
 
-                // 공통: 연결된 선 제거 후 노드 제거
                 var relatedConnectors = ActiveSheet.Connectors
-                    .Where(c => c.Source == node || c.Target == node).ToList();
+                    .Where(c => c.Source == (IConnectableItem)node || c.Target == (IConnectableItem)node).ToList();
                 foreach (var c in relatedConnectors) ActiveSheet.Connectors.Remove(c);
 
                 ActiveSheet.Nodes.Remove(node);
@@ -1221,7 +1221,6 @@ namespace DockerDiagram.ViewModels
             // =========================================================
             else if (SelectedElement is GroupViewModel group)
             {
-                // 1. 네트워크 그룹일 경우 -> 실제 Docker 네트워크 삭제 시도
                 if (group.Type == GroupType.Network)
                 {
                     try
@@ -1235,7 +1234,6 @@ namespace DockerDiagram.ViewModels
                     }
                 }
 
-                // 2. 그룹 해제 (Ungroup): 내부 노드 방생
                 if (group.ContainedNodes != null)
                 {
                     foreach (var childNode in group.ContainedNodes.ToList())
@@ -1246,7 +1244,11 @@ namespace DockerDiagram.ViewModels
                     }
                 }
 
-                // 3. 그룹 삭제
+                // 그룹에 연결된 선(Connector)들도 같이 삭제
+                var relatedConnectors = ActiveSheet.Connectors
+                    .Where(c => c.Source == (IConnectableItem)group || c.Target == (IConnectableItem)group).ToList();
+                foreach (var c in relatedConnectors) ActiveSheet.Connectors.Remove(c);
+
                 ActiveSheet.Groups.Remove(group);
                 IsModified = true;
             }
