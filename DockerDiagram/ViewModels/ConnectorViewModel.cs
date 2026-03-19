@@ -144,33 +144,108 @@ namespace DockerDiagram.ViewModels
 
         private void CalculateRoute()
         {
-            OnPropertyChanged(nameof(SourcePos));
-            OnPropertyChanged(nameof(TargetPos));
-
             if (Source == null || Target == null) return;
 
-            Point start = GetExactBorderPoint(Source, SourceDir);
-            Point end = GetExactBorderPoint(Target, TargetDir);
+            // 1. 직선거리 기준 상위 4개의 포트 조합을 가져옵니다.
+            var candidates = GetTopClosestPorts(4);
 
-            Rect obsSource = Source is GroupViewModel ? new Rect(start.X, start.Y, 0, 0) : new Rect(Source.X, Source.Y, Source.Width, Source.Height);
-            Rect obsTarget = Target is GroupViewModel ? new Rect(end.X, end.Y, 0, 0) : new Rect(Target.X, Target.Y, Target.Width, Target.Height);
+            PointCollection? bestRoute = null;
+            double bestLength = double.MaxValue;
+            PortDirection bestS = PortDirection.Right;
+            PortDirection bestT = PortDirection.Left;
 
-            try
+            // 2. 상위 4개 후보에 대해 직접 '직각 선(Orthogonal Route)'을 그려보고 길이를 잽니다.
+            foreach (var (sDir, tDir) in candidates)
             {
-                // 이제 겹침 검사(꼼수) 없이 당당하게 OrthogonalRouter 알고리즘을 사용합니다!
-                var route = OrthogonalRouter.GetRoute(start, SourceDir, end, TargetDir, obsSource, obsTarget);
+                Point start = GetExactBorderPoint(Source, sDir);
+                Point end = GetExactBorderPoint(Target, tDir);
 
-                if (route == null || route.Count < 2)
-                    Points = new PointCollection { start, end };
-                else
-                    Points = route;
+                Rect obsSource = Source is GroupViewModel ? new Rect(start.X, start.Y, 0, 0) : new Rect(Source.X, Source.Y, Source.Width, Source.Height);
+                Rect obsTarget = Target is GroupViewModel ? new Rect(end.X, end.Y, 0, 0) : new Rect(Target.X, Target.Y, Target.Width, Target.Height);
+
+                try
+                {
+                    // 라우터에게 선을 그려달라고 부탁합니다.
+                    var route = OrthogonalRouter.GetRoute(start, sDir, end, tDir, obsSource, obsTarget);
+
+                    if (route != null && route.Count >= 2)
+                    {
+                        // 3. 그려진 선의 실제 길이(비용)를 계산합니다.
+                        double length = GetPathLength(route);
+
+                        // 가장 짧은 진짜 최단거리 선을 찾아서 저장!
+                        if (length < bestLength)
+                        {
+                            bestLength = length;
+                            bestRoute = route;
+                            bestS = sDir;
+                            bestT = tDir;
+                        }
+                    }
+                }
+                catch { continue; }
             }
-            catch
+
+            // 4. 최종적으로 가장 짧고 예쁜 선을 화면에 적용합니다.
+            if (bestRoute != null)
             {
-                Points = new PointCollection { start, end };
+                SourceDir = bestS;
+                TargetDir = bestT;
+                Points = bestRoute;
+            }
+            else
+            {
+                // (만약의 사태를 대비한 예외 처리) 상위 1순위로 그냥 직선 긋기
+                SourceDir = candidates[0].Item1;
+                TargetDir = candidates[0].Item2;
+                Points = new PointCollection { GetExactBorderPoint(Source, SourceDir), GetExactBorderPoint(Target, TargetDir) };
             }
 
+            OnPropertyChanged(nameof(SourcePos));
+            OnPropertyChanged(nameof(TargetPos));
             CalculateArrowHead();
+        }
+
+        // =================================================================
+        // [헬퍼] 상위 N개의 최단 거리 포트 찾기 (피타고라스 1차 필터링)
+        // =================================================================
+        private List<(PortDirection, PortDirection)> GetTopClosestPorts(int topCount)
+        {
+            var dirs = new[] { PortDirection.Top, PortDirection.Bottom, PortDirection.Left, PortDirection.Right };
+            var list = new List<(PortDirection sDir, PortDirection tDir, double dist)>();
+
+            foreach (var sDir in dirs)
+            {
+                Point sPoint = GetExactBorderPoint(Source, sDir);
+                foreach (var tDir in dirs)
+                {
+                    Point tPoint = GetExactBorderPoint(Target, tDir);
+
+                    double dist = (sPoint.X - tPoint.X) * (sPoint.X - tPoint.X) +
+                                  (sPoint.Y - tPoint.Y) * (sPoint.Y - tPoint.Y);
+
+                    list.Add((sDir, tDir, dist));
+                }
+            }
+
+            // 거리가 짧은 순서대로 정렬해서 상위 N개(4개)만 뽑아서 리턴!
+            return list.OrderBy(x => x.dist)
+                       .Take(topCount)
+                       .Select(x => (x.sDir, x.tDir))
+                       .ToList();
+        }
+
+        // =================================================================
+        // [헬퍼] 그려진 선의 실제 길이 구하기 (맨해튼 거리 누적)
+        // =================================================================
+        private double GetPathLength(PointCollection path)
+        {
+            double len = 0;
+            for (int i = 0; i < path.Count - 1; i++)
+            {
+                len += Math.Abs(path[i].X - path[i + 1].X) + Math.Abs(path[i].Y - path[i + 1].Y);
+            }
+            return len;
         }
 
         private Point GetExactBorderPoint(IConnectableItem item, PortDirection dir)

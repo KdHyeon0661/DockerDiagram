@@ -199,7 +199,55 @@ namespace DockerDiagram.Helpers
             Point sStub = GetShiftedPoint(start, startDir, MARGIN);
             Point eStub = GetShiftedPoint(end, endDir, MARGIN);
 
-            // [1단계] 틈새(Gap) 정중앙 관통 최우선 시도
+            // [1단계] 일반적인 Z자, L자 경로 생성
+            var basicCandidates = new List<List<Point>>();
+            double ptMidX = Math.Round((sStub.X + eStub.X) / 2 / GRID_SIZE) * GRID_SIZE;
+            double ptMidY = Math.Round((sStub.Y + eStub.Y) / 2 / GRID_SIZE) * GRID_SIZE;
+
+            // Z자 1: 좌/우 방향으로 벌어졌을 때 X축 중앙에서 꺾기
+            var zShapeXMid = new List<Point> { start, sStub, new Point(ptMidX, sStub.Y), new Point(ptMidX, eStub.Y), eStub, end };
+            // Z자 2: 상/하 방향으로 벌어졌을 때 Y축 중앙에서 꺾기
+            var zShapeYMid = new List<Point> { start, sStub, new Point(sStub.X, ptMidY), new Point(eStub.X, ptMidY), eStub, end };
+
+            // L자 1, 2
+            var lShape1 = new List<Point> { start, sStub, new Point(sStub.X, eStub.Y), eStub, end };
+            var lShape2 = new List<Point> { start, sStub, new Point(eStub.X, sStub.Y), eStub, end };
+
+            // ★ [핵심] 방향에 따라 가장 예쁜 선을 먼저 시도하도록 순서(우선순위) 결정!
+            bool isStartVertical = (startDir == PortDirection.Top || startDir == PortDirection.Bottom);
+            bool isEndVertical = (endDir == PortDirection.Top || endDir == PortDirection.Bottom);
+
+            if (isStartVertical && isEndVertical)
+            {
+                // 상-하 끼리 연결될 때는 Y축 정중앙에서 꺾이는 Z자가 가장 예쁨
+                basicCandidates.Add(zShapeYMid);
+                basicCandidates.Add(lShape1);
+                basicCandidates.Add(lShape2);
+                basicCandidates.Add(zShapeXMid);
+            }
+            else if (!isStartVertical && !isEndVertical)
+            {
+                // 좌-우 끼리 연결될 때는 X축 정중앙에서 꺾이는 Z자가 가장 예쁨
+                basicCandidates.Add(zShapeXMid);
+                basicCandidates.Add(lShape1);
+                basicCandidates.Add(lShape2);
+                basicCandidates.Add(zShapeYMid);
+            }
+            else
+            {
+                // 상/하 - 좌/우 끼리 수직으로 엇갈릴 때는 깔끔한 L자가 최우선
+                basicCandidates.Add(lShape1);
+                basicCandidates.Add(lShape2);
+                basicCandidates.Add(zShapeYMid);
+                basicCandidates.Add(zShapeXMid);
+            }
+
+            // 우선순위대로 하나씩 검사해서 안 부딪히면 바로 채택!
+            foreach (var path in basicCandidates)
+                if (IsValidPath(path, r1, r2)) return SimplifyPath(path);
+
+
+            // [2단계] 틈새(Gap) 정중앙 관통
             var gapCandidates = new List<List<Point>>();
 
             bool hasHorzGap = r1.Right < r2.Left || r2.Right < r1.Left;
@@ -244,25 +292,9 @@ namespace DockerDiagram.Helpers
                 if (IsValidPath(path, r1, r2)) return SimplifyPath(path);
 
 
-            // [2단계] 일반적인 Z자, L자 경로
-            var basicCandidates = new List<List<Point>>();
-            double ptMidX = Math.Round((sStub.X + eStub.X) / 2 / GRID_SIZE) * GRID_SIZE;
-            double ptMidY = Math.Round((sStub.Y + eStub.Y) / 2 / GRID_SIZE) * GRID_SIZE;
-
-            basicCandidates.Add(new List<Point> { start, sStub, new Point(ptMidX, sStub.Y), new Point(ptMidX, eStub.Y), eStub, end });
-            basicCandidates.Add(new List<Point> { start, sStub, new Point(sStub.X, ptMidY), new Point(eStub.X, ptMidY), eStub, end });
-            basicCandidates.Add(new List<Point> { start, sStub, new Point(sStub.X, eStub.Y), eStub, end });
-            basicCandidates.Add(new List<Point> { start, sStub, new Point(eStub.X, sStub.Y), eStub, end });
-
-            foreach (var path in basicCandidates)
-                if (IsValidPath(path, r1, r2)) return SimplifyPath(path);
-
-
-            // ★ [3단계: 핵심 추가] 두 노드 전체를 감싸고 '크게 우회하기 (Perimeter Detour)' ★
-            // 21111.JPG, 45552.JPG 처럼 노드에 바짝 붙는 현상을 원천 차단합니다.
+            // [3단계] 두 노드 전체를 감싸고 '크게 우회하기 (Perimeter Detour)'
             var detourCandidates = new List<List<Point>>();
 
-            // 두 노드를 합친 영역에서 MARGIN * 1.5 만큼 넉넉하게 떨어진 안전한 외곽선을 구합니다.
             double minTop = Math.Min(Math.Min(r1.Top, r2.Top), Math.Min(sStub.Y, eStub.Y)) - MARGIN * 1.5;
             double maxBottom = Math.Max(Math.Max(r1.Bottom, r2.Bottom), Math.Max(sStub.Y, eStub.Y)) + MARGIN * 1.5;
             double minLeft = Math.Min(Math.Min(r1.Left, r2.Left), Math.Min(sStub.X, eStub.X)) - MARGIN * 1.5;
@@ -273,16 +305,11 @@ namespace DockerDiagram.Helpers
             minLeft = Math.Round(minLeft / GRID_SIZE) * GRID_SIZE;
             maxRight = Math.Round(maxRight / GRID_SIZE) * GRID_SIZE;
 
-            // 위쪽으로 크게 우회 (S자/C자 형태)
             detourCandidates.Add(new List<Point> { start, sStub, new Point(sStub.X, minTop), new Point(eStub.X, minTop), eStub, end });
-            // 아래쪽으로 크게 우회
             detourCandidates.Add(new List<Point> { start, sStub, new Point(sStub.X, maxBottom), new Point(eStub.X, maxBottom), eStub, end });
-            // 왼쪽으로 크게 우회
             detourCandidates.Add(new List<Point> { start, sStub, new Point(minLeft, sStub.Y), new Point(minLeft, eStub.Y), eStub, end });
-            // 오른쪽으로 크게 우회
             detourCandidates.Add(new List<Point> { start, sStub, new Point(maxRight, sStub.Y), new Point(maxRight, eStub.Y), eStub, end });
 
-            // 유효한 우회 경로들 중 가장 거리가 짧고 예쁜 경로를 선택합니다.
             var validDetours = detourCandidates.Where(p => IsValidPath(p, r1, r2)).ToList();
             if (validDetours.Any())
             {
@@ -290,7 +317,7 @@ namespace DockerDiagram.Helpers
                 return SimplifyPath(bestDetour);
             }
 
-            return null; // 여기까지 다 실패하면 비로소 A* 출동
+            return null; // 여기까지 다 실패하면 비로소 A* 알고리즘 출동
         }
 
         // 경로의 총 길이를 구하는 헬퍼 함수
