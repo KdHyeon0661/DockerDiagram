@@ -225,30 +225,6 @@
                     <StackPanel>
                         <TextBlock Text="{Binding LastSyncTime}" FontSize="11" Foreground="#888" HorizontalAlignment="Right" Margin="0,0,2,5"/>
 
-                        <Expander Header="Templates" IsExpanded="False" Margin="0,0,0,5" Background="White" BorderBrush="#ccc" BorderThickness="1">
-                            <ListBox ItemsSource="{Binding Templates}" BorderThickness="0" MaxHeight="200" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                <ListBox.ItemContainerStyle>
-                                    <Style TargetType="ListBoxItem">
-                                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                                        <Setter Property="Padding" Value="0"/>
-                                    </Style>
-                                </ListBox.ItemContainerStyle>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Padding="5" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="TemplateItem_PreviewMouseDown" MouseMove="TemplateItem_MouseMove">
-                                            <StackPanel Orientation="Horizontal">
-                                                <Path Data="{StaticResource ContainerIcon}" Width="14" Height="14" Stretch="Uniform" Margin="0,0,8,0" Fill="#555"/>
-                                                <StackPanel>
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
-                                                    <TextBlock Text="{Binding Image}" FontSize="10" Foreground="Gray"/>
-                                                </StackPanel>
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </Expander>
-
                         <Expander Header="Existing Containers" IsExpanded="True" Margin="0,0,0,5" Background="White" BorderBrush="#ccc" BorderThickness="1">
                             <StackPanel>
                                 <TextBox Text="{Binding ContainerSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search..." Margin="5"/>
@@ -375,36 +351,6 @@
                                 </ListBox>
                             </StackPanel>
                         </Expander>
-
-                        <Expander Header="Docker Images" IsExpanded="False" Margin="0,0,0,5" Background="White" BorderBrush="#ccc" BorderThickness="1">
-                            <StackPanel>
-                                <TextBox Text="{Binding ImageSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search..." Margin="5"/>
-                                <ListBox ItemsSource="{Binding LocalImages}" BorderThickness="0" MaxHeight="300" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                    <ListBox.ItemContainerStyle>
-                                        <Style TargetType="ListBoxItem">
-                                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                                            <Setter Property="Padding" Value="0"/>
-                                        </Style>
-                                    </ListBox.ItemContainerStyle>
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <DockPanel Margin="0,2" LastChildFill="True">
-                                                <Button DockPanel.Dock="Right" Content="✕" Foreground="#dc3545" Background="Transparent" BorderThickness="0"
-                                            Command="{Binding DataContext.DeleteImageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                            CommandParameter="{Binding}"
-                                            Cursor="Hand" Padding="8,0" Margin="5,0,0,0"/>
-
-                                                <StackPanel VerticalAlignment="Center" Margin="5,0,0,0">
-                                                    <TextBlock Text="{Binding Repository}" FontWeight="Bold" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Repository}"/>
-                                                    <TextBlock Text="{Binding Tag}" FontSize="10" Foreground="Gray"/>
-                                                </StackPanel>
-                                            </DockPanel>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                            </StackPanel>
-                        </Expander>
-
                     </StackPanel>
                 </ScrollViewer>
             </Grid>
@@ -922,6 +868,37 @@
                                 </Button.ContentTemplate>
                             </Button>
 
+                            <Button Command="{Binding ImportComposeCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="Generate Sheet using docker-compose.yml">
+                                <Button.ContentTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="25"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="🐳" HorizontalAlignment="Center" Foreground="#007ACC"/>
+                                            <TextBlock Grid.Column="1" Text="Import Compose..."/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
+
+                            <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
+
+                            <Button Click="ManageImages_Click" Style="{StaticResource MenuItemStyle}" ToolTip="도커 이미지 관리">
+                                <Button.ContentTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="25"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="🖼️" HorizontalAlignment="Center" Foreground="#E67E22"/>
+                                            <TextBlock Grid.Column="1" Text="Manage Images..."/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
                             <Button Click="BtnShowMapSize_Click" Style="{StaticResource MenuItemStyle}">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
@@ -1449,22 +1426,47 @@
                                     </StackPanel>
                                 </Border>
 
-                                <Button Grid.Row="5" Command="{Binding OpenDetailWindowCommand}" Height="36" Background="#007ACC" Foreground="White" BorderThickness="0" Margin="0,0,0,5" Cursor="Hand">
-                                    <Button.Style>
-                                        <Style TargetType="Button">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Type}" Value="Container">
-                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Button.Style>
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="📄" Margin="0,0,8,0" FontSize="14" VerticalAlignment="Center"/>
-                                        <TextBlock Text="View Details &amp; Logs" FontWeight="Bold" VerticalAlignment="Center"/>
-                                    </StackPanel>
-                                </Button>
+                                <StackPanel Grid.Row="5" Margin="0,0,0,5">
+
+                                    <Button Command="{Binding OpenDetailWindowCommand}" Height="36" Background="#007ACC" Foreground="White" BorderThickness="0" Cursor="Hand">
+                                        <Button.Style>
+                                            <Style TargetType="Button">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Type}" Value="Container">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="📄" Margin="0,0,8,0" FontSize="14" VerticalAlignment="Center"/>
+                                            <TextBlock Text="View Details &amp; Logs" FontWeight="Bold" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Button Content="📝 Extract Dockerfile" 
+            Command="{Binding ExtractDockerfileCommand}"
+            Background="#6c757d" Foreground="White" 
+            Margin="0,10,0,0" Padding="10,8" FontWeight="Bold" BorderThickness="0" Cursor="Hand">
+                                        <Button.Resources>
+                                            <Style TargetType="Border">
+                                                <Setter Property="CornerRadius" Value="4"/>
+                                            </Style>
+                                        </Button.Resources>
+                                        <Button.Style>
+                                            <Style TargetType="Button">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Type}" Value="Container">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+
+                                </StackPanel>
 
                                 <ScrollViewer Grid.Row="6" VerticalScrollBarVisibility="Auto">
                                     <StackPanel>

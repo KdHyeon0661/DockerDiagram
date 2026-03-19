@@ -5,6 +5,8 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Windows.Input;
 using System.Windows.Threading;
+using System.Windows;
+using System.IO;
 
 namespace DockerDiagram.ViewModels
 {
@@ -397,6 +399,7 @@ namespace DockerDiagram.ViewModels
         public ICommand CopyToContainerCommand { get; }
         public ICommand CopyFromContainerCommand { get; }
         public ICommand AddEnvAndRecreateCommand { get; }
+        public ICommand ExtractDockerfileCommand { get; }
 
         public NodeViewModel(IContainerService? containerService = null,
                              IVolumeService? volumeService = null,
@@ -412,6 +415,7 @@ namespace DockerDiagram.ViewModels
             RestartCommand = new AsyncRelayCommand(_ => ControlAction("restart"), _ => Type == NodeType.Container);
 
             TerminalCommand = new RelayCommand(_ => OpenTerminal(), _ => Type == NodeType.Container && IsRunning);
+            ExtractDockerfileCommand = new AsyncRelayCommand(_ => ExtractDockerfileAsync(), _ => Type == NodeType.Container);
 
             ToggleNetworkModeCommand = new RelayCommand(_ => {
                 NetworkDisplayMode = (NetworkDisplayMode + 1) % 3;
@@ -427,7 +431,7 @@ namespace DockerDiagram.ViewModels
             CopyLogsCommand = new RelayCommand(_ => {
                 if (!string.IsNullOrEmpty(ContainerLogs))
                 {
-                    System.Windows.Clipboard.SetText(ContainerLogs);
+                    Clipboard.SetText(ContainerLogs);
                     _dialogService?.ShowInfo("로그가 클립보드에 복사되었습니다.", "복사 완료");
                 }
             });
@@ -444,7 +448,7 @@ namespace DockerDiagram.ViewModels
 
                 if (dlg.ShowDialog() == true)
                 {
-                    System.IO.File.WriteAllText(dlg.FileName, ContainerLogs);
+                    File.WriteAllText(dlg.FileName, ContainerLogs);
                     _dialogService?.ShowInfo("로그가 파일로 저장되었습니다.", "저장 완료");
                 }
             });
@@ -843,6 +847,106 @@ namespace DockerDiagram.ViewModels
             catch (Exception ex)
             {
                 ContainerLogs = $"Error fetching logs: {ex.Message}";
+            }
+        }
+
+        private async Task ExtractDockerfileAsync()
+        {
+            if (string.IsNullOrEmpty(ContainerId) || _containerService == null) return;
+
+            try
+            {
+                Mouse.OverrideCursor = Cursors.Wait;
+
+                // 도커 엔진에서 컨테이너의 모든 뼈대 정보 가져오기
+                var info = await _containerService.InspectContainerAsync(ContainerId);
+                var sb = new System.Text.StringBuilder();
+
+                // 1. 베이스 이미지 (FROM)
+                sb.AppendLine($"FROM {info.Config.Image}");
+                sb.AppendLine();
+
+                // 2. 작업 디렉토리 (WORKDIR)
+                if (!string.IsNullOrWhiteSpace(info.Config.WorkingDir))
+                {
+                    sb.AppendLine($"WORKDIR {info.Config.WorkingDir}");
+                }
+
+                // 3. 환경 변수 (ENV) - PATH 등 기본 시스템 변수는 제외하고 싶다면 필터링 가능
+                if (info.Config.Env != null && info.Config.Env.Count > 0)
+                {
+                    foreach (var env in info.Config.Env)
+                    {
+                        sb.AppendLine($"ENV {env}");
+                    }
+                }
+
+                // 4. 노출 포트 (EXPOSE)
+                if (info.Config.ExposedPorts != null && info.Config.ExposedPorts.Count > 0)
+                {
+                    foreach (var port in info.Config.ExposedPorts.Keys)
+                    {
+                        sb.AppendLine($"EXPOSE {port.Split('/')[0]}"); // "80/tcp" 에서 "80"만 추출
+                    }
+                }
+
+                // 5. 볼륨 (VOLUME)
+                if (info.Config.Volumes != null && info.Config.Volumes.Count > 0)
+                {
+                    var vols = string.Join("\", \"", info.Config.Volumes.Keys);
+                    sb.AppendLine($"VOLUME [\"{vols}\"]");
+                }
+
+                sb.AppendLine();
+
+                // 6. 시작 명령어 (ENTRYPOINT / CMD)
+                if (info.Config.Entrypoint != null && info.Config.Entrypoint.Count > 0)
+                {
+                    var eps = string.Join("\", \"", info.Config.Entrypoint);
+                    sb.AppendLine($"ENTRYPOINT [\"{eps}\"]");
+                }
+
+                if (info.Config.Cmd != null && info.Config.Cmd.Count > 0)
+                {
+                    var cmds = string.Join("\", \"", info.Config.Cmd);
+                    sb.AppendLine($"CMD [\"{cmds}\"]");
+                }
+
+                string dockerfileContent = sb.ToString();
+
+                // 1. 저장 창(SaveFileDialog) 띄우기
+                var saveDlg = new Microsoft.Win32.SaveFileDialog
+                {
+                    FileName = "Dockerfile", // 기본 파일명
+                    Filter = "Dockerfile|*.*|Text Files (*.txt)|*.txt",
+                    Title = "추출한 Dockerfile 저장"
+                };
+
+                if (saveDlg.ShowDialog() == true)
+                {
+                    // 2. 사용자가 저장 경로를 지정하면 파일로 생성!
+                    File.WriteAllText(saveDlg.FileName, dockerfileContent);
+                    _dialogService?.ShowInfo($"[{saveDlg.FileName}] 경로에 성공적으로 저장되었습니다.", "저장 완료");
+                }
+                else
+                {
+                    // 3. 저장을 취소했을 때의 디테일 (클립보드에라도 복사할까요?)
+                    bool wantCopy = _dialogService?.ShowConfirm("파일 저장을 취소하셨습니다.\n대신 내용을 클립보드(Ctrl+C)에 복사하시겠습니까?", "클립보드 복사") ?? false;
+
+                    if (wantCopy)
+                    {
+                        Clipboard.SetText(dockerfileContent);
+                        _dialogService?.ShowInfo("클립보드에 복사되었습니다. (Ctrl+V 로 붙여넣기 하세요)", "복사 완료");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _dialogService?.ShowMessage($"추출 실패: {ex.Message}");
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
             }
         }
     }

@@ -1088,10 +1088,47 @@ namespace DockerDiagram
                         {
                             var dlg = new Views.ContainerDialog();
                             dlg.Owner = this;
+
                             if (dlg.ShowDialog() == true)
                             {
-                                await vm.CreateNewContainerNodeAsync(
-                                    dlg.ContainerName, dlg.ImageName, "latest", dlg.Ports, dlg.EnvVars, dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount, defaultX, defaultY);
+                                try
+                                {
+                                    Mouse.OverrideCursor = Cursors.Wait;
+
+                                    // ==========================================
+                                    // ★ 탭 선택에 따른 분기 처리
+                                    // ==========================================
+                                    if (dlg.SelectedCreationMode == 0) // 1. [🎛️ 직접 설정 (UI)] 탭
+                                    {
+                                        // 이미지 이름과 태그(:)를 안전하게 분리
+                                        string fullImage = dlg.ImageName.Contains(":") ? dlg.ImageName : dlg.ImageName + ":latest";
+                                        var parts = fullImage.Split(new[] { ':' }, 2);
+
+                                        // ★ 끝에 dlg.Command, dlg.IsInteractive 정식으로 추가!
+                                        await vm.CreateNewContainerNodeAsync(
+                                            dlg.ContainerName, parts[0], parts.Length > 1 ? parts[1] : "latest",
+                                            dlg.Ports, dlg.EnvVars,
+                                            dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount, defaultX, defaultY,
+                                            dlg.SelectedNetwork, dlg.Command, dlg.IsInteractive);
+                                    }
+                                    else if (dlg.SelectedCreationMode == 1) // 2. [💻 명령어로 생성 (CLI)] 탭
+                                    {
+                                        // 하이브리드 파싱 로직 호출!
+                                        await vm.ProcessCliCommandAsync(dlg.CliCommand, defaultX, defaultY);
+                                    }
+                                    else if (dlg.SelectedCreationMode == 2) // 3. [🛠️ 도커파일로 빌드] 탭
+                                    {
+                                        await vm.BuildImageAndCreateNodeAsync(dlg.BuildImageTag, dlg.DockerfileContent, dlg.UploadedDockerfilePath, defaultX, defaultY);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    _dialogService.ShowMessage($"에러 : {ex.Message}");
+                                }
+                                finally
+                                {
+                                    Mouse.OverrideCursor = null;
+                                }
                             }
                         }
                         else if (type == NodeType.Volume)
@@ -1144,12 +1181,30 @@ namespace DockerDiagram
                             try
                             {
                                 Mouse.OverrideCursor = Cursors.Wait;
-                                string fullImage = dlg.ImageName.Contains(":") ? dlg.ImageName : dlg.ImageName + ":latest";
-                                var parts = fullImage.Split(new[] { ':' }, 2);
 
-                                await vm.CreateNewContainerNodeAsync(
-                                    dlg.ContainerName, parts[0], parts.Length > 1 ? parts[1] : "latest",
-                                    dlg.Ports, dlg.EnvVars, dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount, snapX, snapY);
+                                // ==========================================
+                                // ★ [수정된 부분] 탭 선택에 따라 분기 처리!
+                                // ==========================================
+                                if (dlg.SelectedCreationMode == 0) // 1. [🎛️ 직접 설정 (UI)] 탭
+                                {
+                                    string fullImage = dlg.ImageName.Contains(":") ? dlg.ImageName : dlg.ImageName + ":latest";
+                                    var parts = fullImage.Split(new[] { ':' }, 2);
+
+                                    // 기존 코드 (※ 끝에 Command와 IsInteractive 값도 같이 넘겨주면 완벽합니다!)
+                                    await vm.CreateNewContainerNodeAsync(dlg.ContainerName, parts[0], parts.Length > 1 ? parts[1] : "latest",
+                                        dlg.Ports, dlg.EnvVars, dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount, snapX, snapY,
+                                        dlg.SelectedNetwork, dlg.Command, dlg.IsInteractive);
+                                }
+                                else if (dlg.SelectedCreationMode == 1) // 2. [💻 명령어로 생성 (CLI)] 탭
+                                {
+                                    // 방금 MainViewModel에 만든 '하이브리드 파싱' 메서드 호출!
+                                    await vm.ProcessCliCommandAsync(dlg.CliCommand, snapX, snapY);
+                                }
+                                else if (dlg.SelectedCreationMode == 2) // 3. [🛠️ 도커파일로 빌드] 탭
+                                {
+                                    // defaultX, defaultY -> snapX, snapY 로 변경!
+                                    await vm.BuildImageAndCreateNodeAsync(dlg.BuildImageTag, dlg.DockerfileContent, dlg.UploadedDockerfilePath, snapX, snapY);
+                                }
                             }
                             catch (Exception ex)
                             {
@@ -1478,6 +1533,20 @@ namespace DockerDiagram
                     targetSheet.Groups.Clear();
                 }
             }
+        }
+
+        private void ManageImages_Click(object sender, RoutedEventArgs e)
+        {
+            // 1. 톱니바퀴 드롭다운 팝업 닫기
+            OptionPopup.IsOpen = false;
+
+            // 2. 새 창 띄우기 (데이터 공유)
+            var imgWindow = new Views.ImageManagerWindow
+            {
+                DataContext = this.DataContext,
+                Owner = this
+            };
+            imgWindow.ShowDialog();
         }
     }
 }

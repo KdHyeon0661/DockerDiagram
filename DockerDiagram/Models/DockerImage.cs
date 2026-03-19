@@ -29,7 +29,34 @@ namespace DockerDiagram.Models
         public long Size
         {
             get => _size;
-            set { if (_size != value) { _size = value; OnPropertyChanged(); } }
+            set
+            {
+                if (_size != value)
+                {
+                    _size = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(FormattedSize));
+                }
+            }
+        }
+        public string FormattedSize
+        {
+            get
+            {
+                if (Size <= 0) return "0 B";
+
+                double sizeMb = Size / 1024.0 / 1024.0;
+
+                if (sizeMb >= 1024) // 1GB 이상일 때
+                {
+                    double sizeGb = sizeMb / 1024.0;
+                    return $"{sizeGb:F2} GB"; // 예: 1.25 GB
+                }
+                else
+                {
+                    return $"{sizeMb:F1} MB"; // 예: 350.5 MB
+                }
+            }
         }
     }
 }

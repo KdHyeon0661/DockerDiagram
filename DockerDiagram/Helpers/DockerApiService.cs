@@ -92,21 +92,38 @@ namespace DockerDiagram.Helpers
         {
             var images = await _client.Images.ListImagesAsync(new ImagesListParameters { All = false });
             var result = new List<DockerImage>();
+
             foreach (var img in images)
             {
-                string repoTag = (img.RepoTags != null && img.RepoTags.Count > 0) ? img.RepoTags[0] : "<none>:<none>";
-
-                int lastColonIndex = repoTag.LastIndexOf(':');
-                string repository = lastColonIndex > 0 ? repoTag.Substring(0, lastColonIndex) : repoTag;
-                string tag = lastColonIndex > 0 ? repoTag.Substring(lastColonIndex + 1) : "<none>";
-
-                result.Add(new DockerImage
+                // ★ [수정됨] 이미지가 여러 개의 태그를 가지고 있으면 몽땅 다 개별로 띄워줍니다!
+                if (img.RepoTags != null && img.RepoTags.Count > 0)
                 {
-                    Id = img.ID,
-                    Repository = repository,
-                    Tag = tag,
-                    Size = img.Size
-                });
+                    foreach (var repoTag in img.RepoTags)
+                    {
+                        int lastColonIndex = repoTag.LastIndexOf(':');
+                        string repository = lastColonIndex > 0 ? repoTag.Substring(0, lastColonIndex) : repoTag;
+                        string tag = lastColonIndex > 0 ? repoTag.Substring(lastColonIndex + 1) : "<none>";
+
+                        result.Add(new DockerImage
+                        {
+                            Id = repoTag,
+                            Repository = repository,
+                            Tag = tag,
+                            Size = img.Size
+                        });
+                    }
+                }
+                else
+                {
+                    // 태그가 벗겨진 진짜 좀비 이미지 (<none>:<none>)
+                    result.Add(new DockerImage
+                    {
+                        Id = img.ID, // 태그가 없으므로 도커 고유의 해시 ID(sha256)를 발급
+                        Repository = "<none>",
+                        Tag = "<none>",
+                        Size = img.Size
+                    });
+                }
             }
             return result;
         }
@@ -209,8 +226,9 @@ namespace DockerDiagram.Helpers
         }
 
         public async Task<string> CreateAndStartContainerAsync(
-            string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes,
-            string restartPolicy, long memoryMb, double cpuCount)
+    string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes,
+    string restartPolicy, long memoryMb, double cpuCount,
+    string command = "", bool tty = false) // ★ 1. 에러 해결: 인터페이스와 똑같이 파라미터 2개 추가!
         {
             if (image.Contains(":"))
             {
@@ -279,8 +297,17 @@ namespace DockerDiagram.Helpers
                     {
                         Name = (RestartPolicyKind)policyEnum
                     }
-                }
+                },
+                // ★ 2. 여기서 도커 엔진에게 TTY(터미널 유지) 설정 전달!
+                Tty = tty,
+                OpenStdin = tty
             };
+
+            // ★ 3. 여기서 도커 엔진에게 Command(명령어) 전달!
+            if (!string.IsNullOrWhiteSpace(command))
+            {
+                parameters.Cmd = command.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+            }
 
             var response = await _client.Containers.CreateContainerAsync(parameters);
             await _client.Containers.StartContainerAsync(response.ID, new ContainerStartParameters());

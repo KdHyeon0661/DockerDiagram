@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -196,6 +197,7 @@ namespace DockerDiagram.ViewModels
         public ICommand FlowClearCommand { get; }
         public ICommand FlowAllClearCommand { get; }
         public ICommand DeleteAllSheetCommand { get; }
+        public ICommand ImportComposeCommand { get; }
 
         // --- 생성자 ---
         public MainViewModel(IDockerService dockerService, IDialogService dialogService)
@@ -245,6 +247,18 @@ namespace DockerDiagram.ViewModels
                 {
                     ComposeExportService.ExportToCompose(ActiveSheet, _dialogService);
                 }
+            });
+
+            ImportComposeCommand = new AsyncRelayCommand(async o =>
+            {
+                // 3. await로 도커 작업이 끝날 때까지 우아하게 대기
+                await ComposeImportService.ImportFromCompose(
+                    this,
+                    _containerService,
+                    _volumeService,
+                    _networkService,
+                    _dialogService
+                );
             });
 
             // 템플릿 초기화
@@ -696,26 +710,17 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        // 비동기 컨테이너 생성 (모달 입력 처리용)
-        public async Task CreateNewContainerNodeAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes,
-    string restartPolicy, long memoryMb, double cpuCount, double x, double y)
+        public async Task CreateNewContainerNodeAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, double x, double y, string networkName = "bridge", string command = "", bool tty = false) // ★ [추가] command, tty 파라미터
         {
             if (ActiveSheet == null) return;
 
-            // [1] 볼륨 리스트 분류
             var namedVolumesToDraw = new List<string>();
-
             foreach (var vol in volumes)
             {
                 bool isBindMount = System.Text.RegularExpressions.Regex.IsMatch(vol, @"^([a-zA-Z]:[\\/]|/|\.|~)");
-
-                if (!isBindMount)
-                {
-                    namedVolumesToDraw.Add(vol);
-                }
+                if (!isBindMount) namedVolumesToDraw.Add(vol);
             }
 
-            // [2] 이미지 태그 처리
             if (image.Contains(":"))
             {
                 int lastColon = image.LastIndexOf(':');
@@ -723,7 +728,43 @@ namespace DockerDiagram.ViewModels
                 image = image.Substring(0, lastColon);
             }
 
-            // [3] Placeholder 노드 생성 (임시 노란색)
+            // =================================================================
+            // ★ [핵심 추가] 질문자님이 설계하신 "네트워크 그룹 자동 입주" 로직
+            // =================================================================
+            GroupViewModel targetGroup = null;
+
+            // bridge, host, none 같은 기본 네트워크가 아닐 때만 그룹 박스 처리
+            if (!string.IsNullOrWhiteSpace(networkName) && networkName != "bridge" && networkName != "host" && networkName != "none")
+            {
+                // 1. 현재 시트에서 해당 이름의 보라색 네트워크 박스 찾기
+                targetGroup = ActiveSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == networkName);
+
+                if (targetGroup == null)
+                {
+                    // 2. 없으면 마우스 위치(x, y)에 새로 그리기
+                    targetGroup = new GroupViewModel(x, y, 350, 200, _networkService, _dialogService, networkName)
+                    {
+                        Type = GroupType.Network
+                    };
+                    ActiveSheet.AddGroup(targetGroup);
+
+                    // (안전장치) 실제 도커에 해당 네트워크가 없으면 몰래 하나 만들어줌
+                    try { await _networkService.CreateNetworkAsync(networkName, "bridge"); } catch { /* 이미 있으면 무시 */ }
+                }
+
+                // 3. 컨테이너가 생성될 좌표(X,Y)를 그룹 안쪽 빈 공간으로 쏙! 보정
+                x = targetGroup.X + 20;
+                y = targetGroup.Y + 40 + (targetGroup.ContainedNodes.Count * 100); // 노드 개수만큼 아래로 띄워서 배치
+
+                // 만약 컨테이너가 많아져서 박스 밖으로 삐져나가려고 하면 박스 길이를 늘려줌
+                if (y + 100 > targetGroup.Y + targetGroup.Height)
+                {
+                    targetGroup.Height = (y - targetGroup.Y) + 120;
+                }
+            }
+            // =================================================================
+
+            // Placeholder 노드 생성
             var node = new NodeViewModel(_containerService, _volumeService, _dialogService)
             {
                 Name = $"{name} (Creating...)",
@@ -732,51 +773,46 @@ namespace DockerDiagram.ViewModels
                 X = x,
                 Y = y,
                 IsCreating = true,
-                StatusColor = "#FFC107" // Creating...
+                StatusColor = "#FFC107"
             };
             ActiveSheet.Nodes.Add(node);
 
             try
             {
-                // ★ [핵심 수정] 다운로드(Pull) 실패 시에도 로컬 이미지로 진행하도록 예외 처리 추가
-                try
-                {
-                    // [4] 이미지 다운로드 시도
-                    await _imageService.PullImageAsync(image, tag);
-                }
-                catch (Exception pullEx)
-                {
-                    // Pull 실패(권한 없음, 인터넷 없음 등) 시 로그만 남기고 무시 -> 로컬 이미지 확인으로 넘어감
-                    Debug.WriteLine($"[DockerDiscovery] Pull failed: {pullEx.Message}. Trying to use local image...");
-                }
+                try { await _imageService.PullImageAsync(image, tag); }
+                catch (Exception pullEx) { System.Diagnostics.Debug.WriteLine($"[DockerDiscovery] Pull failed: {pullEx.Message}."); }
 
-                // [5] 컨테이너 생성 및 실행 (로컬에 이미지가 있으면 여기서 성공함)
+                // 컨테이너 생성 및 실행
+                // ★ [추가] command와 tty 파라미터를 _containerService로 넘겨줍니다!
                 string containerId = await _containerService.CreateAndStartContainerAsync(
-                    name, image, tag, ports, envs, volumes, restartPolicy, memoryMb, cpuCount);
+                    name, image, tag, ports, envs, volumes, restartPolicy, memoryMb, cpuCount, command, tty);
 
-                // [6] 노드 정보 갱신 (완료 상태)
+                // 노드 정보 갱신
                 node.Name = name;
                 node.ContainerId = containerId;
-
                 node.PortInfo = string.Join(", ", ports);
                 node.PortBindings = ports;
                 node.EnvironmentVariables = envs;
                 node.RestartPolicy = restartPolicy;
-
                 node.IsCreating = false;
-                node.StatusColor = "#28a745"; // Running (Green)
+                node.StatusColor = "#28a745";
 
-                // 통계 기록
+                // =================================================================
+                // ★ [핵심 2] ID가 발급되었으므로 그룹에 넣기 (자동으로 도커 네트워크 Attach까지 수행됨!)
+                // =================================================================
+                if (targetGroup != null)
+                {
+                    targetGroup.AddNode(node); // GroupViewModel 내부에 짜두신 ConnectNetworkAsync가 알아서 발동됨!
+                    ActiveSheet.UpdateGroupLayering();
+                }
+
                 RegisterTemplateUsage($"{image}:{tag}");
 
-                // =========================================================
-                // [7] Named Volume만 시각화 (원기둥 노드 생성)
-                // =========================================================
                 int volIndex = 0;
                 foreach (var volStr in namedVolumesToDraw)
                 {
                     string volName = volStr;
-                    string mountPath = "/data"; // 기본값
+                    string mountPath = "/data";
 
                     int lastColon = volStr.LastIndexOf(':');
                     if (lastColon > 0)
@@ -785,42 +821,30 @@ namespace DockerDiagram.ViewModels
                         mountPath = volStr.Substring(lastColon + 1);
                     }
 
-                    // A. 이미 화면에 있는 볼륨 노드인지 확인 (재사용)
-                    var existingVolNode = ActiveSheet.Nodes
-                        .FirstOrDefault(n => n.Type == NodeType.Volume && n.Name == volName);
-
+                    var existingVolNode = ActiveSheet.Nodes.FirstOrDefault(n => n.Type == NodeType.Volume && n.Name == volName);
                     NodeViewModel targetVolNode;
 
-                    if (existingVolNode != null)
-                    {
-                        targetVolNode = existingVolNode;
-                    }
+                    if (existingVolNode != null) targetVolNode = existingVolNode;
                     else
                     {
-                        // B. 없으면 새로 생성 (컨테이너 오른쪽에 배치)
                         targetVolNode = new NodeViewModel(_containerService, _volumeService, _dialogService)
                         {
                             Name = volName,
-                            Type = NodeType.Volume, // 🛢️ 원기둥
-                            ImageName = "local",    // 드라이버명 등 표시용
+                            Type = NodeType.Volume,
+                            ImageName = "local",
                             X = x + 250,
-                            Y = y + (volIndex * 100), // 아래로 쌓이게
-                            StatusColor = "#E67E22"   // 주황색
+                            Y = y + (volIndex * 100),
+                            StatusColor = "#E67E22"
                         };
                         ActiveSheet.Nodes.Add(targetVolNode);
                     }
 
-                    // C. 선 연결 (Connector)
                     bool connExists = ActiveSheet.Connectors.Any(c =>
-                        (c.Source == node && c.Target == targetVolNode) ||
-                        (c.Source == targetVolNode && c.Target == node));
+                        (c.Source == node && c.Target == targetVolNode) || (c.Source == targetVolNode && c.Target == node));
 
                     if (!connExists)
                     {
-                        var conn = new ConnectorViewModel(
-                            node, targetVolNode,
-                            PortDirection.Right, PortDirection.Left,
-                            _dialogService)
+                        var conn = new ConnectorViewModel(node, targetVolNode, PortDirection.Right, PortDirection.Left, _dialogService)
                         {
                             RelationType = RelationType.VolumeMount,
                             MountPath = mountPath
@@ -829,13 +853,10 @@ namespace DockerDiagram.ViewModels
                     }
                     volIndex++;
                 }
-
-                // 전체 아이템 목록 갱신
                 UpdateAvailableItems();
             }
             catch (Exception ex)
             {
-                // 생성(CreateAndStartContainerAsync)조차 실패했을 때만 에러 출력 및 노드 삭제
                 _dialogService.ShowMessage($"생성 실패: {ex.Message}");
                 ActiveSheet.Nodes.Remove(node);
             }
@@ -1190,15 +1211,21 @@ namespace DockerDiagram.ViewModels
 
                 if (result == MessageBoxResult.Yes)
                 {
-                    if (!string.IsNullOrEmpty(node.ContainerId))
+                    // 볼륨 노드 삭제 처리도 함께 할 수 있도록 조건 수정
+                    if (!string.IsNullOrEmpty(node.ContainerId) || node.Type == NodeType.Volume)
                     {
                         try
                         {
-                            await Task.Run(async () =>
+                            if (node.Type == NodeType.Container)
                             {
-                                if (node.Type == NodeType.Container)
-                                    await _containerService.RemoveContainerAsync(node.ContainerId);
-                            });
+                                await _containerService.RemoveContainerAsync(node.ContainerId);
+                                _rawContainers.RemoveAll(c => c.Id == node.ContainerId);
+                            }
+                            else if (node.Type == NodeType.Volume)
+                            {
+                                await _volumeService.RemoveVolumeAsync(node.Name);
+                                _rawVolumes.RemoveAll(v => v.Name == node.Name);
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -1793,6 +1820,264 @@ namespace DockerDiagram.ViewModels
             catch (Exception ex)
             {
                 _dialogService.ShowMessage($"네트워크 생성 실패: {ex.Message}");
+            }
+        }
+
+        public async Task ProcessCliCommandAsync(string cliCommand, double x, double y)
+        {
+            if (ActiveSheet == null) return;
+
+            // =================================================================
+            // [STEP 1] 정규식으로 '도화지에 그릴 최소한의 정보'만 수집
+            // =================================================================
+            var regex = new System.Text.RegularExpressions.Regex(@"[\""].+?[\""]|['].+?[']|[^ ]+");
+            var tokens = regex.Matches(cliCommand).Cast<System.Text.RegularExpressions.Match>().Select(m => m.Value.Trim('\"', '\'')).ToList();
+
+            string name = $"cli-{Guid.NewGuid().ToString().Substring(0, 4)}"; // 지정 안 하면 랜덤 이름
+            string image = "unknown";
+            string networkName = "bridge";
+
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                if (tokens[i] == "--name" && i + 1 < tokens.Count) name = tokens[i + 1];
+                if ((tokens[i] == "--network" || tokens[i] == "--net") && i + 1 < tokens.Count) networkName = tokens[i + 1];
+                if (!tokens[i].StartsWith("-") && tokens[i] != "docker" && tokens[i] != "run" && image == "unknown") image = tokens[i];
+            }
+
+            // =================================================================
+            // ★ [STEP 1.5] 질문자님의 아이디어: 네트워크 존재 여부 사전 검사 (안전장치)
+            // =================================================================
+            if (networkName != "bridge" && networkName != "host" && networkName != "none")
+            {
+                var existingNetworks = await _networkService.GetNetworksAsync();
+
+                // 도커 엔진에 해당 네트워크가 진짜로 있는지 확인!
+                if (!existingNetworks.Any(n => n.Name == networkName))
+                {
+                    // 없다면? CMD로 던지기 전에 에러 팝업 띄우고 즉시 컷트!
+                    _dialogService.ShowInfo($"명령어 실행 실패!\n\n도커 엔진에 '{networkName}' 네트워크가 존재하지 않습니다.\n먼저 해당 네트워크를 생성한 후 다시 시도해 주세요.", "네트워크 없음");
+                    return;
+                }
+            }
+            // =================================================================
+
+            // [STEP 2] 모아둔 정보로만 '임시 노드'를 도화지에 먼저 그림 (그룹 자동 입주)
+            GroupViewModel targetGroup = null;
+            if (!string.IsNullOrWhiteSpace(networkName) && networkName != "bridge" && networkName != "host" && networkName != "none")
+            {
+                targetGroup = ActiveSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == networkName);
+                if (targetGroup == null)
+                {
+                    targetGroup = new GroupViewModel(x, y, 350, 200, _networkService, _dialogService, networkName) { Type = GroupType.Network };
+                    ActiveSheet.AddGroup(targetGroup);
+                }
+                x = targetGroup.X + 20;
+                y = targetGroup.Y + 40 + (targetGroup.ContainedNodes.Count * 100);
+            }
+
+            var dummyNode = new NodeViewModel(_containerService, _volumeService, _dialogService)
+            {
+                Name = $"{name} (Creating...)",
+                ImageName = image,
+                Type = NodeType.Container,
+                X = x,
+                Y = y,
+                IsCreating = true,
+                StatusColor = "#FFC107" // 🟡 생성 중 (노란색)
+            };
+            ActiveSheet.Nodes.Add(dummyNode);
+            if (targetGroup != null) targetGroup.AddNode(dummyNode);
+
+            // [STEP 3] 명령어 통째로 CMD로 넘겨서 실행 (모든 옵션 100% 적용됨)
+            try
+            {
+                await Task.Run(() =>
+                {
+                    var startInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = $"/c {cliCommand}",
+                        CreateNoWindow = true,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using (var process = System.Diagnostics.Process.Start(startInfo))
+                    {
+                        process.WaitForExit(); // 도커가 컨테이너를 다 만들 때까지 대기
+                    }
+                });
+
+                // [STEP 4] 도커에 계속 질의해서 완성된 '진짜 정보'로 노드 갱신!
+                var allContainers = await _containerService.GetContainersAsync();
+
+                // CMD로 만들어진 컨테이너를 이름으로 찾아냅니다. (도커는 이름 앞에 '/'가 붙기도 함)
+                var realContainer = allContainers.FirstOrDefault(c => c.Name == name || c.Name == $"/{name}");
+
+                if (realContainer != null)
+                {
+                    dummyNode.ContainerId = realContainer.Id;
+                    dummyNode.Name = name;
+                    dummyNode.IsCreating = false;
+                    dummyNode.StatusColor = "#28a745"; // 🟢 성공 (녹색)
+
+                    await dummyNode.RefreshDetailsAsync();
+
+                    // =================================================================
+                    // ★ [추가된 부분] 도커 엔진을 털어서 볼륨 마운트 정보 가져오고 캔버스에 그리기!
+                    // =================================================================
+                    try
+                    {
+                        var inspectData = await _containerService.InspectContainerAsync(realContainer.Id);
+                        if (inspectData?.Mounts != null)
+                        {
+                            int volIndex = 0;
+                            foreach (var mount in inspectData.Mounts)
+                            {
+                                // bind 마운트(로컬 폴더)가 아닌 도커 볼륨(named volume)만 도화지에 그립니다.
+                                if (mount.Type == "volume")
+                                {
+                                    string volName = mount.Name;
+                                    string mountPath = mount.Destination;
+
+                                    var existingVolNode = ActiveSheet.Nodes.FirstOrDefault(n => n.Type == NodeType.Volume && n.Name == volName);
+                                    NodeViewModel targetVolNode;
+
+                                    if (existingVolNode != null) targetVolNode = existingVolNode;
+                                    else
+                                    {
+                                        // 볼륨 노드 생성
+                                        targetVolNode = new NodeViewModel(_containerService, _volumeService, _dialogService)
+                                        {
+                                            Name = volName,
+                                            Type = NodeType.Volume,
+                                            ImageName = "local",
+                                            X = dummyNode.X + 250,
+                                            Y = dummyNode.Y + (volIndex * 100),
+                                            StatusColor = "#E67E22"
+                                        };
+                                        ActiveSheet.Nodes.Add(targetVolNode);
+                                    }
+
+                                    // 컨테이너와 볼륨 선 긋기
+                                    bool connExists = ActiveSheet.Connectors.Any(c =>
+                                        (c.Source == dummyNode && c.Target == targetVolNode) || (c.Source == targetVolNode && c.Target == dummyNode));
+
+                                    if (!connExists)
+                                    {
+                                        var conn = new ConnectorViewModel(dummyNode, targetVolNode, PortDirection.Right, PortDirection.Left, _dialogService)
+                                        {
+                                            RelationType = RelationType.VolumeMount,
+                                            MountPath = mountPath
+                                        };
+                                        ActiveSheet.Connectors.Add(conn);
+                                    }
+                                    volIndex++;
+                                }
+                            }
+                        }
+                    }
+                    catch { /* Inspect 실패 시 무시 */ }
+                    // =================================================================
+
+                    UpdateAvailableItems();
+                }
+                else
+                {
+                    // 도커에서 못 찾았다면 명령어가 실패한 것 (오타 등)
+                    _dialogService.ShowInfo($"명령어 실행 실패.\n도커가 컨테이너를 생성하지 못했습니다. 명령어를 다시 확인해 주세요.", "실패");
+                    ActiveSheet.Nodes.Remove(dummyNode);
+                }
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowMessage($"CMD 실행 중 오류 발생: {ex.Message}");
+                ActiveSheet.Nodes.Remove(dummyNode);
+            }
+        }
+
+        public async Task BuildImageAndCreateNodeAsync(string targetImageName, string dockerfileContent, string uploadedFilePath, double x, double y)
+        {
+            if (ActiveSheet == null) return;
+            if (string.IsNullOrWhiteSpace(targetImageName)) targetImageName = $"custom-app:{Guid.NewGuid().ToString().Substring(0, 4)}";
+
+            string buildContextPath = "";
+            string dockerfilePath = "";
+
+            // 1. 업로드한 파일인지 vs 직접 입력한 텍스트인지 판별
+            if (!string.IsNullOrEmpty(uploadedFilePath) && System.IO.File.Exists(uploadedFilePath))
+            {
+                // 파일을 업로드했다면 그 파일이 있는 폴더 전체를 빌드 컨텍스트로 사용
+                dockerfilePath = uploadedFilePath;
+                buildContextPath = Path.GetDirectoryName(uploadedFilePath);
+            }
+            else
+            {
+                // 직접 입력했다면 임시 폴더를 하나 만들어서 Dockerfile이라는 이름으로 저장해줌
+                buildContextPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "DockerDiagramBuild_" + Guid.NewGuid().ToString().Substring(0, 8));
+                System.IO.Directory.CreateDirectory(buildContextPath);
+                dockerfilePath = System.IO.Path.Combine(buildContextPath, "Dockerfile");
+                await System.IO.File.WriteAllTextAsync(dockerfilePath, dockerfileContent);
+            }
+
+            // 2. 캔버스에 "빌드 중..." 이라는 파란색 임시 노드 생성
+            var dummyNode = new NodeViewModel(_containerService, _volumeService, _dialogService)
+            {
+                Name = $"Building ({targetImageName})...",
+                ImageName = "Building...",
+                Type = NodeType.Container,
+                X = x,
+                Y = y,
+                IsCreating = true,
+                StatusColor = "#17a2b8" // 🔵 정보(빌드) 색상
+            };
+            ActiveSheet.Nodes.Add(dummyNode);
+
+            // 3. 백그라운드에서 CMD로 docker build 실행
+            bool buildSuccess = false;
+            try
+            {
+                await Task.Run(() =>
+                {
+                    var startInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = $"/c docker build -t {targetImageName} -f \"{dockerfilePath}\" \"{buildContextPath}\"",
+                        CreateNoWindow = true,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using (var process = System.Diagnostics.Process.Start(startInfo))
+                    {
+                        process.WaitForExit();
+                        buildSuccess = process.ExitCode == 0; // 성공하면 ExitCode가 0
+                    }
+                });
+
+                // 4. 빌드가 완료되면 임시 노드 지우고 진짜 컨테이너 노드 띄우기!
+                ActiveSheet.Nodes.Remove(dummyNode);
+
+                if (buildSuccess)
+                {
+                    // 방금 구워낸 따끈따끈한 이미지 이름으로 컨테이너 생성 로직 태우기
+                    string containerName = targetImageName.Split(':')[0] + "-" + Guid.NewGuid().ToString().Substring(0, 4);
+
+                    // 기존에 잘 만들어둔 메서드 재활용!
+                    await CreateNewContainerNodeAsync(
+                        containerName, targetImageName.Split(':')[0],
+                        targetImageName.Contains(":") ? targetImageName.Split(':')[1] : "latest",
+                        new List<string>(), new List<string>(), new List<string>(), "no", 0, 0, x, y);
+                }
+                else
+                {
+                    _dialogService.ShowMessage($"[{targetImageName}] 이미지 빌드에 실패했습니다. (도커파일 문법 확인)");
+                }
+            }
+            catch (Exception ex)
+            {
+                ActiveSheet.Nodes.Remove(dummyNode);
+                _dialogService.ShowMessage($"빌드 중 오류 발생: {ex.Message}");
             }
         }
     }

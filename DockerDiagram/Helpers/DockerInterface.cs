@@ -20,7 +20,8 @@ namespace DockerDiagram.Helpers
         Task RestartContainerAsync(string id);
         Task RemoveContainerAsync(string id);
 
-        Task<string> CreateAndStartContainerAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount);
+        Task<string> CreateAndStartContainerAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, 
+            string restartPolicy, long memoryMb, double cpuCount, string command = "", bool tty = false);
 
         Task CopyFromContainerAsync(string containerId, string containerPath, string hostPath);
         Task CopyToContainerAsync(string containerId, string hostPath, string containerPath);

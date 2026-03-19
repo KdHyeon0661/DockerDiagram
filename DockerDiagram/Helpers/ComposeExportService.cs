@@ -7,6 +7,8 @@ using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
 
 namespace DockerDiagram.Helpers
 {
@@ -44,10 +46,8 @@ namespace DockerDiagram.Helpers
 
         private static string GenerateYaml(SheetViewModel sheet)
         {
-            var sb = new StringBuilder();
-
-            // version: '3.8' 완전 삭제 (최신 Compose V2 표준 준수)
-            sb.AppendLine("services:");
+            // 1. YAML 변환용 최상위 객체 생성
+            var composeFile = new ComposeFileModel();
 
             var nodeIdToServiceName = new Dictionary<string, string>();
             var usedServiceNames = new HashSet<string>();
@@ -63,131 +63,119 @@ namespace DockerDiagram.Helpers
                 nodeIdToServiceName[node.Id] = uniqueName;
             }
 
-            // YAML 생성
+            // 2. Services 생성
             foreach (var node in containerNodes)
             {
                 string serviceName = nodeIdToServiceName[node.Id];
-                sb.AppendLine($"  {serviceName}:");
-
-                string safeContainerName = SanitizeContainerName(node.Name);
-                sb.AppendLine($"    container_name: \"{safeContainerName}\"");
-
-                string image = !string.IsNullOrWhiteSpace(node.ImageName) ? node.ImageName : "nginx:latest";
-                sb.AppendLine($"    image: \"{image}\"");
+                var service = new ComposeService
+                {
+                    ContainerName = SanitizeContainerName(node.Name),
+                    Image = !string.IsNullOrWhiteSpace(node.ImageName) ? node.ImageName : "nginx:latest"
+                };
 
                 if (!string.IsNullOrEmpty(node.RestartPolicy) && node.RestartPolicy != "no")
-                {
-                    sb.AppendLine($"    restart: {node.RestartPolicy}");
-                }
+                    service.Restart = node.RestartPolicy;
 
                 if (node.PortBindings != null && node.PortBindings.Count > 0)
-                {
-                    sb.AppendLine("    ports:");
-                    foreach (var port in node.PortBindings)
-                        sb.AppendLine($"      - \"{port}\"");
-                }
+                    service.Ports = new List<string>(node.PortBindings);
 
                 if (node.EnvironmentVariables != null && node.EnvironmentVariables.Count > 0)
-                {
-                    sb.AppendLine("    environment:");
-                    foreach (var env in node.EnvironmentVariables)
-                        sb.AppendLine($"      - \"{EscapeQuotes(env)}\"");
-                }
+                    service.Environment = new List<string>(node.EnvironmentVariables);
 
-                // 볼륨 연결은 커넥터(선) 방식 유지
                 var connectedVolumes = GetConnectedVolumes(node, sheet);
                 if (connectedVolumes.Count > 0)
-                {
-                    sb.AppendLine("    volumes:");
-                    foreach (var vol in connectedVolumes)
-                        sb.AppendLine($"      - \"{vol}\"");
-                }
+                    service.Volumes = connectedVolumes;
 
-                // ★ [수정] 의존성(depends_on): Target이 NodeViewModel인지 안전하게 검사
+                // 의존성(depends_on)
                 var depConns = sheet.Connectors
-                    .Where(c => c.Source == node
-                             && c.RelationType == RelationType.Dependency
-                             && c.Target is NodeViewModel targetNode && targetNode.Type == NodeType.Container)
+                    .Where(c => c.Source == node && c.RelationType == RelationType.Dependency &&
+                                c.Target is NodeViewModel tNode && tNode.Type == NodeType.Container)
                     .ToList();
 
                 if (depConns.Count > 0)
                 {
-                    sb.AppendLine("    depends_on:");
+                    service.DependsOn = new List<string>();
                     foreach (var conn in depConns)
                     {
                         if (nodeIdToServiceName.TryGetValue(conn.Target.Id, out string? depServiceName))
-                        {
-                            sb.AppendLine($"      - {depServiceName}");
-                        }
+                            service.DependsOn.Add(depServiceName);
                     }
                 }
 
-                // 네트워크 정보 조회 (Node -> Group)
+                // 네트워크 정보 조회
                 var connectedNets = GetConnectedNetworks(node, sheet);
                 if (connectedNets.Count > 0)
                 {
-                    sb.AppendLine("    networks:");
-                    foreach (var netInfo in connectedNets)
+                    // 정적 IP가 하나라도 있으면 Dictionary 방식, 없으면 List 방식 사용
+                    bool hasStaticIp = connectedNets.Any(n => !string.IsNullOrEmpty(n.IpAddress) && IsValidIp(n.IpAddress));
+
+                    if (hasStaticIp)
                     {
-                        sb.AppendLine($"      {netInfo.NetworkName}:");
-                        if (!string.IsNullOrEmpty(netInfo.IpAddress) && IsValidIp(netInfo.IpAddress))
+                        var netDict = new Dictionary<string, ComposeServiceNetwork>();
+                        foreach (var net in connectedNets)
                         {
-                            sb.AppendLine($"        ipv4_address: {netInfo.IpAddress}");
+                            var netConfig = new ComposeServiceNetwork();
+                            if (!string.IsNullOrEmpty(net.IpAddress) && IsValidIp(net.IpAddress))
+                                netConfig.Ipv4Address = net.IpAddress;
+                            netDict[net.NetworkName!] = netConfig;
                         }
+                        service.Networks = netDict;
+                    }
+                    else
+                    {
+                        service.Networks = connectedNets.Select(n => n.NetworkName!).ToList();
                     }
                 }
-                sb.AppendLine();
+
+                composeFile.Services[serviceName] = service;
             }
 
-            // 네트워크 정의 (Groups에서 찾기)
+            // 3. Networks 생성
             var networkGroups = sheet.Groups.Where(g => g.Type == GroupType.Network).ToList();
             if (networkGroups.Any())
             {
-                sb.AppendLine("networks:");
+                composeFile.Networks = new Dictionary<string, ComposeNetwork>();
                 foreach (var netGroup in networkGroups)
                 {
-                    sb.AppendLine($"  {netGroup.Title}:");
-                    sb.AppendLine($"    driver: bridge");
+                    var netObj = new ComposeNetwork { Driver = "bridge" };
 
-                    // 정적 IP 할당 버그 방어: 해당 네트워크에 고정 IP를 쓴 컨테이너가 있다면 강제로 ipam(Subnet) 블록을 생성해 줍니다.
                     string generatedSubnet = GetSubnetIfRequired(netGroup.Title, containerNodes);
                     if (!string.IsNullOrEmpty(generatedSubnet))
                     {
-                        sb.AppendLine("    ipam:");
-                        sb.AppendLine("      config:");
-                        sb.AppendLine($"        - subnet: {generatedSubnet}");
+                        netObj.Ipam = new ComposeIpam
+                        {
+                            Config = new List<ComposeIpamConfig> { new ComposeIpamConfig { Subnet = generatedSubnet } }
+                        };
                     }
+                    composeFile.Networks[netGroup.Title] = netObj;
                 }
-                sb.AppendLine();
             }
 
-            // 볼륨 정의 (기존 유지 - 볼륨은 여전히 Node임)
+            // 4. Volumes 생성
             var volumes = sheet.Nodes.Where(n => n.Type == NodeType.Volume).ToList();
-            if (volumes.Any())
-            {
-                sb.AppendLine("volumes:");
-                foreach (var vol in volumes)
-                {
-                    // 강력해진 볼륨 구별 로직: 단순 슬래시 포함 여부가 아니라 '경로 형태'인지 명확히 검사합니다.
-                    bool isBindMount = vol.Name.StartsWith("/") ||
-                                       vol.Name.StartsWith("./") ||
-                                       vol.Name.StartsWith("../") ||
-                                       vol.Name.StartsWith("~/") ||
-                                       Regex.IsMatch(vol.Name, @"^[a-zA-Z]:[\\/]");
+            var namedVolumes = volumes.Where(vol =>
+                !(vol.Name.StartsWith("/") || vol.Name.StartsWith("./") || vol.Name.StartsWith("../") ||
+                  vol.Name.StartsWith("~/") || Regex.IsMatch(vol.Name, @"^[a-zA-Z]:[\\/]"))).ToList();
 
-                    if (!isBindMount)
-                    {
-                        // 명명된 볼륨(Named Volume)만 루트에 생성
-                        sb.AppendLine($"  {vol.Name}:");
-                    }
+            if (namedVolumes.Any())
+            {
+                composeFile.Volumes = new Dictionary<string, object>();
+                foreach (var vol in namedVolumes)
+                {
+                    composeFile.Volumes[vol.Name] = new object(); // 빈 객체 {} 생성
                 }
             }
 
-            return sb.ToString();
+            // 5. YamlDotNet을 이용해 C# 객체를 YAML 문자열로 직렬화(Serialize)
+            var serializer = new SerializerBuilder()
+                .WithNamingConvention(UnderscoredNamingConvention.Instance) // ContainerName -> container_name 자동 변환
+                .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull | DefaultValuesHandling.OmitEmptyCollections) // 비어있는 리스트나 null은 출력 안함
+                .Build();
+
+            return serializer.Serialize(composeFile);
         }
 
         // --- 헬퍼 메서드들 ---
-
         private static string SanitizeServiceName(string rawName)
         {
             if (string.IsNullOrWhiteSpace(rawName)) return "service";
@@ -208,15 +196,11 @@ namespace DockerDiagram.Helpers
             return $"{name}_{count}";
         }
 
-        private static string EscapeQuotes(string input) => input.Replace("\"", "\\\"");
-
         private static bool IsValidIp(string ip) => !string.IsNullOrWhiteSpace(ip) && ip.Count(c => c == '.') == 3;
 
         private static List<string> GetConnectedVolumes(NodeViewModel container, SheetViewModel sheet)
         {
             var list = new List<string>();
-
-            // ★ [수정] Connector의 Source/Target이 IConnectableItem이므로 NodeViewModel인지 안전하게 캐스팅
             var conns = sheet.Connectors
                 .Where(c => (c.Source == container && c.Target is NodeViewModel tNode1 && tNode1.Type == NodeType.Volume) ||
                             (c.Target == container && c.Source is NodeViewModel sNode2 && sNode2.Type == NodeType.Volume))
@@ -224,7 +208,6 @@ namespace DockerDiagram.Helpers
 
             foreach (var c in conns)
             {
-                // Source가 자기 자신이면 Target을 가져오고, 아니면 Source를 가져옴 (반드시 NodeViewModel임)
                 var volNode = c.Source == container ? (NodeViewModel)c.Target : (NodeViewModel)c.Source;
                 string mountPath = !string.IsNullOrEmpty(c.MountPath) ? c.MountPath : "/data";
                 list.Add($"{volNode.Name}:{mountPath}");
@@ -243,7 +226,7 @@ namespace DockerDiagram.Helpers
             {
                 if (group.ContainedNodes.Contains(container))
                 {
-                    string ip = null;
+                    string? ip = null;
                     if (container.NetworkIpMap != null && container.NetworkIpMap.ContainsKey(group.Title))
                         ip = container.NetworkIpMap[group.Title];
 
@@ -253,8 +236,7 @@ namespace DockerDiagram.Helpers
             return list;
         }
 
-        // 서브넷 자동 계산 헬퍼 로직 (네트워크 에러 방지용)
-        private static string GetSubnetIfRequired(string networkName, List<NodeViewModel> containers)
+        private static string? GetSubnetIfRequired(string networkName, List<NodeViewModel> containers)
         {
             foreach (var container in containers)
             {
@@ -263,13 +245,22 @@ namespace DockerDiagram.Helpers
                     IsValidIp(ip))
                 {
                     var parts = ip.Split('.');
-                    if (parts.Length == 4)
-                    {
-                        return $"{parts[0]}.{parts[1]}.{parts[2]}.0/24";
-                    }
+                    if (parts.Length == 4) return $"{parts[0]}.{parts[1]}.{parts[2]}.0/24";
                 }
             }
             return null;
         }
+    }
+
+    // =========================================================================
+    // YamlDotNet 직렬화/역직렬화를 위한 데이터 모델 (DTO 클래스)
+    // UnderscoredNamingConvention 덕분에 ContainerName 변수가 자동으로 container_name으로 출력됩니다.
+    // =========================================================================
+
+    public class ComposeFileModel
+    {
+        public Dictionary<string, ComposeService> Services { get; set; } = new();
+        public Dictionary<string, ComposeNetwork>? Networks { get; set; }
+        public Dictionary<string, object>? Volumes { get; set; }
     }
 }
