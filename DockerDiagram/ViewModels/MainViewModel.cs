@@ -198,6 +198,7 @@ namespace DockerDiagram.ViewModels
         public ICommand FlowAllClearCommand { get; }
         public ICommand DeleteAllSheetCommand { get; }
         public ICommand ImportComposeCommand { get; }
+        public ICommand SystemPruneCommand { get; }
 
         // --- 생성자 ---
         public MainViewModel(IDockerService dockerService, IDialogService dialogService)
@@ -238,6 +239,8 @@ namespace DockerDiagram.ViewModels
             SaveCommand = new RelayCommand(SaveAction);
             SaveAsCommand = new RelayCommand(SaveAsAction);
             LoadCommand = new AsyncRelayCommand(LoadActionAsync);
+
+            SystemPruneCommand = new AsyncRelayCommand(ExecuteSystemPruneAsync);
 
             if (ActiveSheet != null) AttachSheetEvents();
 
@@ -2078,6 +2081,62 @@ namespace DockerDiagram.ViewModels
             {
                 ActiveSheet.Nodes.Remove(dummyNode);
                 _dialogService.ShowMessage($"빌드 중 오류 발생: {ex.Message}");
+            }
+        }
+
+        private async Task ExecuteSystemPruneAsync(object? obj)
+        {
+            // 1. 우리가 방금 만든 예쁜 팝업창 띄우기!
+            var dlg = new Views.PruneDialog();
+            dlg.Owner = Application.Current.MainWindow;
+
+            // 사용자가 '취소'를 누르거나 X를 눌러 껐다면 즉시 중단
+            if (dlg.ShowDialog() != true) return;
+
+            // 2. 창에서 조립해준 도커 명령어 가져오기
+            string targetCommand = dlg.FinalCommand;
+
+            try
+            {
+                Mouse.OverrideCursor = Cursors.Wait;
+
+                // 3. 백그라운드에서 선택한 명령어로 청소 실행!
+                string pruneResult = "";
+                await Task.Run(() =>
+                {
+                    var startInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = $"/c {targetCommand}",
+                        CreateNoWindow = true,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+
+                    using (var process = System.Diagnostics.Process.Start(startInfo))
+                    {
+                        if (process != null)
+                        {
+                            pruneResult = process.StandardOutput.ReadToEnd();
+                            process.WaitForExit();
+                        }
+                    }
+                });
+
+                // 4. 도커 엔진과 다시 동기화하여 UI 리스트 비우기
+                await SyncWithDockerEngine();
+
+                // 5. 결과 보고
+                _dialogService.ShowInfo($"명령어 실행: {targetCommand}\n\n[결과]\n{pruneResult.Trim()}", "청소 완료");
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowMessage($"청소 중 오류 발생: {ex.Message}");
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
             }
         }
     }

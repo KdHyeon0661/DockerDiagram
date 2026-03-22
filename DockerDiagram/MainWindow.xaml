@@ -899,6 +899,23 @@
                                     </DataTemplate>
                                 </Button.ContentTemplate>
                             </Button>
+                            <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
+
+                            <Button Command="{Binding SystemPruneCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="사용 안 하는 컨테이너/이미지/볼륨/네트워크 일괄 삭제">
+                                <Button.ContentTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="25"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="🧹" HorizontalAlignment="Center" Foreground="#dc3545"/>
+                                            <TextBlock Grid.Column="1" Text="System Prune" Foreground="#dc3545" FontWeight="SemiBold"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
+                            <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
                             <Button Click="BtnShowMapSize_Click" Style="{StaticResource MenuItemStyle}">
                                 <Button.ContentTemplate>
                                     <DataTemplate>

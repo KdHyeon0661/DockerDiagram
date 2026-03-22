@@ -1,0 +1,53 @@
+﻿<Window x:Class="DockerDiagram.Views.PruneDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Docker Prune (대청소)"
+        Width="380"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" Background="#F9F9F9">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="🧹 정리할 대상을 선택하세요" FontSize="16" FontWeight="Bold" Foreground="#333" Margin="0,0,0,15"/>
+
+        <Border Grid.Row="1" Background="White" BorderBrush="#DDD" BorderThickness="1" CornerRadius="5" Padding="15">
+            <StackPanel>
+                <RadioButton x:Name="rbSystem" Content="전체 시스템 (System - 종합 세트)" IsChecked="True" Margin="0,0,0,8" FontWeight="SemiBold" Foreground="#dc3545"/>
+                <RadioButton x:Name="rbContainer" Content="중지된 컨테이너만 (Containers)" Margin="0,0,0,8"/>
+                <RadioButton x:Name="rbImage" Content="미사용 이미지만 (Images)" Margin="0,0,0,8"/>
+                <RadioButton x:Name="rbVolume" Content="미사용 볼륨만 (Volumes)" Margin="0,0,0,8"/>
+                <RadioButton x:Name="rbNetwork" Content="연결 없는 네트워크만 (Networks)"/>
+            </StackPanel>
+        </Border>
+
+        <TextBlock Grid.Row="2" Text="추가 옵션" FontWeight="Bold" Foreground="#555" Margin="0,15,0,10"/>
+        <StackPanel Grid.Row="3" Margin="5,0,0,0">
+            <CheckBox x:Name="chkAllImages" Content="이름 있는 이미지도 안 쓰면 전부 삭제 (-a)" Margin="0,0,0,8" IsChecked="True"/>
+            <CheckBox x:Name="chkVolumes" Content="볼륨도 포함해서 삭제 (--volumes) *System 전용" Margin="0,0,0,8" IsChecked="True"/>
+            <CheckBox x:Name="chkForce" Content="강제 진행 (-f / 묻지 않고 즉시 삭제)" Foreground="#dc3545" IsChecked="True"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
+            <Button Content="실행 (Prune)" Background="#dc3545" Foreground="White" Width="100" Height="30" FontWeight="Bold" BorderThickness="0" Margin="0,0,10,0" Click="BtnRun_Click" Cursor="Hand">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="3"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+            <Button Content="취소" Width="70" Height="30" Background="#DDD" BorderThickness="0" Click="BtnCancel_Click" Cursor="Hand">
+                <Button.Resources>
+                    <Style TargetType="Border">
+                        <Setter Property="CornerRadius" Value="3"/>
+                    </Style>
+                </Button.Resources>
+            </Button>
+        </StackPanel>
+    </Grid>
+</Window>
