@@ -752,7 +752,18 @@ namespace DockerDiagram.ViewModels
                     ActiveSheet.AddGroup(targetGroup);
 
                     // (안전장치) 실제 도커에 해당 네트워크가 없으면 몰래 하나 만들어줌
-                    try { await _networkService.CreateNetworkAsync(networkName, "bridge"); } catch { /* 이미 있으면 무시 */ }
+                    try
+                    {
+                        await _networkService.CreateNetworkAsync(networkName, "bridge");
+                    }
+                    catch (Exception ex)
+                    {
+                        // "이미 존재함(Already exists)" 에러가 아닌 진짜 에러만 로그로 남깁니다.
+                        if (!ex.Message.Contains("already exists") && !ex.Message.Contains("409"))
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[DockerDiscovery] 네트워크 '{networkName}' 자동 생성 실패: {ex.Message}");
+                        }
+                    }
                 }
 
                 // 3. 컨테이너가 생성될 좌표(X,Y)를 그룹 안쪽 빈 공간으로 쏙! 보정
@@ -1491,7 +1502,37 @@ namespace DockerDiagram.ViewModels
                 {
                     await _containerService.CopyFromContainerAsync(containerId, mountPath, tempHostPath);
                 }
-                catch { /* 경로 없으면 백업 스킵 */ }
+                catch (Exception ex)
+                {
+                    // 1. 단순히 컨테이너 내부에 경로가 아직 없는 경우 (정상적인 스킵 상황)
+                    // Docker API는 경로를 찾을 수 없을 때 보통 "No such container:path", "NotFound", "404" 등의 메시지를 포함합니다.
+                    if (ex.Message.Contains("No such") || ex.Message.Contains("NotFound") || ex.Message.Contains("404"))
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[Backup Skip] '{mountPath}' 경로가 컨테이너에 아직 존재하지 않아 백업을 생략합니다.");
+                    }
+                    // 2. 경로 없음이 아닌 진짜 오류 (권한 부족, 용량 부족, 네트워크 단절 등)
+                    else
+                    {
+                        // 백업 실패 상태로 강행하면 [STEP 3]에서 데이터가 날아가므로, 사용자에게 경고하고 선택권을 줍니다.
+                        bool proceed = _dialogService.ShowConfirm(
+                            $"기존 데이터 백업 중 예상치 못한 오류가 발생했습니다.\n" +
+                            $"이대로 진행하면 컨테이너 내부의 기존 데이터가 유실될 위험이 있습니다.\n\n" +
+                            $"[오류 내용]\n{ex.Message}\n\n" +
+                            $"위험을 감수하고 데이터 없이 마운트를 강행하시겠습니까?",
+                            "⚠️ 데이터 백업 실패 경고"
+                        );
+
+                        if (!proceed)
+                        {
+                            // 사용자가 진행을 취소하면, 생성했던 임시 폴더를 지우고 안전하게 로직을 탈출합니다.
+                            if (System.IO.Directory.Exists(tempHostPath))
+                            {
+                                System.IO.Directory.Delete(tempHostPath, true);
+                            }
+                            return false;
+                        }
+                    }
+                }
 
 
                 // ---------------------------------------------------------
@@ -1848,7 +1889,7 @@ namespace DockerDiagram.ViewModels
             }
 
             // =================================================================
-            // ★ [STEP 1.5] 질문자님의 아이디어: 네트워크 존재 여부 사전 검사 (안전장치)
+            // ★ [STEP 1.5] 네트워크 존재 여부 사전 검사 (안전장치)
             // =================================================================
             if (networkName != "bridge" && networkName != "host" && networkName != "none")
             {
@@ -1926,9 +1967,6 @@ namespace DockerDiagram.ViewModels
 
                     await dummyNode.RefreshDetailsAsync();
 
-                    // =================================================================
-                    // ★ [추가된 부분] 도커 엔진을 털어서 볼륨 마운트 정보 가져오고 캔버스에 그리기!
-                    // =================================================================
                     try
                     {
                         var inspectData = await _containerService.InspectContainerAsync(realContainer.Id);
@@ -1980,8 +2018,19 @@ namespace DockerDiagram.ViewModels
                             }
                         }
                     }
-                    catch { /* Inspect 실패 시 무시 */ }
-                    // =================================================================
+                    catch (Exception ex)
+                    {
+                        // Inspect가 실패하더라도 컨테이너 자체는 생성된 상태이므로 노드를 지우지는 않습니다.
+                        // 다만 볼륨 연결선 등 상세 토폴로지를 그릴 수 없음을 사용자에게 명확히 알립니다.
+                        System.Diagnostics.Debug.WriteLine($"[DockerDiscovery] Inspect 실패: {ex.Message}");
+
+                        _dialogService.ShowInfo(
+                            $"컨테이너 '{name}'(은)는 성공적으로 생성되었으나, 볼륨 마운트 등의 상세 정보를 불러오는데 실패했습니다.\n" +
+                            $"컨테이너가 실행 직후 즉시 종료(Exit)되었거나 API 응답이 지연되었을 수 있습니다.\n\n" +
+                            $"[상세 오류]\n{ex.Message}",
+                            "⚠️ 상세 정보 동기화 경고"
+                        );
+                    }
 
                     UpdateAvailableItems();
                 }
@@ -2032,7 +2081,7 @@ namespace DockerDiagram.ViewModels
                 X = x,
                 Y = y,
                 IsCreating = true,
-                StatusColor = "#17a2b8" // 🔵 정보(빌드) 색상
+                StatusColor = "#17a2b8" // 정보(빌드) 색상
             };
             ActiveSheet.Nodes.Add(dummyNode);
 

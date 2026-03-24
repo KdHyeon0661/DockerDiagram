@@ -212,15 +212,13 @@ namespace DockerDiagram.ViewModels
                     }
                     catch (Exception ex)
                     {
-                        // ★ [수정] 도커가 "이미 연결되어 있다"고 하면 에러가 아니므로 조용히 무시합니다.
                         if (ex.Message.Contains("이미 연결") || ex.Message.Contains("already") || ex.Message.Contains("in use"))
                         {
-                            Debug.WriteLine($"[Info] {node.Name}은(는) 이미 {this.Title} 네트워크에 연결되어 있습니다.");
+                            Debug.WriteLine($"[DockerDiscovery] {node.Name}은(는) 이미 {this.Title} 네트워크에 연결되어 있습니다.");
                         }
                         else
                         {
-                            Debug.WriteLine($"Network Attach Fail: {ex.Message}");
-                            _dialogService.ShowMessage($"네트워크 연결 실패: {ex.Message}");
+                            Debug.WriteLine($"[DockerDiscovery] 네트워크 연결 실패: {ex.Message}");
                         }
                     }
                 }
@@ -245,14 +243,13 @@ namespace DockerDiagram.ViewModels
                     }
                     catch (Exception ex)
                     {
-                        // ★ [수정] 빼려고 했는데 "원래 연결 안 되어있음"이라고 하면 조용히 무시합니다.
                         if (ex.Message.Contains("is not connected") || ex.Message.Contains("연결되어 있지"))
                         {
-                            Debug.WriteLine($"[Info] {node.Name}은(는) 원래 {this.Title} 네트워크에 없습니다.");
+                            Debug.WriteLine($"[DockerDiscovery] {node.Name}은(는) 원래 {this.Title} 네트워크에 없습니다.");
                         }
                         else
                         {
-                            Debug.WriteLine($"Network Detach Fail: {ex.Message}");
+                            Debug.WriteLine($"[DockerDiscovery] 네트워크 해제 실패: {ex.Message}");
                         }
                     }
                 }
