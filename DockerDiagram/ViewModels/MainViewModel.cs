@@ -713,9 +713,40 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        public async Task CreateNewContainerNodeAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, double x, double y, string networkName = "bridge", string command = "", bool tty = false) // ★ [추가] command, tty 파라미터
+        public async Task CreateNewContainerNodeAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, double x, double y, string networkName = "bridge", string command = "", bool tty = false)
         {
             if (ActiveSheet == null) return;
+
+            // =================================================================
+            // ★ [사전 검증 1] 컨테이너 이름 중복 검사 (즉시 차단)
+            // =================================================================
+            bool isNameUsed = ActiveSheet.Nodes.Any(n => n.Type == NodeType.Container && n.Name == name);
+            if (isNameUsed)
+            {
+                _dialogService.ShowMessage($"'{name}'(은)는 이미 다이어그램에 존재하는 컨테이너 이름입니다.\n다른 이름을 사용해 주세요.");
+                return;
+            }
+
+            // =================================================================
+            // ★ [사전 검증 2] 호스트 포트 충돌 검사 (즉시 차단)
+            // =================================================================
+            if (ports != null && ports.Count > 0)
+            {
+                var newHostPorts = ports.Select(p => p.Split(':')[0]).ToList();
+                var existingContainers = ActiveSheet.Nodes.Where(n => n.Type == NodeType.Container && n.PortBindings != null);
+
+                foreach (var existingNode in existingContainers)
+                {
+                    var existingHostPorts = existingNode.PortBindings.Select(p => p.Split(':')[0]);
+                    var conflictedPort = newHostPorts.FirstOrDefault(p => existingHostPorts.Contains(p));
+                    if (conflictedPort != null)
+                    {
+                        _dialogService.ShowMessage($"⚠️ 포트 충돌 경고!\n\n호스트 포트 '{conflictedPort}'는 이미 '{existingNode.Name}' 컨테이너가 사용 중입니다.\n충돌을 방지하기 위해 작업을 취소합니다.");
+                        return;
+                    }
+                }
+            }
+            // =================================================================
 
             var namedVolumesToDraw = new List<string>();
             foreach (var vol in volumes)
@@ -731,34 +762,23 @@ namespace DockerDiagram.ViewModels
                 image = image.Substring(0, lastColon);
             }
 
-            // =================================================================
-            // ★ [핵심 추가] 질문자님이 설계하신 "네트워크 그룹 자동 입주" 로직
-            // =================================================================
             GroupViewModel targetGroup = null;
 
-            // bridge, host, none 같은 기본 네트워크가 아닐 때만 그룹 박스 처리
             if (!string.IsNullOrWhiteSpace(networkName) && networkName != "bridge" && networkName != "host" && networkName != "none")
             {
-                // 1. 현재 시트에서 해당 이름의 보라색 네트워크 박스 찾기
                 targetGroup = ActiveSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == networkName);
 
                 if (targetGroup == null)
                 {
-                    // 2. 없으면 마우스 위치(x, y)에 새로 그리기
                     targetGroup = new GroupViewModel(x, y, 350, 200, _networkService, _dialogService, networkName)
                     {
                         Type = GroupType.Network
                     };
                     ActiveSheet.AddGroup(targetGroup);
 
-                    // (안전장치) 실제 도커에 해당 네트워크가 없으면 몰래 하나 만들어줌
-                    try
-                    {
-                        await _networkService.CreateNetworkAsync(networkName, "bridge");
-                    }
+                    try { await _networkService.CreateNetworkAsync(networkName, "bridge"); }
                     catch (Exception ex)
                     {
-                        // "이미 존재함(Already exists)" 에러가 아닌 진짜 에러만 로그로 남깁니다.
                         if (!ex.Message.Contains("already exists") && !ex.Message.Contains("409"))
                         {
                             System.Diagnostics.Debug.WriteLine($"[DockerDiscovery] 네트워크 '{networkName}' 자동 생성 실패: {ex.Message}");
@@ -766,19 +786,15 @@ namespace DockerDiagram.ViewModels
                     }
                 }
 
-                // 3. 컨테이너가 생성될 좌표(X,Y)를 그룹 안쪽 빈 공간으로 쏙! 보정
                 x = targetGroup.X + 20;
-                y = targetGroup.Y + 40 + (targetGroup.ContainedNodes.Count * 100); // 노드 개수만큼 아래로 띄워서 배치
+                y = targetGroup.Y + 40 + (targetGroup.ContainedNodes.Count * 100);
 
-                // 만약 컨테이너가 많아져서 박스 밖으로 삐져나가려고 하면 박스 길이를 늘려줌
                 if (y + 100 > targetGroup.Y + targetGroup.Height)
                 {
                     targetGroup.Height = (y - targetGroup.Y) + 120;
                 }
             }
-            // =================================================================
 
-            // Placeholder 노드 생성
             var node = new NodeViewModel(_containerService, _volumeService, _dialogService)
             {
                 Name = $"{name} (Creating...)",
@@ -793,15 +809,24 @@ namespace DockerDiagram.ViewModels
 
             try
             {
+                // ★ [안전장치 개선] 이미지 Pull 실패 시 조기 탈출 방어
                 try { await _imageService.PullImageAsync(image, tag); }
-                catch (Exception pullEx) { System.Diagnostics.Debug.WriteLine($"[DockerDiscovery] Pull failed: {pullEx.Message}."); }
+                catch (Exception pullEx)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Image Pull] 원격 이미지 다운로드 실패: {pullEx.Message}");
+                    var localImages = await _imageService.GetImagesAsync();
+                    bool existsLocally = localImages.Any(img => img.Repository == image && (img.Tag == tag || tag == "latest"));
+                    if (!existsLocally)
+                    {
+                        _dialogService.ShowInfo($"이미지 '{image}:{tag}'를 다운로드할 수 없으며 로컬에도 없습니다.\n생성을 취소합니다.\n\n{pullEx.Message}", "이미지 없음");
+                        ActiveSheet.Nodes.Remove(node);
+                        return;
+                    }
+                }
 
-                // 컨테이너 생성 및 실행
-                // ★ [추가] command와 tty 파라미터를 _containerService로 넘겨줍니다!
                 string containerId = await _containerService.CreateAndStartContainerAsync(
                     name, image, tag, ports, envs, volumes, restartPolicy, memoryMb, cpuCount, command, tty);
 
-                // 노드 정보 갱신
                 node.Name = name;
                 node.ContainerId = containerId;
                 node.PortInfo = string.Join(", ", ports);
@@ -811,12 +836,9 @@ namespace DockerDiagram.ViewModels
                 node.IsCreating = false;
                 node.StatusColor = "#28a745";
 
-                // =================================================================
-                // ★ [핵심 2] ID가 발급되었으므로 그룹에 넣기 (자동으로 도커 네트워크 Attach까지 수행됨!)
-                // =================================================================
                 if (targetGroup != null)
                 {
-                    targetGroup.AddNode(node); // GroupViewModel 내부에 짜두신 ConnectNetworkAsync가 알아서 발동됨!
+                    targetGroup.AddNode(node);
                     ActiveSheet.UpdateGroupLayering();
                 }
 

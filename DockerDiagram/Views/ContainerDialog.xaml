@@ -46,13 +46,28 @@
                         </TabItem>
 
                         <TabItem Header="Env Vars">
-                            <Grid Margin="15">
+                            <Grid Margin="15" AllowDrop="True" Drop="Env_Drop" Background="Transparent">
                                 <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
+
                                 <TextBlock Text="Environment Variables (KEY=VALUE)" FontWeight="Bold" Margin="0,0,0,5"/>
-                                <TextBox x:Name="txtEnv" Grid.Row="1" AcceptsReturn="True" Padding="5" FontFamily="Consolas" BorderBrush="#CCC"/>
+
+                                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+                                    <Button x:Name="btnLoadEnv" 
+                                            Content="📁 .env 파일 불러오기" 
+                                            Padding="10,5" 
+                                            Click="BtnLoadEnv_Click" 
+                                            Background="#E0E0E0" BorderThickness="0" Cursor="Hand"/>
+                                    <TextBlock Text="(또는 이 화면에 파일을 드래그하세요)" 
+                                               Foreground="Gray" 
+                                               VerticalAlignment="Center" 
+                                               Margin="10,0,0,0"/>
+                                </StackPanel>
+
+                                <TextBox x:Name="txtEnv" Grid.Row="2" AcceptsReturn="True" Padding="5" FontFamily="Consolas" BorderBrush="#CCC" VerticalScrollBarVisibility="Auto"/>
                             </Grid>
                         </TabItem>
 

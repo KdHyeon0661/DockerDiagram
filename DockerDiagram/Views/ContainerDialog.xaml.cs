@@ -197,5 +197,78 @@ namespace DockerDiagram.Views
             Regex regex = new Regex("[^0-9.]+");
             e.Handled = regex.IsMatch(e.Text);
         }
+
+        private void BtnLoadEnv_Click(object sender, RoutedEventArgs e)
+        {
+            var openFileDialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "Env files (*.env)|*.env|All files (*.*)|*.*",
+                Title = ".env 파일 선택",
+                Multiselect = false // 여러 개 선택 금지
+            };
+
+            if (openFileDialog.ShowDialog() == true)
+            {
+                LoadEnvFile(openFileDialog.FileName);
+            }
+        }
+
+        private void Env_Drop(object sender, DragEventArgs e)
+        {
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
+                string envFile = files.FirstOrDefault(); // 무조건 1개만 추출
+
+                if (!string.IsNullOrEmpty(envFile))
+                {
+                    LoadEnvFile(envFile);
+                }
+            }
+        }
+
+        private void LoadEnvFile(string filePath)
+        {
+            if (!System.IO.File.Exists(filePath)) return;
+
+            try
+            {
+                var lines = System.IO.File.ReadAllLines(filePath);
+                int addedCount = 0;
+
+                // 기존에 적혀있던 텍스트가 있다면 줄바꿈을 한번 해줍니다.
+                if (!string.IsNullOrWhiteSpace(txtEnv.Text) && !txtEnv.Text.EndsWith("\n"))
+                {
+                    txtEnv.Text += "\r\n";
+                }
+
+                foreach (var line in lines)
+                {
+                    string trimmed = line.Trim();
+
+                    // 주석(#)과 빈 줄 무시
+                    if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith("#"))
+                        continue;
+
+                    // KEY=VALUE 형태일 때 TextBox에 텍스트를 추가
+                    if (trimmed.Contains("="))
+                    {
+                        txtEnv.Text += trimmed + "\r\n";
+                        addedCount++;
+                    }
+                }
+
+                if (addedCount > 0)
+                {
+                    // ★ MessageBox 대신 일관성 있게 _dialogService 사용
+                    _dialogService.ShowInfo($"{addedCount}개의 환경변수를 성공적으로 불러왔습니다.", "로드 완료");
+                }
+            }
+            catch (Exception ex)
+            {
+                // ★ 여기도 _dialogService 로 통일
+                _dialogService.ShowInfo($"파일을 읽는 중 오류가 발생했습니다:\n{ex.Message}", "오류");
+            }
+        }
     }
 }
