@@ -1,5 +1,5 @@
 ﻿using DockerDiagram.Helpers;
-using DockerDiagram.Models;
+using DockerDiagram.Models; // ★ [추가] ConnectionProfile을 사용하기 위해 필요합니다.
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
@@ -13,12 +13,18 @@ namespace DockerDiagram.ViewModels
 {
     public class MainViewModel : ViewModelBase
     {
-        private readonly IContainerService _containerService;
-        private readonly IVolumeService _volumeService;
-        private readonly INetworkService _networkService;
-        private readonly IImageService _imageService;
-        private readonly ISystemService _systemService;
+        // =================================================================
+        // ★ [수정된 부분 1] 고정된 서비스 대신 동적 프로퍼티(=>)로 변경
+        // =================================================================
+        private readonly IDockerService _defaultDockerService;
         private readonly IDialogService _dialogService;
+
+        private IContainerService _containerService => ActiveSheet?.DockerService ?? _defaultDockerService;
+        private IVolumeService _volumeService => ActiveSheet?.DockerService ?? _defaultDockerService;
+        private INetworkService _networkService => ActiveSheet?.DockerService ?? _defaultDockerService;
+        private IImageService _imageService => ActiveSheet?.DockerService ?? _defaultDockerService;
+        private ISystemService _systemService => ActiveSheet?.DockerService ?? _defaultDockerService;
+        // =================================================================
 
         public System.Windows.Input.ICommand ExportComposeCommand { get; }
 
@@ -203,22 +209,20 @@ namespace DockerDiagram.ViewModels
         // --- 생성자 ---
         public MainViewModel(IDockerService dockerService, IDialogService dialogService)
         {
-            // Instance = this;
-
             // 유효성 검사 및 할당
             if (dockerService == null) throw new ArgumentNullException(nameof(dockerService));
             _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
 
-            // IDockerService를 각 인터페이스 필드에 분배
-            _containerService = dockerService;
-            _volumeService = dockerService;
-            _networkService = dockerService;
-            _imageService = dockerService;
-            _systemService = dockerService;
+            // =================================================================
+            // ★ [수정된 부분 2] 생성자에서 기본 서비스 할당 및 첫 시트 생성 방식 변경
+            // =================================================================
+            _defaultDockerService = dockerService;
 
-            // 기본 시트 추가
-            Sheets.Add(new SheetViewModel("Sheet 1", _containerService, _volumeService, _dialogService));
+            // 첫 번째 시트를 만들 때 '로컬 접속'이라는 명찰(Profile)을 달아서 넘겨줍니다.
+            var defaultProfile = new ConnectionProfile { Name = "Local PC", Type = EndpointType.Local };
+            Sheets.Add(new SheetViewModel("Sheet 1", defaultProfile, _defaultDockerService, _dialogService));
             ActiveSheet = Sheets.First();
+            // =================================================================
 
             // 명령 초기화
             AddSheetCommand = new RelayCommand(_ => AddSheet());
@@ -453,12 +457,18 @@ namespace DockerDiagram.ViewModels
 
         private async Task SyncWithDockerEngine()
         {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            // =================================================================
+            // ★ [수정] 현재 시트가 "Local"일 때만 윈도우 프로세스를 검사하도록 조건 추가!
+            // =================================================================
+            if (ActiveSheet?.Profile.Type == EndpointType.Local)
             {
-                if (!DockerServiceHelper.IsDockerRunning())
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
-                    LastSyncTime = "Docker stopped";
-                    return;
+                    if (!DockerServiceHelper.IsDockerRunning())
+                    {
+                        LastSyncTime = "Docker stopped";
+                        return;
+                    }
                 }
             }
 
@@ -1050,8 +1060,8 @@ namespace DockerDiagram.ViewModels
 
         private void AddSheet()
         {
-            // ★ SheetViewModel 생성 시 서비스 전달
-            var newSheet = new SheetViewModel($"Sheet {Sheets.Count + 1}", _containerService, _volumeService, _dialogService);
+            var defaultProfile = new ConnectionProfile { Name = "Local PC", Type = EndpointType.Local };
+            var newSheet = new SheetViewModel($"Sheet {Sheets.Count + 1}", defaultProfile, _defaultDockerService, _dialogService);
             Sheets.Add(newSheet);
             ActiveSheet = newSheet;
         }

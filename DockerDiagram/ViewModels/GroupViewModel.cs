@@ -201,10 +201,10 @@ namespace DockerDiagram.ViewModels
                 ContainedNodes.Add(node);
                 OnModified?.Invoke(this, EventArgs.Empty);
 
-                if (!isRestoring && Type == GroupType.Network &&
-                    !string.IsNullOrEmpty(node.ContainerId))
+                if (!isRestoring && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
                 {
-                    if (!DockerServiceHelper.IsDockerRunning()) return;
+                    // ★ [수정] 로컬 시트일 때만 로컬 도커 프로세스가 켜져 있는지 확인!
+                    if (ParentSheet?.Profile.Type == EndpointType.Local && !DockerServiceHelper.IsDockerRunning()) return;
 
                     try
                     {
@@ -232,10 +232,10 @@ namespace DockerDiagram.ViewModels
                 ContainedNodes.Remove(node);
                 OnModified?.Invoke(this, EventArgs.Empty);
 
-                if (!isRestoring && Type == GroupType.Network &&
-                    !string.IsNullOrEmpty(node.ContainerId))
+                if (!isRestoring && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
                 {
-                    if (!DockerServiceHelper.IsDockerRunning()) return;
+                    // ★ [수정] 로컬 시트일 때만 로컬 도커 프로세스가 켜져 있는지 확인!
+                    if (ParentSheet?.Profile.Type == EndpointType.Local && !DockerServiceHelper.IsDockerRunning()) return;
 
                     try
                     {
@@ -450,7 +450,6 @@ namespace DockerDiagram.ViewModels
 
             foreach (var conn in ParentSheet.Connectors)
             {
-                // ★ [수정] Connector의 Source/Target이 IConnectableItem이므로 NodeViewModel인지 안전하게 캐스팅해야 함
                 if (conn.Source is NodeViewModel sourceNode && conn.Target is NodeViewModel targetNode)
                 {
                     if (containers.Contains(sourceNode) && containers.Contains(targetNode))

@@ -7,7 +7,7 @@ namespace DockerDiagram.Models
     // 전체 파일 구조
     public class DiagramFile
     {
-        public string Version { get; set; } = "1.14";
+        public string Version { get; set; } = "1.32";
         public DateTime SavedAt { get; set; } = DateTime.Now;
         public List<SheetData> Sheets { get; set; } = new List<SheetData>();
         public int ActiveSheetIndex { get; set; } = 0;
@@ -17,6 +17,8 @@ namespace DockerDiagram.Models
     public class SheetData
     {
         public string Title { get; set; } = "Sheet";
+        public ConnectionProfile Profile { get; set; } = new ConnectionProfile();
+
         public double MapWidth { get; set; }
         public double MapHeight { get; set; }
         public double OffsetX { get; set; }

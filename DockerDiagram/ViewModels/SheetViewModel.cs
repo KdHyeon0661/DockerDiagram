@@ -1,4 +1,5 @@
 ﻿using System.Collections.ObjectModel;
+using System.Linq;
 using System.Windows;
 using DockerDiagram.Helpers;
 using DockerDiagram.Models;
@@ -7,6 +8,9 @@ namespace DockerDiagram.ViewModels
 {
     public class SheetViewModel : ViewModelBase
     {
+        public ConnectionProfile Profile { get; set; }
+        public IDockerService DockerService { get; set; }
+
         private string _title = "Sheet";
         public string Title
         {
@@ -93,11 +97,17 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        public SheetViewModel(string title, IContainerService containerService, IVolumeService volumeService, IDialogService dialogService)
+        // =================================================================
+        // ★ [생성자 수정 부분] Profile과 DockerService를 받아서 초기화합니다.
+        // =================================================================
+        public SheetViewModel(string title, ConnectionProfile profile, IDockerService dockerService, IDialogService dialogService)
         {
             Title = title;
-            _containerService = containerService;
-            _volumeService = volumeService;
+            Profile = profile;
+            DockerService = dockerService;
+
+            _containerService = dockerService;
+            _volumeService = dockerService;
             _dialogService = dialogService;
         }
 

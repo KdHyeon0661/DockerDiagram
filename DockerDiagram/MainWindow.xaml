@@ -750,7 +750,7 @@
                 </Button>
 
                 <Popup x:Name="OptionPopup" StaysOpen="False" Placement="Bottom" PlacementTarget="{Binding ElementName=BtnOption}" 
-                       VerticalOffset="0" HorizontalOffset="0">
+       VerticalOffset="0" HorizontalOffset="0">
                     <Border Background="White" BorderBrush="#AAAAAA" BorderThickness="1">
                         <Border.Effect>
                             <DropShadowEffect BlurRadius="4" ShadowDepth="2" Opacity="0.1"/>
@@ -758,6 +758,21 @@
 
                         <StackPanel Width="200" Background="White">
 
+                            <Button Click="BtnSettings_Click" Style="{StaticResource MenuItemStyle}" ToolTip="원격 서버의 도커 엔진에 연결합니다">
+                                <Button.ContentTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="25"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="🔌" HorizontalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Text="SSH Remote Connection..." FontWeight="SemiBold" Foreground="#007ACC"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
+                            <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
                             <Button Command="{Binding LoadCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="파일 불러오기">
                                 <Button.ContentTemplate>
                                     <DataTemplate>

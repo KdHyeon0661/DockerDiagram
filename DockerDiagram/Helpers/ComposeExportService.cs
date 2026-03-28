@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
+using DockerDiagram.Helpers;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -139,7 +140,7 @@ namespace DockerDiagram.Helpers
                 {
                     var netObj = new ComposeNetwork { Driver = "bridge" };
 
-                    string generatedSubnet = GetSubnetIfRequired(netGroup.Title, containerNodes);
+                    string? generatedSubnet = GetSubnetIfRequired(netGroup.Title, containerNodes);
                     if (!string.IsNullOrEmpty(generatedSubnet))
                     {
                         netObj.Ipam = new ComposeIpam
@@ -210,7 +211,19 @@ namespace DockerDiagram.Helpers
             {
                 var volNode = c.Source == container ? (NodeViewModel)c.Target : (NodeViewModel)c.Source;
                 string mountPath = !string.IsNullOrEmpty(c.MountPath) ? c.MountPath : "/data";
-                list.Add($"{volNode.Name}:{mountPath}");
+
+                string hostPath = volNode.Name;
+
+                // =================================================================
+                // ★ [환경 변수 적용부] 호스트 경로를 환경 변수 포맷으로 가공합니다.
+                // =================================================================
+                // 1. 특수문자를 언더바(_)로 치환하여 안전한 환경 변수명 생성
+                string safeEnvName = Regex.Replace(hostPath, @"[^a-zA-Z0-9_]", "_").ToUpperInvariant();
+
+                // 2. 도커 컴포즈 '기본값(Fallback)' 문법 적용 (${변수명:-기본경로}:컨테이너경로)
+                string volumeMapping = $"${{HOST_VOL_{safeEnvName}:-{hostPath}}}:{mountPath}";
+
+                list.Add(volumeMapping);
             }
             return list;
         }
@@ -250,17 +263,5 @@ namespace DockerDiagram.Helpers
             }
             return null;
         }
-    }
-
-    // =========================================================================
-    // YamlDotNet 직렬화/역직렬화를 위한 데이터 모델 (DTO 클래스)
-    // UnderscoredNamingConvention 덕분에 ContainerName 변수가 자동으로 container_name으로 출력됩니다.
-    // =========================================================================
-
-    public class ComposeFileModel
-    {
-        public Dictionary<string, ComposeService> Services { get; set; } = new();
-        public Dictionary<string, ComposeNetwork>? Networks { get; set; }
-        public Dictionary<string, object>? Volumes { get; set; }
     }
 }

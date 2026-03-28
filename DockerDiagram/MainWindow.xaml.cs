@@ -68,26 +68,17 @@ namespace DockerDiagram
         private DispatcherTimer _dockerMonitorTimer;
         private DispatcherTimer _autoSaveTimer;
 
-        private readonly IContainerService _containerService;
-        private readonly IVolumeService _volumeService;
-        private readonly INetworkService _networkService;
-        private readonly ISystemService _systemService;
         private readonly IDialogService _dialogService;
+
+        // ViewModel에 쉽게 접근하기 위한 헬퍼 프로퍼티
+        private MainViewModel ViewModel => (MainViewModel)this.DataContext;
 
         // 생성자
         public MainWindow(MainViewModel viewModel, IDockerService dockerService, IDialogService dialogService)
         {
             InitializeComponent();
 
-            // 1. 도커 서비스 및 다이얼로그 서비스 검증 및 할당
-            if (dockerService == null) throw new ArgumentNullException(nameof(dockerService));
-
-            _containerService = dockerService;
-            _volumeService = dockerService;
-            _networkService = dockerService;
-            _systemService = dockerService;
-
-            // 님께서 강조하신 Null 체크 구문 유지
+            // 1. 다이얼로그 서비스 할당 (Null 체크 유지)
             _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
 
             // 2. 데이터 컨텍스트 설정
@@ -101,6 +92,10 @@ namespace DockerDiagram
             _autoSaveTimer = new DispatcherTimer();
             _autoSaveTimer.Interval = TimeSpan.FromSeconds(30);
             _autoSaveTimer.Tick += AutoSaveTimer_Tick;
+
+            // 참고: 인자로 받은 dockerService는 App.xaml.cs에서 생성된 기본(로컬) 서비스입니다.
+            // 필드에 할당하는 대신, ViewModel의 첫 번째 시트(Local)가 이미 이 서비스를 들고 있으므로
+            // 앞으로는 ViewModel.ActiveSheet.DockerService를 통해 모든 서비스에 접근합니다.
         }
 
         // 2. 종료 시 (변경사항 있을 때만 묻기)
@@ -155,56 +150,57 @@ namespace DockerDiagram
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
             UpdateScrollButtonsState();
-            var vm = this.DataContext as MainViewModel;
-            if (vm == null) return;
 
-            // 1. 마지막 파일 불러오기 로직 (기존 유지)
-            string lastFile = Properties.Settings.Default.LastFilePath;
-            if (!string.IsNullOrEmpty(lastFile) && System.IO.File.Exists(lastFile))
-            {
-                await FileService.LoadDiagramFromPathAsync(vm, lastFile, _containerService, _volumeService, _networkService, _dialogService);
-                vm.CurrentFilePath = lastFile;
-                vm.IsModified = false;
-                vm.ActiveSheet?.UpdateGroupLayering();
-            }
-            else
-            {
-                vm.CurrentFilePath = null;
-            }
+            // ViewModel이 정상적으로 바인딩되었는지 확인
+            if (ViewModel == null) return;
 
+            // 창 제목 업데이트
             UpdateTitle();
 
+            // 현재 시트(기본은 로컬)의 도커 상태 체크
+            // 내부적으로 ActiveSheet.DockerService를 사용하도록 수정되어야 합니다.
             await CheckDockerStateAsync();
 
-            // 2. 타이머 시작
+            // 도커 감시 타이머 시작
             if (!_dockerMonitorTimer.IsEnabled) _dockerMonitorTimer.Start();
 
             // 자동 저장 타이머 시작
             if (!_autoSaveTimer.IsEnabled) _autoSaveTimer.Start();
+
+            // ★ [중요] 기존의 FileService.LoadDiagramFromPathAsync 로직은 제거했습니다.
+            // MainViewModel 생성자에서 이미 파일을 불러오고 있으므로, 
+            // 여기서 또 불러오면 중복 로드 버그가 발생하기 때문입니다.
         }
 
         private async void DockerMonitorTimer_Tick(object? sender, EventArgs e)
         {
-            if (DockerServiceHelper.IsDockerRunning()) return;
+            // 현재 탭(시트)이 '로컬'일 때만 내 PC의 도커가 켜져 있는지 확인합니다.
+            if (ViewModel.ActiveSheet?.Profile.Type == EndpointType.Local)
+            {
+                if (DockerServiceHelper.IsDockerRunning()) return;
 
-            _dockerMonitorTimer.Stop();
-            await CheckDockerStateAsync();
-            _dockerMonitorTimer.Start();
+                _dockerMonitorTimer.Stop();
+                await CheckDockerStateAsync();
+                _dockerMonitorTimer.Start();
+            }
         }
 
         private async Task CheckDockerStateAsync()
         {
+            // 현재 시트가 로컬이 아니면 팝업을 띄우지 않고 조용히 넘어갑니다.
+            if (ViewModel.ActiveSheet?.Profile.Type != EndpointType.Local) return;
             if (DockerServiceHelper.IsDockerRunning()) return;
 
             bool result = _dialogService.ShowConfirm(
-                "Docker 프로세스가 종료되었습니다.\nDocker를 다시 실행하시겠습니까?\n\n('아니요'를 누르면 프로그램이 종료됩니다.)",
+                "내 PC의 Docker 프로세스가 종료되었습니다.\nDocker Desktop을 다시 실행하시겠습니까?\n\n('아니요'를 누르면 프로그램이 종료됩니다.)",
                 "Docker 감지");
 
             if (result)
             {
                 try
                 {
-                    await DockerServiceHelper.StartDockerAsync(_systemService, _dialogService);
+                    // ★ 삭제된 _systemService 대신, 현재 시트(로컬)의 도커 서비스를 전달!
+                    await DockerServiceHelper.StartDockerAsync(ViewModel.ActiveSheet.DockerService, _dialogService);
 
                     if (DataContext is MainViewModel vm)
                     {
@@ -221,6 +217,7 @@ namespace DockerDiagram
                 Application.Current.Shutdown();
             }
         }
+
 
         // --- 스크롤 로직 ---
         private void ScrollLeft_Click(object sender, RoutedEventArgs e)
@@ -1547,6 +1544,13 @@ namespace DockerDiagram
                 Owner = this
             };
             imgWindow.ShowDialog();
+        }
+
+        private void BtnSettings_Click(object sender, RoutedEventArgs e)
+        {
+            var sshDlg = new Views.SshConnectionDialog(this.ViewModel, _dialogService);
+            sshDlg.Owner = this;
+            sshDlg.ShowDialog();
         }
     }
 }

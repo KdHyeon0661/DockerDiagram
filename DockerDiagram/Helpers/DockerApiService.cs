@@ -14,9 +14,32 @@ namespace DockerDiagram.Helpers
         private readonly DockerClient _client;
         private bool _disposedValue; // 중복 해제 방지 플래그
 
-        public DockerApiService()
+        public ConnectionProfile CurrentProfile { get; private set; }
+
+        // 생성자에서 신분증(ConnectionProfile)을 받도록 변경!
+        public DockerApiService(ConnectionProfile profile)
         {
-            var dockerUri = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? new Uri("npipe://./pipe/docker_engine") : new Uri("unix:///var/run/docker.sock");
+            CurrentProfile = profile;
+            Uri dockerUri;
+
+            // 1. 만약 로컬 PC 접속이라면 (기존 방식)
+            if (profile.Type == EndpointType.Local)
+            {
+                dockerUri = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                    ? new Uri("npipe://./pipe/docker_engine")
+                    : new Uri("unix:///var/run/docker.sock");
+            }
+            // 2. 만약 원격 서버(SSH) 접속이라면 (새로운 방식)
+            else if (profile.Type == EndpointType.SshRemote)
+            {
+                // 터널링 매니저가 미리 뚫어둔 내 PC의 특정 포트(예: 23750)로 접속!
+                dockerUri = new Uri($"tcp://127.0.0.1:{profile.LocalTunnelPort}");
+            }
+            else
+            {
+                throw new NotSupportedException($"지원하지 않는 엔드포인트 타입입니다: {profile.Type}");
+            }
+
             var config = new DockerClientConfiguration(dockerUri);
             _client = config.CreateClient();
         }

@@ -46,7 +46,13 @@ namespace DockerDiagram.Helpers
                 }
 
                 string sheetName = Path.GetFileNameWithoutExtension(dlg.FileName);
-                var newSheet = new SheetViewModel(sheetName, containerService, volumeService, dialogService);
+
+                // =================================================================
+                // ★ [핵심 수정] 새 시트를 만들 때 기본 로컬 프로필을 달아줍니다!
+                // =================================================================
+                var defaultProfile = new ConnectionProfile { Name = "Local PC", Type = EndpointType.Local };
+                var newSheet = new SheetViewModel(sheetName, defaultProfile, (IDockerService)containerService, dialogService);
+                // =================================================================
 
                 var nodeMap = new Dictionary<string, NodeViewModel>();
                 var groupMap = new Dictionary<string, GroupViewModel>();
@@ -117,7 +123,6 @@ namespace DockerDiagram.Helpers
                         unassignedNodes.Add(sourceContainer);
                     }
 
-                    // ★ 볼륨 경로 파싱 버그 수정 (마지막 콜론 기준)
                     if (svc.Value.Volumes != null)
                     {
                         foreach (var volMapping in svc.Value.Volumes)
@@ -243,14 +248,13 @@ namespace DockerDiagram.Helpers
                 {
                     var containerNodes = newSheet.Nodes.Where(n => n.Type == NodeType.Container).ToList();
 
-                    // ★ 깔끔하게 IsCreating 속성만 On!
                     foreach (var node in containerNodes) node.IsCreating = true;
 
                     try
                     {
                         var psi = new System.Diagnostics.ProcessStartInfo
                         {
-                            FileName = "docker", // ★ 최신 V2 표준 명령어 사용
+                            FileName = "docker",
                             Arguments = $"compose -f \"{dlg.FileName}\" up -d",
                             RedirectStandardOutput = true,
                             RedirectStandardError = true,
@@ -272,15 +276,12 @@ namespace DockerDiagram.Helpers
                         process.BeginOutputReadLine();
                         process.BeginErrorReadLine();
 
-                        // 비동기 대기
                         await Task.Run(() => process.WaitForExit());
 
-                        // ★ UI 상태 원상복구
                         foreach (var node in containerNodes) node.IsCreating = false;
 
                         if (process.ExitCode == 0)
                         {
-                            // ★ 완벽한 ID 동기화 로직 추가!
                             var allContainers = await containerService.GetContainersAsync();
 
                             foreach (var node in containerNodes)
@@ -294,7 +295,7 @@ namespace DockerDiagram.Helpers
                                 if (matched != null)
                                 {
                                     node.ContainerId = matched.Id;
-                                    await node.RefreshDetailsAsync(); // 여기서 초록색(Running)으로 확정!
+                                    await node.RefreshDetailsAsync();
                                 }
                             }
 
@@ -308,7 +309,7 @@ namespace DockerDiagram.Helpers
                     catch (Exception ex)
                     {
                         foreach (var node in containerNodes) node.IsCreating = false;
-                        dialogService.ShowMessage($"명령어 실행 실패 (Docker Desktop 확인 필요):\n{ex.Message}");
+                        dialogService.ShowMessage($"도커 배포 실패 (도커 엔진 상태 및 명령어 확인 필요):\n{ex.Message}");
                     }
                 }
                 else

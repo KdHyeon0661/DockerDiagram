@@ -40,4 +40,11 @@ namespace DockerDiagram.Helpers
     {
         public string? Subnet { get; set; }
     }
+
+    public class ComposeFileModel
+    {
+        public Dictionary<string, ComposeService> Services { get; set; } = new();
+        public Dictionary<string, ComposeNetwork>? Networks { get; set; }
+        public Dictionary<string, object>? Volumes { get; set; }
+    }
 }
