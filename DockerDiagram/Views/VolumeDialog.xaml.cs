@@ -1,27 +1,47 @@
-﻿using System.Windows;
+﻿using DockerDiagram.Helpers; // IDialogService 사용을 위해 추가
+using System.Windows;
 
 namespace DockerDiagram.Views
 {
+    /// <summary>
+    /// 다이어그램 캔버스에서 새로운 도커 볼륨(Volume)을 물리적으로 생성하기 위해
+    /// 사용자로부터 볼륨 이름과 드라이버(local 등)를 입력받는 UI 팝업 창(View) 클래스입니다.
+    /// </summary>
     public partial class VolumeDialog : Window // 새 도커 볼륨 생성 대화상자
     {
+        private readonly IDialogService _dialogService;
+
+        /// <summary>
+        /// 사용자가 입력한 새로운 볼륨의 이름을 반환합니다.
+        /// </summary>
         public string VolumeName => txtName.Text.Trim(); // 볼륨 이름
+
+        /// <summary>
+        /// 사용자가 입력한 볼륨 드라이버를 반환하며, 기본값은 "local"입니다.
+        /// </summary>
         public string Driver => txtDriver.Text.Trim(); // 드라이버. 기본값은 "local"
 
-
-
-        public VolumeDialog()
+        /// <summary>
+        /// 대화상자를 초기화하고 다이얼로그 서비스를 주입받습니다.
+        /// 창이 열리면 즉시 볼륨 이름을 입력할 수 있도록 텍스트 박스에 포커스를 맞춥니다.
+        /// </summary>
+        public VolumeDialog(IDialogService dialogService)
         {
             InitializeComponent();
-            txtName.Focus();
+            _dialogService = dialogService; // 서비스 할당
 
+            txtName.Focus();
         }
 
+        /// <summary>
+        /// 'Create' 확인 버튼을 눌렀을 때 실행되며, 볼륨 이름이 정상적으로 입력되었는지 검증한 후 성공 결과를 반환하며 창을 닫습니다.
+        /// </summary>
         // 확인 버튼
         private void BtnOk_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrWhiteSpace(VolumeName)) // 볼륨 이름이 비어있는지 확인
             {
-                MessageBox.Show("볼륨 명을 입력하세요.");
+                _dialogService.ShowError("볼륨 명을 입력하세요.", "입력 오류");
                 return;
             }
             DialogResult = true;

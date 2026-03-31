@@ -4,9 +4,16 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using DockerDiagram.Helpers;
+using System.Linq;
+using System;
 
 namespace DockerDiagram.Views
 {
+    /// <summary>
+    /// 새로운 도커 컨테이너를 생성하기 위해 사용자로부터 다양한 설정값을 입력받는 다목적 UI 팝업 창(View)입니다.
+    /// 직관적인 UI 폼 설정, CLI 명령어 기반 생성, Dockerfile 직접 빌드 등 3가지 방식의 생성 워크플로우를 지원하며,
+    /// 입력된 데이터를 검증한 후 뷰모델(MainViewModel)로 전달하는 역할을 합니다.
+    /// </summary>
     public partial class ContainerDialog : Window
     {
         private readonly IDialogService _dialogService;
@@ -14,6 +21,10 @@ namespace DockerDiagram.Views
         // =====================================
         // [공통] 현재 사용자가 선택한 생성 방식 (0: UI, 1: CLI, 2: Dockerfile)
         // =====================================
+
+        /// <summary>
+        /// 사용자가 3개의 탭(UI 설정, CLI 명령어, Dockerfile 빌드) 중 어떤 방식을 선택했는지 나타냅니다.
+        /// </summary>
         public int SelectedCreationMode => MainTabControl.SelectedIndex;
 
         // =====================================
@@ -82,16 +93,19 @@ namespace DockerDiagram.Views
         public string BuildImageTag => txtBuildImageTag.Text.Trim();
         public string UploadedDockerfilePath { get; set; } = "";
 
-
-        public ContainerDialog()
+        /// <summary>
+        /// 컨테이너 생성 대화상자를 초기화하고 내부에서 사용할 다이얼로그 서비스를 연결합니다.
+        /// </summary>
+        public ContainerDialog(IDialogService dialogService)
         {
             InitializeComponent();
-
-            _dialogService = new DialogService();
-
+            _dialogService = dialogService;
             txtName.Focus();
         }
 
+        /// <summary>
+        /// 호스트 PC의 탐색기를 열어 빌드할 로컬 Dockerfile을 선택하고 내용을 불러옵니다.
+        /// </summary>
         private void BtnBrowseDockerfile_Click(object sender, RoutedEventArgs e)
         {
             var openDlg = new Microsoft.Win32.OpenFileDialog
@@ -107,6 +121,10 @@ namespace DockerDiagram.Views
             }
         }
 
+        /// <summary>
+        /// 'Create / Run' 버튼 클릭 시 호출되며, 현재 선택된 탭(생성 모드)에 따라 필수 입력값이 잘 들어왔는지 검증합니다.
+        /// 검증을 통과하면 창을 닫고 뷰모델에 생성을 지시합니다.
+        /// </summary>
         private void BtnOk_Click(object sender, RoutedEventArgs e)
         {
             if (SelectedCreationMode == 0) // UI 방식
@@ -153,6 +171,9 @@ namespace DockerDiagram.Views
             DialogResult = true;
         }
 
+        /// <summary>
+        /// 볼륨 마운트 리스트에 새로운 경로 매핑(Host:Container)을 추가합니다.
+        /// </summary>
         private void BtnAddVolume_Click(object sender, RoutedEventArgs e)
         {
             string source = txtVolSource.Text.Trim();
@@ -184,6 +205,9 @@ namespace DockerDiagram.Views
             }
         }
 
+        /// <summary>
+        /// 볼륨 마운트 리스트에서 특정 항목(X 버튼 클릭)을 제거합니다.
+        /// </summary>
         private void BtnRemoveVolume_Click(object sender, RoutedEventArgs e)
         {
             if (sender is Button btn && btn.Tag is string item)
@@ -192,12 +216,18 @@ namespace DockerDiagram.Views
             }
         }
 
+        /// <summary>
+        /// CPU나 메모리 입력 칸에 숫자와 소수점만 입력될 수 있도록 제어합니다.
+        /// </summary>
         private void NumberValidationTextBox(object sender, TextCompositionEventArgs e)
         {
             Regex regex = new Regex("[^0-9.]+");
             e.Handled = regex.IsMatch(e.Text);
         }
 
+        /// <summary>
+        /// 시스템 탐색기를 열어 .env 형식의 환경변수 파일을 선택합니다.
+        /// </summary>
         private void BtnLoadEnv_Click(object sender, RoutedEventArgs e)
         {
             var openFileDialog = new Microsoft.Win32.OpenFileDialog
@@ -213,6 +243,9 @@ namespace DockerDiagram.Views
             }
         }
 
+        /// <summary>
+        /// UI 화면에 환경변수(.env) 파일을 마우스로 드래그 앤 드롭했을 때 파일을 로드합니다.
+        /// </summary>
         private void Env_Drop(object sender, DragEventArgs e)
         {
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
@@ -227,6 +260,9 @@ namespace DockerDiagram.Views
             }
         }
 
+        /// <summary>
+        /// 선택된 .env 파일을 읽어 주석(#)과 빈 줄을 제외한 KEY=VALUE 쌍만 환경변수 입력창에 일괄 추가합니다.
+        /// </summary>
         private void LoadEnvFile(string filePath)
         {
             if (!System.IO.File.Exists(filePath)) return;
@@ -260,13 +296,11 @@ namespace DockerDiagram.Views
 
                 if (addedCount > 0)
                 {
-                    // ★ MessageBox 대신 일관성 있게 _dialogService 사용
                     _dialogService.ShowInfo($"{addedCount}개의 환경변수를 성공적으로 불러왔습니다.", "로드 완료");
                 }
             }
             catch (Exception ex)
             {
-                // ★ 여기도 _dialogService 로 통일
                 _dialogService.ShowInfo($"파일을 읽는 중 오류가 발생했습니다:\n{ex.Message}", "오류");
             }
         }

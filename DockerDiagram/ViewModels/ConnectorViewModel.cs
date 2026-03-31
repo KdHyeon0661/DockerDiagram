@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Media;
 using DockerDiagram.Helpers;
@@ -6,67 +8,76 @@ using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
+    /// <summary>
+    /// 노드(Node)나 그룹(Group) 사이를 잇는 시각적인 연결선(Connector) 상태를 관리하는 뷰모델입니다.
+    /// 직각 라우팅 알고리즘을 이용해 최단 거리로 꺾이는 예쁜 선을 계산하고 화면에 그립니다.
+    /// </summary>
     public class ConnectorViewModel : ViewModelBase
     {
         private readonly IDialogService _dialogService;
 
+        /// <summary>
+        /// 데이터가 변경되었음을 부모(시트)에게 알려 도화지 상단에 "수정됨(*)" 표시를 띄우기 위한 이벤트입니다.
+        /// </summary>
         public event EventHandler? OnModified;
 
+        // --- 연결선의 양 끝점 (어떤 객체들을 잇고 있는가) ---
         public IConnectableItem Source { get; private set; }
         public IConnectableItem Target { get; private set; }
 
+        // --- 선이 출발하고 도착하는 방향 (상, 하, 좌, 우) ---
         public PortDirection SourceDir { get; private set; }
         public PortDirection TargetDir { get; private set; }
 
+        /// <summary>
+        /// 화면에 그려질 선이 꺾이는 지점(좌표)들의 모음입니다.
+        /// </summary>
         private PointCollection _points = new PointCollection();
-        public PointCollection Points
-        {
-            get => _points;
-            set { _points = value; OnPropertyChanged(); }
-        }
+        public PointCollection Points { get => _points; set => SetProperty(ref _points, value); }
 
+        /// <summary>
+        /// 선 끝부분에 그려질 화살표 머리(삼각형)의 좌표 모음입니다.
+        /// </summary>
         private PointCollection _arrowPoints = new PointCollection();
-        public PointCollection ArrowPoints
-        {
-            get => _arrowPoints;
-            set { _arrowPoints = value; OnPropertyChanged(); }
-        }
+        public PointCollection ArrowPoints { get => _arrowPoints; set => SetProperty(ref _arrowPoints, value); }
 
+        // --- 화면 겹침(Z축) 순서 ---
         private int _zIndex = 50;
-        public int ZIndex
-        {
-            get => _zIndex;
-            set { _zIndex = value; OnPropertyChanged(); }
-        }
+        public int ZIndex { get => _zIndex; set => SetProperty(ref _zIndex, value); }
 
+        /// <summary>
+        /// 사용자가 화면에서 이 선을 클릭해서 선택했는지 여부입니다.
+        /// </summary>
         private bool _isSelected;
         public bool IsSelected
         {
             get => _isSelected;
             set
             {
-                _isSelected = value;
-                OnPropertyChanged();
-                ZIndex = _isSelected ? 65536 : 50;
+                if (SetProperty(ref _isSelected, value))
+                {
+                    // 선이 선택되면 다른 노드나 그룹의 위로 확실하게 돋보이도록 Z-Index를 극단적으로(65536) 끌어올립니다.
+                    ZIndex = value ? 65536 : 50;
+                }
             }
         }
 
+        // 노드나 그룹의 경계선 상에서 선이 출발/도착할 정확한 X, Y 좌표를 계산하여 반환합니다.
         public Point SourcePos => GetExactBorderPoint(Source, SourceDir);
         public Point TargetPos => GetExactBorderPoint(Target, TargetDir);
 
-        // --- 연결 데이터 ---
+        // ====================================================================
+        // --- 연결 데이터 (선이 품고 있는 추가 속성들) ---
+        // 이 값들이 바뀔 때마다 OnModified 이벤트를 발생시켜 저장할 거리가 생겼음을 알립니다.
+        // ====================================================================
+
         private RelationType _relationType;
         public RelationType RelationType
         {
             get => _relationType;
             set
             {
-                if (_relationType != value)
-                {
-                    _relationType = value;
-                    OnPropertyChanged();
-                    OnModified?.Invoke(this, EventArgs.Empty);
-                }
+                if (SetProperty(ref _relationType, value)) OnModified?.Invoke(this, EventArgs.Empty);
             }
         }
 
@@ -76,12 +87,7 @@ namespace DockerDiagram.ViewModels
             get => _mountPath;
             set
             {
-                if (_mountPath != value)
-                {
-                    _mountPath = value;
-                    OnPropertyChanged();
-                    OnModified?.Invoke(this, EventArgs.Empty);
-                }
+                if (SetProperty(ref _mountPath, value)) OnModified?.Invoke(this, EventArgs.Empty);
             }
         }
 
@@ -91,16 +97,14 @@ namespace DockerDiagram.ViewModels
             get => _ipAddress;
             set
             {
-                if (_ipAddress != value)
-                {
-                    _ipAddress = value;
-                    OnPropertyChanged();
-                    OnModified?.Invoke(this, EventArgs.Empty);
-                }
+                if (SetProperty(ref _ipAddress, value)) OnModified?.Invoke(this, EventArgs.Empty);
             }
         }
 
-        // ★ 생성자 인자 타입도 IConnectableItem으로 변경
+        // ====================================================================
+        // --- 생성자 및 이벤트 관리 로직 ---
+        // ====================================================================
+
         public ConnectorViewModel(
             IConnectableItem source,
             IConnectableItem target,
@@ -114,10 +118,12 @@ namespace DockerDiagram.ViewModels
             TargetDir = tDir;
             _dialogService = dialogService;
 
+            // ★ [핵심] 연결된 대상(노드/그룹)이 마우스 드래그로 움직이면, 
+            // 이 연결선도 즉각적으로 따라가면서 경로를 다시 계산하도록 '위치 변경 이벤트'에 귀를 열어둡니다.
             Source.OnPositionChanged += OnNodePositionChanged;
             Target.OnPositionChanged += OnNodePositionChanged;
 
-            CalculateRoute();
+            CalculateRoute(); // 최초 생성 시 경로 계산
         }
 
         private void OnNodePositionChanged(object? sender, EventArgs e)
@@ -125,28 +131,37 @@ namespace DockerDiagram.ViewModels
             CalculateRoute();
         }
 
-        // ★ 업데이트 인자 타입도 IConnectableItem으로 변경
+        /// <summary>
+        /// 선의 출발지나 도착지가 다른 노드로 아예 변경되었을 때 호출됩니다.
+        /// </summary>
         public void UpdateConnection(IConnectableItem newSource, PortDirection newSDir, IConnectableItem newTarget, PortDirection newTDir)
         {
+            // ★ [메모리 누수 방지] 기존 대상과의 이벤트 구독(-=)을 반드시 끊어주어야 합니다.
+            // 이렇게 하지 않으면 옛날 노드가 움직일 때마다 이 선이 불필요하게 다시 계산되는 "좀비(Zombie)" 현상이 발생합니다.
             if (Source != null) Source.OnPositionChanged -= OnNodePositionChanged;
             if (Target != null) Target.OnPositionChanged -= OnNodePositionChanged;
 
+            // 새로운 대상으로 교체
             Source = newSource;
             Target = newTarget;
             SourceDir = newSDir;
             TargetDir = newTDir;
 
+            // 새로운 대상의 이동 이벤트에 다시 귀를 기울입니다.(+=)
             if (Source != null) Source.OnPositionChanged += OnNodePositionChanged;
             if (Target != null) Target.OnPositionChanged += OnNodePositionChanged;
 
-            CalculateRoute();
+            CalculateRoute(); // 교체된 타겟을 기준으로 경로 재계산
         }
 
+        /// <summary>
+        /// OrthogonalRouter를 이용해 두 객체 사이의 가장 짧고 꺾임이 자연스러운 경로를 계산합니다.
+        /// </summary>
         private void CalculateRoute()
         {
             if (Source == null || Target == null) return;
 
-            // 1. 직선거리 기준 상위 4개의 포트 조합을 가져옵니다.
+            // 1. 직선거리 기준 상위 4개의 포트 방향 조합을 가져옵니다.
             var candidates = GetTopClosestPorts(4);
 
             PointCollection? bestRoute = null;
@@ -154,26 +169,25 @@ namespace DockerDiagram.ViewModels
             PortDirection bestS = PortDirection.Right;
             PortDirection bestT = PortDirection.Left;
 
-            // 2. 상위 4개 후보에 대해 직접 '직각 선(Orthogonal Route)'을 그려보고 길이를 잽니다.
+            // 2. 상위 4개 후보에 대해 각각 라우팅을 시도해보고, 가장 짧은 최적의 길을 찾습니다.
             foreach (var (sDir, tDir) in candidates)
             {
                 Point start = GetExactBorderPoint(Source, sDir);
                 Point end = GetExactBorderPoint(Target, tDir);
 
+                // 연결 대상이 그룹일 경우 장애물 박스(Rect)를 0으로 만들어서 선이 그룹 안쪽으로 파고들 수 있게 합니다.
                 Rect obsSource = Source is GroupViewModel ? new Rect(start.X, start.Y, 0, 0) : new Rect(Source.X, Source.Y, Source.Width, Source.Height);
                 Rect obsTarget = Target is GroupViewModel ? new Rect(end.X, end.Y, 0, 0) : new Rect(Target.X, Target.Y, Target.Width, Target.Height);
 
                 try
                 {
-                    // 라우터에게 선을 그려달라고 부탁합니다.
                     var route = OrthogonalRouter.GetRoute(start, sDir, end, tDir, obsSource, obsTarget);
 
                     if (route != null && route.Count >= 2)
                     {
-                        // 3. 그려진 선의 실제 길이(비용)를 계산합니다.
                         double length = GetPathLength(route);
 
-                        // 가장 짧은 진짜 최단거리 선을 찾아서 저장!
+                        // 가장 짧은 거리가 나오면 갱신
                         if (length < bestLength)
                         {
                             bestLength = length;
@@ -186,7 +200,7 @@ namespace DockerDiagram.ViewModels
                 catch { continue; }
             }
 
-            // 4. 최종적으로 가장 짧고 예쁜 선을 화면에 적용합니다.
+            // 3. 찾은 최적의 선을 화면에 적용합니다.
             if (bestRoute != null)
             {
                 SourceDir = bestS;
@@ -195,7 +209,7 @@ namespace DockerDiagram.ViewModels
             }
             else
             {
-                // (만약의 사태를 대비한 예외 처리) 상위 1순위로 그냥 직선 긋기
+                // 장애물 등으로 길을 못 찾았을 경우 대비용 최후의 수단 (직선 긋기)
                 SourceDir = candidates[0].Item1;
                 TargetDir = candidates[0].Item2;
                 Points = new PointCollection { GetExactBorderPoint(Source, SourceDir), GetExactBorderPoint(Target, TargetDir) };
@@ -206,9 +220,9 @@ namespace DockerDiagram.ViewModels
             CalculateArrowHead();
         }
 
-        // =================================================================
-        // [헬퍼] 상위 N개의 최단 거리 포트 찾기 (피타고라스 1차 필터링)
-        // =================================================================
+        /// <summary>
+        /// 시작점과 끝점의 4방향(상하좌우) 조합 중, 직선 거리가 가장 짧은 상위 N개를 반환합니다.
+        /// </summary>
         private List<(PortDirection, PortDirection)> GetTopClosestPorts(int topCount)
         {
             var dirs = new[] { PortDirection.Top, PortDirection.Bottom, PortDirection.Left, PortDirection.Right };
@@ -220,7 +234,7 @@ namespace DockerDiagram.ViewModels
                 foreach (var tDir in dirs)
                 {
                     Point tPoint = GetExactBorderPoint(Target, tDir);
-
+                    // 피타고라스 거리 비교 (루트는 생략하여 속도 최적화)
                     double dist = (sPoint.X - tPoint.X) * (sPoint.X - tPoint.X) +
                                   (sPoint.Y - tPoint.Y) * (sPoint.Y - tPoint.Y);
 
@@ -228,16 +242,15 @@ namespace DockerDiagram.ViewModels
                 }
             }
 
-            // 거리가 짧은 순서대로 정렬해서 상위 N개(4개)만 뽑아서 리턴!
             return list.OrderBy(x => x.dist)
                        .Take(topCount)
                        .Select(x => (x.sDir, x.tDir))
                        .ToList();
         }
 
-        // =================================================================
-        // [헬퍼] 그려진 선의 실제 길이 구하기 (맨해튼 거리 누적)
-        // =================================================================
+        /// <summary>
+        /// PointCollection에 저장된 경로가 직각으로 꺾일 때, 실제로 총 몇 픽셀을 이동하는지 거리를 잽니다.
+        /// </summary>
         private double GetPathLength(PointCollection path)
         {
             double len = 0;
@@ -260,6 +273,9 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 선의 가장 끝부분에 그려질 화살표(세모) 모양의 꼭짓점 3개 좌표를 계산합니다.
+        /// </summary>
         private void CalculateArrowHead()
         {
             if (Points == null || Points.Count < 2)

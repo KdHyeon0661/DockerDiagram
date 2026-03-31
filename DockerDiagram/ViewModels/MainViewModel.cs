@@ -1,5 +1,5 @@
 ﻿using DockerDiagram.Helpers;
-using DockerDiagram.Models; // ★ [추가] ConnectionProfile을 사용하기 위해 필요합니다.
+using DockerDiagram.Models;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
@@ -11,23 +11,28 @@ using System.Windows.Threading;
 
 namespace DockerDiagram.ViewModels
 {
+    /// <summary>
+    /// 다이어그램 애플리케이션의 전체 상태를 관장하는 최상위(Root) 뷰모델입니다.
+    /// 멀티 탭(시트) 관리, 전역 커맨드 처리, 사이드바 목록 동기화, 파일 저장/불러오기 등을 담당하며,
+    /// 사용자의 UI 조작과 하위 도커 백엔드 서비스 사이를 이어주는 중앙 통제 센터 역할을 수행합니다.
+    /// </summary>
     public class MainViewModel : ViewModelBase
     {
-        // =================================================================
-        // ★ [수정된 부분 1] 고정된 서비스 대신 동적 프로퍼티(=>)로 변경
-        // =================================================================
+        // 의존성 주입(DI)을 통해 전달받는 기본 도커 서비스 및 팝업창 관리 서비스
         private readonly IDockerService _defaultDockerService;
         private readonly IDialogService _dialogService;
 
+        // 현재 활성화된 시트(로컬 PC 또는 원격 SSH)의 종류에 따라 적절한 도커 서비스로 동적 스위칭하여 접근하기 위한 헬퍼 프로퍼티들
         private IContainerService _containerService => ActiveSheet?.DockerService ?? _defaultDockerService;
         private IVolumeService _volumeService => ActiveSheet?.DockerService ?? _defaultDockerService;
         private INetworkService _networkService => ActiveSheet?.DockerService ?? _defaultDockerService;
         private IImageService _imageService => ActiveSheet?.DockerService ?? _defaultDockerService;
         private ISystemService _systemService => ActiveSheet?.DockerService ?? _defaultDockerService;
-        // =================================================================
 
-        public System.Windows.Input.ICommand ExportComposeCommand { get; }
+        // 도커 컴포즈(docker-compose.yml) 내보내기 커맨드
+        public ICommand ExportComposeCommand { get; }
 
+        // 현재 다이어그램에 저장되지 않은 변경사항이 있는지 여부를 나타내는 상태 플래그 (Dirty Flag)
         private bool _isModified = false;
         public bool IsModified
         {
@@ -36,6 +41,7 @@ namespace DockerDiagram.ViewModels
         }
 
         // --- 1. 기본 맵 속성 ---
+        // 캔버스(도화지)의 가로/세로 전체 크기를 나타냅니다.
         public double MapWidth
         {
             get => ActiveSheet?.MapWidth ?? 2000;
@@ -47,6 +53,7 @@ namespace DockerDiagram.ViewModels
             set { if (ActiveSheet != null) { ActiveSheet.MapHeight = value; OnPropertyChanged(); } }
         }
 
+        // 현재 작업 중인 다이어그램의 실제 저장 파일 경로 (없으면 null)
         private string? _currentFilePath;
         public string? CurrentFilePath
         {
@@ -59,8 +66,10 @@ namespace DockerDiagram.ViewModels
         }
 
         // --- 2. 시트 및 선택 관리 ---
+        // 여러 개의 다이어그램 탭(로컬, 원격 서버 등)을 보관하는 리스트
         public ObservableCollection<SheetViewModel> Sheets { get; set; } = new();
 
+        // 현재 사용자가 화면에서 보고 있는 활성화된 시트(탭)
         private SheetViewModel? _activeSheet;
         public SheetViewModel? ActiveSheet
         {
@@ -107,6 +116,7 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        // 캔버스 위에서 현재 선택된 요소(노드, 선, 그룹 등)
         private object? _selectedElement;
         public object? SelectedElement
         {
@@ -135,19 +145,25 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        // 도커 엔진과의 통신이 진행 중인지 여부를 나타내는 플래그
         private bool _isSyncing = false;
+
+        // 상세 정보 사이드 패널의 열림/닫힘 상태
         public bool IsDetailPanelOpen => _selectedElement != null;
 
         // --- 3. 아코디언 데이터 ---
+        // 왼쪽 사이드바(아코디언)에 표시될 템플릿 및 도커 실제 리소스 목록들
         public ObservableCollection<TemplateItem> Templates { get; } = new();
         public ObservableCollection<DockerContainer> ExistingContainers { get; } = new();
         public ObservableCollection<DockerVolume> ExistingVolumes { get; } = new();
-        public ObservableCollection<DockerGroup> ExistingNetworks { get; } = new();
+        public ObservableCollection<DockerNetworkGroup> ExistingNetworks { get; } = new();
         public ObservableCollection<DockerImage> LocalImages { get; } = new();
 
+        // 템플릿 추천을 위해 사용자가 자주 생성한 이미지 내역을 저장하는 딕셔너리
         private Dictionary<string, int> _usageStats = new Dictionary<string, int>();
 
         // --- 4. 명령(Commands) ---
+        // 상단 메뉴나 단축키 등에 연결된 전역 커맨드들
         public ICommand AddSheetCommand { get; }
         public ICommand DeleteCommand { get; }
         public ICommand ClosePanelCommand { get; }
@@ -155,8 +171,10 @@ namespace DockerDiagram.ViewModels
         public ICommand NextSheetCommand { get; }
         public ICommand DeleteImageCommand { get; }
 
+        // 주기적으로 도커 엔진을 조회하여 실시간 상태를 가져오기 위한 타이머
         private DispatcherTimer _autoSyncTimer;
 
+        // 마지막으로 도커 정보를 동기화한 시각 텍스트
         private string _lastSyncTime = "Syncing...";
         public string LastSyncTime
         {
@@ -164,6 +182,7 @@ namespace DockerDiagram.ViewModels
             set { _lastSyncTime = value; OnPropertyChanged(); }
         }
 
+        // 사이드바 각 탭의 검색어 입력값
         private string _containerSearchText = "";
         public string ContainerSearchText
         {
@@ -192,21 +211,31 @@ namespace DockerDiagram.ViewModels
             set { _imageSearchText = value; OnPropertyChanged(); UpdateAvailableItems(); }
         }
 
+        // 사이드바 내 아이템 삭제 커맨드들
         public ICommand DeleteContainerItemCommand { get; }
         public ICommand DeleteVolumeItemCommand { get; }
         public ICommand DeleteNetworkItemCommand { get; }
 
+        // 파일 처리 관련 커맨드들
         public ICommand SaveCommand { get; }
         public ICommand SaveAsCommand { get; }
         public ICommand LoadCommand { get; }
 
+        // 캔버스/시트 삭제 관련 커맨드들
         public ICommand FlowClearCommand { get; }
         public ICommand FlowAllClearCommand { get; }
         public ICommand DeleteAllSheetCommand { get; }
+
+        // 추가 확장 기능 커맨드들
         public ICommand ImportComposeCommand { get; }
         public ICommand SystemPruneCommand { get; }
 
         // --- 생성자 ---
+        /// <summary>
+        /// MainViewModel을 초기화합니다.
+        /// 기본 도커 서비스를 할당하고, 첫 번째 'Local PC' 시트를 생성하며,
+        /// UI 메뉴와 연결될 수많은 명령(커맨드)들을 세팅하고 도커 자동 동기화 타이머를 시작합니다.
+        /// </summary>
         public MainViewModel(IDockerService dockerService, IDialogService dialogService)
         {
             // 유효성 검사 및 할당
@@ -283,11 +312,18 @@ namespace DockerDiagram.ViewModels
             _ = LoadLastFileIfExistsAsync();
         }
 
+        /// <summary>
+        /// 캔버스에 새로운 요소가 추가되거나 변경되었을 때 호출되어, 아직 파일로 저장되지 않은 변경사항이 있음을 표시(Dirty)합니다.
+        /// </summary>
         public void MarkAsModified()
         {
             IsModified = true;
         }
 
+        /// <summary>
+        /// 애플리케이션 시작 시, 사용자가 마지막으로 작업했던 다이어그램 파일 경로가 설정에 남아있다면
+        /// 이를 감지하여 백그라운드에서 조용히 화면에 복원(Auto-Load)해주는 기능입니다.
+        /// </summary>
         private async Task LoadLastFileIfExistsAsync()
         {
             try
@@ -333,6 +369,12 @@ namespace DockerDiagram.ViewModels
         }
 
         // --- 5. 템플릿 로직 ---
+
+        /// <summary>
+        /// 사이드바의 '템플릿(Templates)' 목록을 갱신합니다.
+        /// 항상 고정적으로 제공되는 기본 템플릿(Nginx, Redis, Ubuntu)에 더하여,
+        /// 사용자가 자주 생성했던 이미지 상위 3개를 분석하여 '자주 사용하는 템플릿'으로 자동 추가합니다.
+        /// </summary>
         private void RefreshTemplates()
         {
             Templates.Clear();
@@ -363,6 +405,10 @@ namespace DockerDiagram.ViewModels
             foreach (var item in frequents) Templates.Add(item);
         }
 
+        /// <summary>
+        /// 1초마다 주기적으로 실행되어 도커 엔진의 최신 상태를 폴링(Polling)하는 자동 동기화 타이머 이벤트입니다.
+        /// 이전 동기화 작업이 끝나지 않았다면 중복 실행을 방지(_isSyncing)하여 앱의 멈춤이나 성능 저하를 막습니다.
+        /// </summary>
         private async void AutoSync_Tick(object? sender, EventArgs e)
         {
             if (_isSyncing) return;
@@ -382,6 +428,10 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 사이드바 목록에서 사용자가 특정 컨테이너의 삭제(휴지통) 버튼을 눌렀을 때 호출됩니다.
+        /// 확인 팝업을 거친 뒤, 실제 도커 엔진에서 해당 컨테이너를 영구적으로 삭제하고 UI를 갱신합니다.
+        /// </summary>
         private async Task DeleteContainerItemAsync(object? param)
         {
             if (param is DockerContainer c)
@@ -401,6 +451,10 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 사이드바 목록에서 사용자가 특정 볼륨의 삭제(휴지통) 버튼을 눌렀을 때 호출됩니다.
+        /// 실제 도커 엔진에서 해당 볼륨을 영구적으로 삭제합니다.
+        /// </summary>
         private async Task DeleteVolumeItemAsync(object? param)
         {
             if (param is DockerVolume v)
@@ -421,9 +475,13 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 사이드바 목록에서 사용자가 특정 네트워크의 삭제(휴지통) 버튼을 눌렀을 때 호출됩니다.
+        /// 실제 도커 엔진에서 해당 가상 네트워크를 영구적으로 삭제합니다.
+        /// </summary>
         private async Task DeleteNetworkItemAsync(object? param)
         {
-            if (param is DockerGroup n)
+            if (param is DockerNetworkGroup n)
             {
                 if (_dialogService.ShowConfirm($"네트워크 '{n.Name}'을 영구 삭제하시겠습니까?", "확인"))
                 {
@@ -440,6 +498,10 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 다이어그램에 특정 이미지를 기반으로 컨테이너를 생성할 때마다 호출되어 사용 빈도를 기록하는 헬퍼 메서드입니다.
+        /// 이 통계는 사이드바의 '자주 사용하는 템플릿' 목록을 동적으로 구성하는 데 사용됩니다.
+        /// </summary>
         // 통계만 기록하는 헬퍼 함수
         private void RegisterTemplateUsage(string imageName)
         {
@@ -450,11 +512,17 @@ namespace DockerDiagram.ViewModels
         }
 
         // --- 6. Docker 연동 로직 ---
+
+        // 도커 엔진으로부터 가져온 필터링되지 않은 순수(Raw) 원본 데이터 캐시입니다.
         private List<DockerContainer> _rawContainers = new();
         private List<DockerVolume> _rawVolumes = new();
-        private List<DockerGroup> _rawNetworks = new();
+        private List<DockerNetworkGroup> _rawNetworks = new();
         private List<DockerImage> _rawImages = new();
 
+        /// <summary>
+        /// 도커 엔진(로컬 또는 원격)과 통신하여 현재 존재하는 모든 리소스(컨테이너, 볼륨, 네트워크, 이미지)의 최신 상태를 가져옵니다.
+        /// 연결이 유효한지 확인한 후 원본 데이터를 갱신하고, UI 목록 필터링(UpdateAvailableItems)을 호출합니다.
+        /// </summary>
         private async Task SyncWithDockerEngine()
         {
             // =================================================================
@@ -494,6 +562,11 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 도커 엔진에서 가져온 전체 리소스 원본 목록에서 '이미 다이어그램 캔버스 위에 꺼내져 있는 항목'들을 제외(필터링)합니다.
+        /// 이를 통해 사이드바에는 '아직 도화지에 그리지 않은 남은 리소스'들만 깔끔하게 표시되며,
+        /// 사용자가 입력한 검색어 필터링 처리 및 UI 컬렉션의 스마트 동기화(화면 깜빡임 방지)를 함께 수행합니다.
+        /// </summary>
         // 싱글톤 로직: 모든 시트(및 그룹 내부)를 검사하여 이미 배치된 컨테이너는 리스트에서 제외
         private void UpdateAvailableItems()
         {
@@ -553,6 +626,10 @@ namespace DockerDiagram.ViewModels
             SyncCollection(LocalImages, filteredImages, i => i.Id);
         }
 
+        /// <summary>
+        /// 사이드바의 '로컬 이미지' 목록에서 특정 이미지를 삭제할 때 호출됩니다.
+        /// 사용 중인 이미지라 일반 삭제가 실패할 경우, 사용자에게 확인을 받아 강제 삭제(Force Remove)를 시도하는 안전장치가 포함되어 있습니다.
+        /// </summary>
         // 이미지 삭제 로직
         private async Task DeleteImageAsync(object? parameter)
         {
@@ -589,6 +666,11 @@ namespace DockerDiagram.ViewModels
 
         // 7. 노드 생성 및 관리
 
+        /// <summary>
+        /// 사용자가 사이드바 아코디언에서 항목을 캔버스로 드래그 앤 드롭했을 때 실행되는 최상위 라우팅 메서드입니다.
+        /// 넘어온 객체의 타입(컨테이너, 볼륨, 네트워크 등)을 판별하여 적절한 도화지 배치(시각적 렌더링) 로직을 수행하며,
+        /// 이미 존재하는 컨테이너일 경우 도커 엔진을 찔러 기존에 연결된 네트워크와 볼륨 선(Connector)을 자동으로 복구(Auto-wiring)해 줍니다.
+        /// </summary>
         // ★ [중요] 드래그 앤 드롭 핸들러 수정 (Object 타입 수신 -> 타입별 분기)
         public async Task CreateNodeAtAsync(object item, double x, double y)
         {
@@ -597,8 +679,8 @@ namespace DockerDiagram.ViewModels
             // [CASE 1] 컨테이너 (DockerContainer)
             if (item is DockerContainer container)
             {
-                // 1. 메인 노드 생성
-                ActiveSheet.CreateContainerAt(container, x, y);
+                // 1. 메인 노드 생성 (★ 수정: 통합 메서드 CreateNodeAt 사용!)
+                ActiveSheet.CreateNodeAt(container, x, y);
                 IsModified = true;
                 RegisterTemplateUsage(container.Image);
 
@@ -624,16 +706,13 @@ namespace DockerDiagram.ViewModels
 
                                 if (existingGroup == null)
                                 {
-                                    // 없으면 그룹 생성
-                                    existingGroup = new GroupViewModel(x - 50, y - 50, 300, 300, _networkService, _dialogService, netName)
-                                    {
-                                        Type = GroupType.Network
-                                    };
+                                    // 그룹 생성 시 GroupType.Network를 마지막 인자로 넘김
+                                    existingGroup = new GroupViewModel(x - 30, y - 40, 220, 150, _networkService, _dialogService, netName, GroupType.Network);
                                     ActiveSheet.AddGroup(existingGroup);
                                 }
 
                                 // 방금 만든 노드를 그룹에 추가 (자동으로 위치 조정 및 포함 처리)
-                                var newNode = ActiveSheet.Nodes.Last(); // 방금 추가한 노드
+                                var newNode = ActiveSheet.Nodes.Last();
                                 existingGroup.AddNode(newNode);
                             }
                         }
@@ -660,9 +739,9 @@ namespace DockerDiagram.ViewModels
                                     }
                                     else
                                     {
-                                        // 볼륨 노드 생성
+                                        // 볼륨 노드 생성 (★ 수정: 통합 메서드 CreateNodeAt 사용!)
                                         var volModel = new DockerVolume { Name = volName };
-                                        ActiveSheet.CreateVolumeAt(volModel, x + 250, y + (volIndex * 120));
+                                        ActiveSheet.CreateNodeAt(volModel, x + 250, y + (volIndex * 120));
                                         targetVolNode = ActiveSheet.Nodes.Last();
                                     }
 
@@ -670,7 +749,6 @@ namespace DockerDiagram.ViewModels
                                     var newNode = ActiveSheet.Nodes.LastOrDefault(n => n.ContainerId == container.Id);
                                     if (newNode != null)
                                     {
-                                        // 커넥터 생성 로직이 SheetViewModel의 AddConnection은 단순해서 여기선 직접 추가
                                         bool connExists = ActiveSheet.Connectors.Any(c =>
                                             (c.Source == newNode && c.Target == targetVolNode) ||
                                             (c.Source == targetVolNode && c.Target == newNode));
@@ -702,27 +780,29 @@ namespace DockerDiagram.ViewModels
             // [CASE 2] 볼륨 (DockerVolume)
             else if (item is DockerVolume volume)
             {
-                ActiveSheet.CreateVolumeAt(volume, x, y);
+                ActiveSheet.CreateNodeAt(volume, x, y);
                 IsModified = true;
             }
+            // [CASE 3] 인터넷 (DockerInternet)
             else if (item is DockerInternet internet)
             {
-                // 인터넷 노드는 복잡한 로직 없이 바로 생성
-                ActiveSheet.CreateInternetAt(internet, x, y);
+                ActiveSheet.CreateNodeAt(internet, x, y);
                 IsModified = true;
             }
-            // [CASE 4] 네트워크 (DockerGroup)
-            else if (item is DockerGroup network)
+            // [CASE 4] 네트워크 그룹 (DockerGroup)
+            else if (item is DockerNetworkGroup network)
             {
-                var groupVm = new GroupViewModel(x, y, 300, 300, _networkService, _dialogService, network.Name)
-                {
-                    Type = GroupType.Network
-                };
+                var groupVm = new GroupViewModel(x, y, 220, 150, _networkService, _dialogService, network.Name, GroupType.Network);
                 ActiveSheet.AddGroup(groupVm);
                 IsModified = true;
             }
         }
 
+        /// <summary>
+        /// UI(ContainerDialog)를 통해 입력받은 설정값들을 바탕으로 실제 도커 컨테이너를 생성하고 시작합니다.
+        /// [사전 검증 -> 임시 노드 생성 -> 이미지 다운로드(Pull) -> 컨테이너 Run -> 네트워크/볼륨 자동 연결 -> UI 갱신]
+        /// 이라는 복잡한 라이프사이클을 하나의 트랜잭션처럼 매끄럽게 처리하는 핵심 메서드입니다.
+        /// </summary>
         public async Task CreateNewContainerNodeAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, double x, double y, string networkName = "bridge", string command = "", bool tty = false)
         {
             if (ActiveSheet == null) return;
@@ -758,6 +838,7 @@ namespace DockerDiagram.ViewModels
             }
             // =================================================================
 
+            // 로컬 폴더 마운트가 아닌 도커 Named 볼륨들만 따로 추려내어 화면에 그릴 준비를 합니다.
             var namedVolumesToDraw = new List<string>();
             foreach (var vol in volumes)
             {
@@ -765,6 +846,7 @@ namespace DockerDiagram.ViewModels
                 if (!isBindMount) namedVolumesToDraw.Add(vol);
             }
 
+            // 이미지 이름에 태그가 포함되어 있다면 분리합니다. (예: ubuntu:20.04 -> ubuntu / 20.04)
             if (image.Contains(":"))
             {
                 int lastColon = image.LastIndexOf(':');
@@ -772,18 +854,16 @@ namespace DockerDiagram.ViewModels
                 image = image.Substring(0, lastColon);
             }
 
-            GroupViewModel targetGroup = null;
+            GroupViewModel? targetGroup = null;
 
+            // 특정 네트워크를 지정했다면 해당 네트워크 그룹 안으로 쏙 들어가도록 좌표를 조정합니다.
             if (!string.IsNullOrWhiteSpace(networkName) && networkName != "bridge" && networkName != "host" && networkName != "none")
             {
                 targetGroup = ActiveSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == networkName);
 
                 if (targetGroup == null)
                 {
-                    targetGroup = new GroupViewModel(x, y, 350, 200, _networkService, _dialogService, networkName)
-                    {
-                        Type = GroupType.Network
-                    };
+                    targetGroup = new GroupViewModel(x, y, 220, 150, _networkService, _dialogService, networkName, GroupType.Network);
                     ActiveSheet.AddGroup(targetGroup);
 
                     try { await _networkService.CreateNetworkAsync(networkName, "bridge"); }
@@ -791,7 +871,7 @@ namespace DockerDiagram.ViewModels
                     {
                         if (!ex.Message.Contains("already exists") && !ex.Message.Contains("409"))
                         {
-                            System.Diagnostics.Debug.WriteLine($"[DockerDiscovery] 네트워크 '{networkName}' 자동 생성 실패: {ex.Message}");
+                            Debug.WriteLine($"[DockerDiscovery] 네트워크 '{networkName}' 자동 생성 실패: {ex.Message}");
                         }
                     }
                 }
@@ -799,12 +879,13 @@ namespace DockerDiagram.ViewModels
                 x = targetGroup.X + 20;
                 y = targetGroup.Y + 40 + (targetGroup.ContainedNodes.Count * 100);
 
-                if (y + 100 > targetGroup.Y + targetGroup.Height)
+                if (y + 80 > targetGroup.Y + targetGroup.Height)
                 {
-                    targetGroup.Height = (y - targetGroup.Y) + 120;
+                    targetGroup.Height = (y - targetGroup.Y) + 100;
                 }
             }
 
+            // 다운로드 대기 중임을 보여주는 노란색 임시 노드 생성
             var node = new NodeViewModel(_containerService, _volumeService, _dialogService)
             {
                 Name = $"{name} (Creating...)",
@@ -819,11 +900,11 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                // ★ [안전장치 개선] 이미지 Pull 실패 시 조기 탈출 방어
+                // 이미지 다운로드 시도 (없으면 에러 후 생성 취소)
                 try { await _imageService.PullImageAsync(image, tag); }
                 catch (Exception pullEx)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[Image Pull] 원격 이미지 다운로드 실패: {pullEx.Message}");
+                    Debug.WriteLine($"[Image Pull] 원격 이미지 다운로드 실패: {pullEx.Message}");
                     var localImages = await _imageService.GetImagesAsync();
                     bool existsLocally = localImages.Any(img => img.Repository == image && (img.Tag == tag || tag == "latest"));
                     if (!existsLocally)
@@ -834,9 +915,11 @@ namespace DockerDiagram.ViewModels
                     }
                 }
 
+                // 백엔드 서비스를 통해 실제 컨테이너 생성 및 구동
                 string containerId = await _containerService.CreateAndStartContainerAsync(
                     name, image, tag, ports, envs, volumes, restartPolicy, memoryMb, cpuCount, command, tty);
 
+                // 생성이 완료되면 노드 정보를 '실제 데이터'로 덮어씌우고 녹색으로 변경
                 node.Name = name;
                 node.ContainerId = containerId;
                 node.PortInfo = string.Join(", ", ports);
@@ -854,6 +937,7 @@ namespace DockerDiagram.ViewModels
 
                 RegisterTemplateUsage($"{image}:{tag}");
 
+                // 생성된 컨테이너가 의존하는 볼륨 노드들을 도화지에 추가하고 선을 긋습니다.
                 int volIndex = 0;
                 foreach (var volStr in namedVolumesToDraw)
                 {
@@ -908,11 +992,15 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 다이어그램 캔버스에 새로운 볼륨(Volume) 노드를 배치하고, 백그라운드 도커 엔진에 실제 볼륨 생성을 요청합니다.
+        /// 생성 중에는 임시로 노란색 상태를 유지하다가, 생성이 완료되면 주황색(볼륨 고유 색상)으로 상태를 갱신합니다.
+        /// </summary>
         public async Task CreateNewVolumeNodeAsync(string name, string driver, double x, double y)
         {
             if (ActiveSheet == null) return;
 
-            // Placeholder
+            // Placeholder (생성 대기 중인 임시 노드)
             var node = new NodeViewModel(_containerService, _volumeService, _dialogService)
             {
                 Name = $"{name} (Creating...)",
@@ -929,7 +1017,7 @@ namespace DockerDiagram.ViewModels
             {
                 await _volumeService.CreateVolumeAsync(name, driver);
 
-                // 완료
+                // 완료 후 실제 데이터로 갱신
                 node.Name = name;
                 node.ContainerId = ""; // 볼륨은 보통 ID가 이름과 같거나 별도 관리됨.
                 node.IsCreating = false;
@@ -942,34 +1030,14 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        // 2. 네트워크 생성 (비동기) -> 그룹 생성
-        public async Task CreateNewNetworkNodeAsync(string name, string driver, double x, double y, double w = 300, double h = 300)
-        {
-            if (ActiveSheet == null) return;
+        // =========================================================
+        // 파일 입출력 (Save / Load) 관련 커맨드 로직
+        // =========================================================
 
-            // 사용자가 그린 크기(w, h)로 그룹 생성
-            var groupVm = new GroupViewModel(x, y, w, h, _networkService, _dialogService, $"{name} (Creating...)")
-            {
-                Type = GroupType.Network
-            };
-            ActiveSheet.AddGroup(groupVm);
-
-            try
-            {
-                // 실제 도커 네트워크 생성
-                string netId = await _networkService.CreateNetworkAsync(name, driver);
-
-                // 성공 시 이름 확정 (그룹은 ID 대신 이름을 주로 씀)
-                groupVm.Title = name;
-            }
-            catch (Exception ex)
-            {
-                _dialogService.ShowMessage($"네트워크 생성 실패: {ex.Message}");
-                // 실패하면 껍데기만 남은 그룹 제거
-                ActiveSheet.Groups.Remove(groupVm);
-            }
-        }
-
+        /// <summary>
+        /// 현재 작업 중인 다이어그램을 파일로 저장합니다. 
+        /// 이미 저장된 경로가 있다면 덮어쓰기(Quick Save)를 수행하고, 없다면 '다른 이름으로 저장' 창을 띄웁니다.
+        /// </summary>
         private void SaveAction(object? obj)
         {
             // 경로가 이미 잡혀있으면 -> 덮어쓰기 (QuickSave)
@@ -989,6 +1057,9 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 시스템 대화상자를 띄워 사용자가 지정한 새로운 경로에 다이어그램을 저장합니다.
+        /// </summary>
         private void SaveAsAction(object? obj)
         {
             // FileService에서 대화상자를 띄우고, 저장한 경로를 받아옴
@@ -1002,6 +1073,10 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 저장된 다이어그램 파일(.json 등)을 불러옵니다.
+        /// 변경사항이 있을 경우 경고를 띄우며, 로드가 완료되면 도커 엔진과 즉시 동기화(RestoreLiveState)를 수행합니다.
+        /// </summary>
         private async Task LoadActionAsync(object? obj)
         {
             // 변경사항이 있다면 물어보기
@@ -1026,6 +1101,11 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 파일을 막 불러왔을 때, 도화지 위의 노드들은 단순한 그림(죽은 데이터)에 불과합니다.
+        /// 이 메서드는 전체 시트를 순회하며 실제 도커 엔진을 찔러 컨테이너/볼륨의 생존 여부(Live State)를 조회하고
+        /// 노드의 상태 색상과 상세 정보를 실시간 데이터로 덮어씌워 '깨우는' 역할을 합니다.
+        /// </summary>
         private async Task RestoreLiveState()
         {
             if (Sheets == null) return;
@@ -1058,6 +1138,13 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        // =========================================================
+        // 멀티 탭 (시트) 관리 로직
+        // =========================================================
+
+        /// <summary>
+        /// 새로운 다이어그램 탭(시트)을 생성하고 활성화합니다.
+        /// </summary>
         private void AddSheet()
         {
             var defaultProfile = new ConnectionProfile { Name = "Local PC", Type = EndpointType.Local };
@@ -1066,6 +1153,9 @@ namespace DockerDiagram.ViewModels
             ActiveSheet = newSheet;
         }
 
+        /// <summary>
+        /// 현재 선택된 다이어그램 탭(시트)을 삭제합니다. 마지막 시트는 삭제할 수 없습니다.
+        /// </summary>
         public void DeleteSheet(SheetViewModel sheet)
         {
             if (Sheets.Count <= 1) return;
@@ -1099,6 +1189,14 @@ namespace DockerDiagram.ViewModels
             if (newIndex >= 0 && newIndex < Sheets.Count) ActiveSheet = Sheets[newIndex];
         }
 
+        // =========================================================
+        // UI 선 긋기 (Connector) 및 시각적 연결 로직
+        // =========================================================
+
+        /// <summary>
+        /// 사용자가 캔버스에서 두 항목(노드 또는 그룹)을 마우스로 드래그하여 선(Connector)을 연결했을 때 호출됩니다.
+        /// 특히 '컨테이너'와 '볼륨'을 연결하는 경우, 단순한 시각적 선 긋기를 넘어 백그라운드에서 실제 도커 데이터 백업/재생성/마운트 복원 과정을 트리거합니다.
+        /// </summary>
         public async void AddConnection(IConnectableItem source, IConnectableItem target, PortDirection sourceDir, PortDirection targetDir)
         {
             if (ActiveSheet == null || source == target) return;
@@ -1161,6 +1259,10 @@ namespace DockerDiagram.ViewModels
             IsModified = true;
         }
 
+        /// <summary>
+        /// 두 요소 간의 선 연결이 논리적으로 허용되는 조합인지 검사합니다.
+        /// (예: 볼륨끼리 연결 불가, 볼륨과 인터넷 간 연결 불가 등)
+        /// </summary>
         // 네트워크 타입 검사 로직 삭제 -> 오직 컨테이너와 볼륨 관계만 정의
         private bool IsValidConnection(IConnectableItem t1, IConnectableItem t2)
         {
@@ -1179,8 +1281,16 @@ namespace DockerDiagram.ViewModels
             return true;
         }
 
+        /// <summary>
+        /// 현재 선택된 노드나 연결선(Connector)의 선택 상태를 해제합니다.
+        /// </summary>
         public void ClearSelection() => SelectedElement = null;
 
+        /// <summary>
+        /// 캔버스에서 현재 선택된 요소(선, 컨테이너, 볼륨, 네트워크 그룹 등)를 삭제합니다.
+        /// 단순한 화면상의 지우기를 넘어, 요소의 종류에 따라 도커 엔진에서 실제 리소스를 삭제할지 묻는 대화상자를 띄우고
+        /// 볼륨 마운트 물리적 해제, 네트워크 제거 등 연관된 백엔드 해체 작업을 통합적으로 수행합니다.
+        /// </summary>
         public async Task DeleteSelectedAsync()
         {
             if (SelectedElement == null || ActiveSheet == null) return;
@@ -1329,11 +1439,18 @@ namespace DockerDiagram.ViewModels
             SelectedElement = null;
         }
 
+        /// <summary>
+        /// 다이어그램에서 사용자가 볼륨 연결선을 삭제할 때 호출되는 무결성 보장 트랜잭션 메서드입니다.
+        /// 도커 엔진은 실행 중인 컨테이너에서 마운트된 볼륨만 '쏙' 빼내는 것을 허용하지 않으므로,
+        /// 기존 데이터를 호스트 임시 폴더로 안전하게 백업한 뒤, 컨테이너를 삭제하고 기존 설정(포트, 환경변수, 명령 등)을 유지한 채 
+        /// 볼륨만 제외하여 재생성하고, 마지막으로 백업된 데이터를 복원하는 정교한 작업을 수행합니다.
+        /// </summary>
         private async Task<bool> UnmountVolumeFromContainerAsync(NodeViewModel containerNode, NodeViewModel volumeNode)
         {
             string containerId = containerNode.ContainerId;
             string volumeNameToRemove = volumeNode.Name;
 
+            // 예기치 못한 에러 시 데이터 유실을 막기 위해 백업 폴더를 남겨둘지 결정하는 플래그
             bool keepBackup = false;
 
             // 호스트 임시 백업 폴더 경로 생성
@@ -1363,7 +1480,6 @@ namespace DockerDiagram.ViewModels
                 }
 
                 await _containerService.CopyFromContainerAsync(containerId, mountPath, tempHostPath);
-
 
                 // ---------------------------------------------------------
                 // [STEP 2] 기존 컨테이너 설정 조회 (설정 유지용)
@@ -1420,11 +1536,14 @@ namespace DockerDiagram.ViewModels
                     }
                 }
 
+                // ★ 2-5. [버그 수정] 기존 명령어(Cmd) 및 TTY 설정 복구
+                string command = oldConfig.Cmd != null ? string.Join(" ", oldConfig.Cmd) : "";
+                bool tty = oldConfig.Tty;
+
                 // ---------------------------------------------------------
                 // [STEP 3] 기존 컨테이너 삭제
                 // ---------------------------------------------------------
                 await _containerService.RemoveContainerAsync(containerId);
-
 
                 // ---------------------------------------------------------
                 // [STEP 4] 컨테이너 재생성 (볼륨 제외됨)
@@ -1437,9 +1556,10 @@ namespace DockerDiagram.ViewModels
                     envs,
                     newVolumes,
                     oldHostConfig.RestartPolicy.Name.ToString(),
-                    0, 0
+                    0, 0,
+                    command, // ★ 복원된 명령어 전달!
+                    tty      // ★ 복원된 TTY 설정 전달!
                 );
-
 
                 // ---------------------------------------------------------
                 // [STEP 5] 데이터 복원 (Restore)
@@ -1480,25 +1600,25 @@ namespace DockerDiagram.ViewModels
                     try
                     {
                         Directory.Delete(tempHostPath, true);
-                        Debug.WriteLine($"[DockerDiscovery] Deleted temp backup folder: {tempHostPath}");
                     }
                     catch (Exception delEx)
                     {
-                        Debug.WriteLine($"[DockerDiscovery] Failed to delete temp backup folder: {tempHostPath}");
                         Debug.WriteLine($"[Cleanup] Delete exception: {delEx}");
                     }
-                }
-                else if (keepBackup)
-                {
-                    Debug.WriteLine($"[DockerDiscovery] Keeping temp backup folder (due to failure): {tempHostPath}");
                 }
             }
         }
 
+        /// <summary>
+        /// 다이어그램에서 사용자가 컨테이너와 볼륨을 선으로 연결했을 때 호출되는 무결성 보장 마운트 메서드입니다.
+        /// 도커는 실행 중인 컨테이너에 중간부터 볼륨을 끼워넣는 것을 허용하지 않으므로, 
+        /// 기존 데이터를 안전하게 호스트 임시 폴더로 백업한 뒤, 컨테이너를 삭제하고 볼륨 마운트 정보가 추가된 상태로 재생성합니다.
+        /// 생성 후 백업 데이터를 다시 밀어넣어(Restore) 데이터 유실 없이 물리적 볼륨 연결을 완성합니다.
+        /// </summary>
         public async Task<bool> ConnectVolumeToContainerAsync(NodeViewModel containerNode, NodeViewModel volumeNode)
         {
             // 1. 다이얼로그로 경로와 소유자 정보 입력받기
-            var dlg = new Views.MountDialog();
+            var dlg = new Views.MountDialog(_dialogService);
             dlg.Owner = Application.Current.MainWindow;
 
             if (dlg.ShowDialog() != true) return false;
@@ -1529,23 +1649,18 @@ namespace DockerDiagram.ViewModels
                 if (!System.IO.Directory.Exists(tempHostPath))
                     System.IO.Directory.CreateDirectory(tempHostPath);
 
-                // 기존 데이터가 있다면 백업 (경로 없으면 에러 날 수 있으니 try 감쌈)
                 try
                 {
                     await _containerService.CopyFromContainerAsync(containerId, mountPath, tempHostPath);
                 }
                 catch (Exception ex)
                 {
-                    // 1. 단순히 컨테이너 내부에 경로가 아직 없는 경우 (정상적인 스킵 상황)
-                    // Docker API는 경로를 찾을 수 없을 때 보통 "No such container:path", "NotFound", "404" 등의 메시지를 포함합니다.
                     if (ex.Message.Contains("No such") || ex.Message.Contains("NotFound") || ex.Message.Contains("404"))
                     {
-                        System.Diagnostics.Debug.WriteLine($"[Backup Skip] '{mountPath}' 경로가 컨테이너에 아직 존재하지 않아 백업을 생략합니다.");
+                        Debug.WriteLine($"[Backup Skip] '{mountPath}' 경로가 컨테이너에 아직 존재하지 않아 백업을 생략합니다.");
                     }
-                    // 2. 경로 없음이 아닌 진짜 오류 (권한 부족, 용량 부족, 네트워크 단절 등)
                     else
                     {
-                        // 백업 실패 상태로 강행하면 [STEP 3]에서 데이터가 날아가므로, 사용자에게 경고하고 선택권을 줍니다.
                         bool proceed = _dialogService.ShowConfirm(
                             $"기존 데이터 백업 중 예상치 못한 오류가 발생했습니다.\n" +
                             $"이대로 진행하면 컨테이너 내부의 기존 데이터가 유실될 위험이 있습니다.\n\n" +
@@ -1556,16 +1671,11 @@ namespace DockerDiagram.ViewModels
 
                         if (!proceed)
                         {
-                            // 사용자가 진행을 취소하면, 생성했던 임시 폴더를 지우고 안전하게 로직을 탈출합니다.
-                            if (System.IO.Directory.Exists(tempHostPath))
-                            {
-                                System.IO.Directory.Delete(tempHostPath, true);
-                            }
+                            if (System.IO.Directory.Exists(tempHostPath)) System.IO.Directory.Delete(tempHostPath, true);
                             return false;
                         }
                     }
                 }
-
 
                 // ---------------------------------------------------------
                 // [STEP 2] 기존 컨테이너 설정 조회
@@ -1583,11 +1693,6 @@ namespace DockerDiagram.ViewModels
                 {
                     imgRepo = imageName[..lastColonIndex];
                     imgTag = imageName[(lastColonIndex + 1)..];
-                }
-                else
-                {
-                    imgRepo = imageName;
-                    imgTag = "latest";
                 }
 
                 // 포트 복구
@@ -1607,12 +1712,12 @@ namespace DockerDiagram.ViewModels
 
                 // 볼륨 추가
                 var volumes = new List<string>();
-                if (oldHostConfig.Binds != null)
-                {
-                    volumes.AddRange(oldHostConfig.Binds);
-                }
+                if (oldHostConfig.Binds != null) volumes.AddRange(oldHostConfig.Binds);
                 volumes.Add($"{volumeName}:{mountPath}");
 
+                // ★ 2-5. [버그 수정] 기존 명령어(Cmd) 및 TTY 설정 복구
+                string command = oldConfig.Cmd != null ? string.Join(" ", oldConfig.Cmd) : "";
+                bool tty = oldConfig.Tty;
 
                 // ---------------------------------------------------------
                 // [STEP 3] 재생성
@@ -1621,9 +1726,10 @@ namespace DockerDiagram.ViewModels
 
                 string newId = await _containerService.CreateAndStartContainerAsync(
                     containerNode.Name, imgRepo, imgTag, ports, envs, volumes,
-                    oldHostConfig.RestartPolicy.Name.ToString(), 0, 0
+                    oldHostConfig.RestartPolicy.Name.ToString(), 0, 0,
+                    command, // ★ 복원된 명령어 전달!
+                    tty      // ★ 복원된 TTY 설정 전달!
                 );
-
 
                 // ---------------------------------------------------------
                 // [STEP 4] 데이터 복원
@@ -1639,7 +1745,6 @@ namespace DockerDiagram.ViewModels
                 {
                     await _containerService.CopyToContainerAsync(newId, tempHostPath, mountPath);
                 }
-
 
                 // ---------------------------------------------------------
                 // [STEP 5] 권한 수정
@@ -1672,6 +1777,11 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 사이드바 UI 목록(ObservableCollection)과 도커 엔진에서 가져온 최신 데이터(List)를 비교하여 스마트하게 동기화합니다.
+        /// 리스트 전체를 지우고 새로 할당하면 화면이 심하게 깜빡거리게 되므로(Flickering), 
+        /// 실제 변경된 항목(추가/삭제)만 선별하여 반영하고, 이미 존재하는 컨테이너는 상태값만 조용히 업데이트합니다.
+        /// </summary>
         private void SyncCollection<T>(ObservableCollection<T> uiCollection, List<T> newItems, Func<T, string> keySelector)
         {
             // 1. 제거해야 할 항목 찾기
@@ -1693,7 +1803,7 @@ namespace DockerDiagram.ViewModels
                 }
             }
 
-            // 상태 업데이트: 만약 ID는 같은데 상태가 변했다면 여기서 속성만 복사해줄 수 있음
+            // 3. 상태 업데이트: 만약 ID는 같은데 상태가 변했다면 여기서 속성만 복사해줄 수 있음
             if (typeof(T) == typeof(DockerContainer))
             {
                 var newItemMap = newItems.ToDictionary(keySelector);
@@ -1716,6 +1826,11 @@ namespace DockerDiagram.ViewModels
                 }
             }
         }
+
+        /// <summary>
+        /// 현재 활성화된 시트(ActiveSheet) 내부의 컬렉션(노드, 선, 그룹)에 변경 감지 이벤트를 부착합니다.
+        /// 다이어그램에 항목이 추가되거나 속성이 변경될 때마다 IsModified 플래그를 true로 만들어 '저장 필요' 상태를 추적합니다.
+        /// </summary>
         private void AttachSheetEvents()
         {
             if (ActiveSheet != null)
@@ -1753,6 +1868,10 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 시트에 노드가 새롭게 추가되거나 삭제될 때 호출되어, 개별 노드의 시각적 속성 변경(OnModified) 이벤트 구독을 관리합니다.
+        /// 사이드바의 사용 가능 목록을 갱신하고 수정 상태(Dirty)를 마킹합니다.
+        /// </summary>
         private void Nodes_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
             if (e.NewItems != null)
@@ -1774,11 +1893,17 @@ namespace DockerDiagram.ViewModels
             MarkAsModified();
         }
 
+        /// <summary>
+        /// 개별 노드의 위치(X,Y)나 크기, 상태 등이 수정되었을 때 호출되어 앱 전체를 '수정됨(저장 필요)' 상태로 만듭니다.
+        /// </summary>
         private void Node_OnModified(object? sender, EventArgs e)
         {
             MarkAsModified();
         }
 
+        /// <summary>
+        /// 시트에 연결선(Connector)이 새롭게 추가되거나 삭제될 때 호출되어 이벤트 구독을 관리하고 수정 상태를 마킹합니다.
+        /// </summary>
         private void Connectors_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
             if (e.NewItems != null)
@@ -1799,11 +1924,17 @@ namespace DockerDiagram.ViewModels
             MarkAsModified();
         }
 
+        /// <summary>
+        /// 선의 위치나 연결 정보가 변경되었을 때 호출되어 앱 전체를 '수정됨' 상태로 만듭니다.
+        /// </summary>
         private void Connector_OnModified(object? sender, EventArgs e)
         {
             MarkAsModified();
         }
 
+        /// <summary>
+        /// 시트에 그룹(Group)이 새롭게 추가되거나 삭제될 때 호출되어, 그룹의 속성 변경 이벤트 구독을 관리합니다.
+        /// </summary>
         private void Groups_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
             if (e.NewItems != null)
@@ -1825,6 +1956,10 @@ namespace DockerDiagram.ViewModels
             MarkAsModified();
         }
 
+        /// <summary>
+        /// 백그라운드에서 도커 데몬이 켜졌다는 신호를 받았을 때 실행됩니다.
+        /// 즉시 엔진의 데이터를 동기화하고, 회색으로 죽어있던 다이어그램 노드들을 녹색(실행 중)으로 깨웁니다.
+        /// </summary>
         public async Task OnDockerStartedAsync()
         {
             Debug.WriteLine("[MainViewModel] Docker started signal received. Refreshing...");
@@ -1839,6 +1974,9 @@ namespace DockerDiagram.ViewModels
             await RestoreLiveState();
         }
 
+        /// <summary>
+        /// 현재 활성화된 시트(도화지)의 모든 요소(노드, 선, 그룹)를 깨끗하게 지웁니다.
+        /// </summary>
         private void ExecuteFlowClear(object? obj)
         {
             if (ActiveSheet != null && _dialogService.ShowConfirm("현재 시트의 모든 내용을 지우시겠습니까?", "Flow Clear"))
@@ -1849,6 +1987,9 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 열려있는 모든 시트의 내용을 일괄적으로 초기화합니다.
+        /// </summary>
         private void ExecuteFlowAllClear(object? obj)
         {
             if (_dialogService.ShowConfirm("모든 시트의 내용을 초기화 하시겠습니까?", "Flow All Clear"))
@@ -1862,6 +2003,9 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 활성화된 시트를 포함하여 전체 시트를 삭제하고, 빈 시트 1개만 남깁니다.
+        /// </summary>
         private void ExecuteDeleteAllSheet(object? obj)
         {
             if (_dialogService.ShowConfirm("모든 시트를 삭제하시겠습니까?", "Delete All Sheet"))
@@ -1871,6 +2015,9 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 캔버스에 새로운 가상 네트워크 그룹을 생성하고, 실제 도커 엔진에도 네트워크를 만듭니다.
+        /// </summary>
         public async Task CreateNewNetworkGroupAsync(string name, string driver, double x, double y, double w, double h)
         {
             if (string.IsNullOrWhiteSpace(name)) return;
@@ -1878,10 +2025,10 @@ namespace DockerDiagram.ViewModels
             try
             {
                 string networkId = await _networkService.CreateNetworkAsync(name, driver);
-                var newNetworkGroup = new GroupViewModel(x, y, w, h, _networkService, _dialogService, name)
+
+                var newNetworkGroup = new GroupViewModel(x, y, w, h, _networkService, _dialogService, name, GroupType.Network)
                 {
-                    Id = networkId,           // 도커 ID 저장
-                    Type = GroupType.Network, // ★ 중요: 파란 점선 모양 적용
+                    Id = networkId,            // 도커 ID 저장
                     Driver = driver,
                     ParentSheet = this.ActiveSheet
                 };
@@ -1899,6 +2046,10 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 사용자가 입력한 `docker run` 형태의 CLI 명령어를 분석하여 캔버스에 임시 노드를 배치하고, 
+        /// 백그라운드 프로세스(cmd.exe)를 통해 실제 명령을 실행한 뒤, 완료되면 도커 정보를 가져와 UI를 완벽하게 갱신합니다.
+        /// </summary>
         public async Task ProcessCliCommandAsync(string cliCommand, double x, double y)
         {
             if (ActiveSheet == null) return;
@@ -1938,13 +2089,13 @@ namespace DockerDiagram.ViewModels
             // =================================================================
 
             // [STEP 2] 모아둔 정보로만 '임시 노드'를 도화지에 먼저 그림 (그룹 자동 입주)
-            GroupViewModel targetGroup = null;
+            GroupViewModel? targetGroup = null;
             if (!string.IsNullOrWhiteSpace(networkName) && networkName != "bridge" && networkName != "host" && networkName != "none")
             {
                 targetGroup = ActiveSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == networkName);
                 if (targetGroup == null)
                 {
-                    targetGroup = new GroupViewModel(x, y, 350, 200, _networkService, _dialogService, networkName) { Type = GroupType.Network };
+                    targetGroup = new GroupViewModel(x, y, 220, 150, _networkService, _dialogService, networkName, GroupType.Network);
                     ActiveSheet.AddGroup(targetGroup);
                 }
                 x = targetGroup.X + 20;
@@ -1969,7 +2120,7 @@ namespace DockerDiagram.ViewModels
             {
                 await Task.Run(() =>
                 {
-                    var startInfo = new System.Diagnostics.ProcessStartInfo
+                    var startInfo = new ProcessStartInfo
                     {
                         FileName = "cmd.exe",
                         Arguments = $"/c {cliCommand}",
@@ -1978,7 +2129,7 @@ namespace DockerDiagram.ViewModels
                         RedirectStandardOutput = true,
                         RedirectStandardError = true
                     };
-                    using (var process = System.Diagnostics.Process.Start(startInfo))
+                    using (var process = Process.Start(startInfo))
                     {
                         process.WaitForExit(); // 도커가 컨테이너를 다 만들 때까지 대기
                     }
@@ -2054,7 +2205,7 @@ namespace DockerDiagram.ViewModels
                     {
                         // Inspect가 실패하더라도 컨테이너 자체는 생성된 상태이므로 노드를 지우지는 않습니다.
                         // 다만 볼륨 연결선 등 상세 토폴로지를 그릴 수 없음을 사용자에게 명확히 알립니다.
-                        System.Diagnostics.Debug.WriteLine($"[DockerDiscovery] Inspect 실패: {ex.Message}");
+                        Debug.WriteLine($"[DockerDiscovery] Inspect 실패: {ex.Message}");
 
                         _dialogService.ShowInfo(
                             $"컨테이너 '{name}'(은)는 성공적으로 생성되었으나, 볼륨 마운트 등의 상세 정보를 불러오는데 실패했습니다.\n" +
@@ -2080,6 +2231,9 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 사용자가 작성한 Dockerfile을 바탕으로 백그라운드에서 빌드를 수행하고, 성공 시 새 컨테이너 노드를 캔버스에 생성합니다.
+        /// </summary>
         public async Task BuildImageAndCreateNodeAsync(string targetImageName, string dockerfileContent, string uploadedFilePath, double x, double y)
         {
             if (ActiveSheet == null) return;
@@ -2123,7 +2277,7 @@ namespace DockerDiagram.ViewModels
             {
                 await Task.Run(() =>
                 {
-                    var startInfo = new System.Diagnostics.ProcessStartInfo
+                    var startInfo = new ProcessStartInfo
                     {
                         FileName = "cmd.exe",
                         Arguments = $"/c docker build -t {targetImageName} -f \"{dockerfilePath}\" \"{buildContextPath}\"",
@@ -2132,7 +2286,7 @@ namespace DockerDiagram.ViewModels
                         RedirectStandardOutput = true,
                         RedirectStandardError = true
                     };
-                    using (var process = System.Diagnostics.Process.Start(startInfo))
+                    using (var process = Process.Start(startInfo))
                     {
                         process.WaitForExit();
                         buildSuccess = process.ExitCode == 0; // 성공하면 ExitCode가 0
@@ -2165,6 +2319,9 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        /// <summary>
+        /// 도커 리소스 대청소(Prune) 명령을 실행하고 결과를 사용자에게 안내합니다.
+        /// </summary>
         private async Task ExecuteSystemPruneAsync(object? obj)
         {
             // 1. 우리가 방금 만든 예쁜 팝업창 띄우기!
@@ -2185,7 +2342,7 @@ namespace DockerDiagram.ViewModels
                 string pruneResult = "";
                 await Task.Run(() =>
                 {
-                    var startInfo = new System.Diagnostics.ProcessStartInfo
+                    var startInfo = new ProcessStartInfo
                     {
                         FileName = "cmd.exe",
                         Arguments = $"/c {targetCommand}",
@@ -2195,7 +2352,7 @@ namespace DockerDiagram.ViewModels
                         RedirectStandardError = true
                     };
 
-                    using (var process = System.Diagnostics.Process.Start(startInfo))
+                    using (var process = Process.Start(startInfo))
                     {
                         if (process != null)
                         {

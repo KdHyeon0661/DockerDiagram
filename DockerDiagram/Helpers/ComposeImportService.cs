@@ -11,8 +11,15 @@ using YamlDotNet.Serialization.NamingConventions;
 
 namespace DockerDiagram.Helpers
 {
+    /// <summary>
+    /// 외부의 docker-compose.yml 파일을 읽어와 다이어그램 화면(Sheet)으로 시각화하고,
+    /// 사용자의 선택에 따라 실제 도커 엔진에 배포(docker compose up)까지 수행하는 정적 서비스 클래스입니다.
+    /// </summary>
     public static class ComposeImportService
     {
+        /// <summary>
+        /// 사용자에게 다이얼로그를 띄워 YAML 파일을 선택받고, 이를 분석하여 새로운 시트를 생성합니다.
+        /// </summary>
         public static async Task ImportFromCompose(
             MainViewModel mainVm,
             IContainerService containerService,
@@ -32,9 +39,10 @@ namespace DockerDiagram.Helpers
             {
                 string yamlContent = File.ReadAllText(dlg.FileName);
 
+                // YamlDotNet을 사용하여 YAML 문자열을 C# 객체(ComposeFileModel)로 역직렬화(Deserialize)
                 var deserializer = new DeserializerBuilder()
-                    .WithNamingConvention(UnderscoredNamingConvention.Instance)
-                    .IgnoreUnmatchedProperties()
+                    .WithNamingConvention(UnderscoredNamingConvention.Instance) // container_name -> ContainerName 자동 변환
+                    .IgnoreUnmatchedProperties() // 모델에 없는 속성은 무시하여 에러 방지
                     .Build();
 
                 var composeData = deserializer.Deserialize<ComposeFileModel>(yamlContent);
@@ -47,17 +55,16 @@ namespace DockerDiagram.Helpers
 
                 string sheetName = Path.GetFileNameWithoutExtension(dlg.FileName);
 
-                // =================================================================
-                // ★ [핵심 수정] 새 시트를 만들 때 기본 로컬 프로필을 달아줍니다!
-                // =================================================================
+                // 새 시트를 생성할 때 기본 로컬 프로필을 할당
                 var defaultProfile = new ConnectionProfile { Name = "Local PC", Type = EndpointType.Local };
                 var newSheet = new SheetViewModel(sheetName, defaultProfile, (IDockerService)containerService, dialogService);
-                // =================================================================
 
                 var nodeMap = new Dictionary<string, NodeViewModel>();
                 var groupMap = new Dictionary<string, GroupViewModel>();
 
-                // 1단계: 노드 객체 생성
+                // =================================================================
+                // 1단계: YAML의 Volumes와 Services를 분석하여 시각적 노드 객체 생성
+                // =================================================================
                 if (composeData.Volumes != null)
                 {
                     foreach (var vol in composeData.Volumes)
@@ -67,8 +74,8 @@ namespace DockerDiagram.Helpers
                             Id = Guid.NewGuid().ToString(),
                             Name = vol.Key,
                             Type = NodeType.Volume,
-                            Width = 120,
-                            Height = 60
+                            Width = 160,
+                            Height = 80
                         };
                         newSheet.Nodes.Add(nodeMap[vol.Key]);
                     }
@@ -82,7 +89,7 @@ namespace DockerDiagram.Helpers
                         Name = !string.IsNullOrEmpty(svc.Value.ContainerName) ? svc.Value.ContainerName : svc.Key,
                         ImageName = svc.Value.Image ?? "unknown-image",
                         Type = NodeType.Container,
-                        Width = 150,
+                        Width = 160,
                         Height = 80,
                         RestartPolicy = svc.Value.Restart ?? "no",
                         PortBindings = svc.Value.Ports != null ? new List<string>(svc.Value.Ports) : new List<string>(),
@@ -91,7 +98,9 @@ namespace DockerDiagram.Helpers
                     newSheet.Nodes.Add(nodeMap[svc.Key]);
                 }
 
-                // 2단계: 네트워크 분류 및 선 긋기
+                // =================================================================
+                // 2단계: 네트워크 분류 및 의존성/볼륨 선 긋기 로직
+                // =================================================================
                 var visualGroupMap = new Dictionary<string, List<NodeViewModel>>();
                 var unassignedNodes = new List<NodeViewModel>();
                 var volumeToNetMap = new Dictionary<NodeViewModel, string>();
@@ -108,6 +117,7 @@ namespace DockerDiagram.Helpers
 
                     string? primaryNet = null;
 
+                    // 네트워크 정보 파싱 (List 방식과 Dictionary 방식 모두 대응)
                     if (svc.Value.Networks is List<object> netList && netList.Count > 0)
                         primaryNet = netList[0].ToString();
                     else if (svc.Value.Networks is Dictionary<object, object> netDict && netDict.Count > 0)
@@ -123,6 +133,7 @@ namespace DockerDiagram.Helpers
                         unassignedNodes.Add(sourceContainer);
                     }
 
+                    // 볼륨 마운트 선 연결
                     if (svc.Value.Volumes != null)
                     {
                         foreach (var volMapping in svc.Value.Volumes)
@@ -145,6 +156,7 @@ namespace DockerDiagram.Helpers
                                     MountPath = mountPath
                                 });
 
+                                // 볼륨을 네트워크 그룹 안에 포함시키기 위한 처리
                                 if (primaryNet != null && !volumeToNetMap.ContainsKey(targetVolume))
                                 {
                                     volumeToNetMap[targetVolume] = primaryNet;
@@ -154,6 +166,7 @@ namespace DockerDiagram.Helpers
                         }
                     }
 
+                    // 의존성(depends_on) 선 연결
                     if (svc.Value.DependsOn != null)
                     {
                         foreach (var dep in svc.Value.DependsOn)
@@ -169,12 +182,15 @@ namespace DockerDiagram.Helpers
                     }
                 }
 
+                // 남은 볼륨 노드 처리
                 foreach (var volNode in nodeMap.Values.Where(n => n.Type == NodeType.Volume))
                 {
                     if (!volumeToNetMap.ContainsKey(volNode)) unassignedNodes.Add(volNode);
                 }
 
-                // 3단계: 2열(2xN) 자동 배치
+                // =================================================================
+                // 3단계: 화면 상의 2열(2xN) 자동 배치 알고리즘
+                // =================================================================
                 double currentGroupX = 50;
                 double currentGroupY = 50;
                 double maxGroupHeightInRow = 0;
@@ -186,18 +202,21 @@ namespace DockerDiagram.Helpers
 
                     int cols = 2;
                     int rows = Math.Max(1, (int)Math.Ceiling(nodesInGroup.Count / (double)cols));
+
+                    // 노드 규격이 160x80으로 커졌으므로, 그룹이 품어줄 수 있도록 셀 크기도 살짝 넉넉하게 180x110 그대로 유지합니다.
                     double cellWidth = 180, cellHeight = 110;
                     double gWidth = (cols * cellWidth) + 40;
                     double gHeight = (rows * cellHeight) + 60;
 
-                    var groupVm = new GroupViewModel(currentGroupX, currentGroupY, gWidth, gHeight, networkService, dialogService, netName)
+                    var groupVm = new GroupViewModel(currentGroupX, currentGroupY, gWidth, gHeight, networkService, dialogService, netName, GroupType.Network)
                     {
-                        Id = Guid.NewGuid().ToString(),
-                        Type = GroupType.Network
+                        Id = Guid.NewGuid().ToString()
                     };
+
                     newSheet.Groups.Add(groupVm);
                     groupMap[netName] = groupVm;
 
+                    // 그룹 내 노드들을 격자(Grid) 형태로 예쁘게 배치
                     for (int i = 0; i < nodesInGroup.Count; i++)
                     {
                         var node = nodesInGroup[i];
@@ -210,9 +229,11 @@ namespace DockerDiagram.Helpers
                         groupVm.AddNode(node, true);
                     }
 
+                    // 다음 그룹 배치를 위해 X좌표 이동
                     currentGroupX += gWidth + 50;
                     if (gHeight > maxGroupHeightInRow) maxGroupHeightInRow = gHeight;
 
+                    // 화면 가로 끝에 도달하면 다음 줄로 이동 (줄바꿈)
                     if (currentGroupX > 1200)
                     {
                         currentGroupX = 50;
@@ -221,6 +242,7 @@ namespace DockerDiagram.Helpers
                     }
                 }
 
+                // 네트워크 그룹에 속하지 못한 깍두기 노드들 배치
                 if (unassignedNodes.Count > 0)
                 {
                     currentGroupY += maxGroupHeightInRow + 50;
@@ -229,15 +251,17 @@ namespace DockerDiagram.Helpers
                     for (int i = 0; i < unassignedNodes.Count; i++)
                     {
                         var node = unassignedNodes[i];
-                        node.X = currentGroupX + ((i % 4) * 180);
-                        node.Y = currentGroupY + ((i / 4) * 110);
+                        node.X = currentGroupX + ((i % 4) * 180); // 셀 너비 180 간격
+                        node.Y = currentGroupY + ((i / 4) * 110); // 셀 높이 110 간격
                     }
                 }
 
                 mainVm.Sheets.Add(newSheet);
                 mainVm.ActiveSheet = newSheet;
 
-                // 4단계: 도커 배포 프로세스
+                // =================================================================
+                // 4단계: 실제 도커 엔진에 배포(docker compose up)할지 묻는 프로세스
+                // =================================================================
                 var result = System.Windows.MessageBox.Show(
                     $"[{sheetName}] 화면 구성을 완료했습니다.\n이 구성대로 실제 도커 엔진에 컨테이너들을 배포(실행)하시겠습니까?",
                     "실제 도커 배포",
@@ -247,11 +271,11 @@ namespace DockerDiagram.Helpers
                 if (result == System.Windows.MessageBoxResult.Yes)
                 {
                     var containerNodes = newSheet.Nodes.Where(n => n.Type == NodeType.Container).ToList();
-
-                    foreach (var node in containerNodes) node.IsCreating = true;
+                    foreach (var node in containerNodes) node.IsCreating = true; // UI에 로딩 스피너 표시용
 
                     try
                     {
+                        // 백그라운드에서 CMD 창 없이 docker compose 명령 실행
                         var psi = new System.Diagnostics.ProcessStartInfo
                         {
                             FileName = "docker",
@@ -266,8 +290,8 @@ namespace DockerDiagram.Helpers
                         using var process = new System.Diagnostics.Process { StartInfo = psi };
                         var errorBuilder = new System.Text.StringBuilder();
 
-                        process.OutputDataReceived += (sender, e) => { };
-                        process.ErrorDataReceived += (sender, e) =>
+                        process.OutputDataReceived += (sender, e) => { }; // 표준 출력은 무시
+                        process.ErrorDataReceived += (sender, e) => // 에러 로그 수집
                         {
                             if (!string.IsNullOrEmpty(e.Data)) errorBuilder.AppendLine(e.Data);
                         };
@@ -276,7 +300,7 @@ namespace DockerDiagram.Helpers
                         process.BeginOutputReadLine();
                         process.BeginErrorReadLine();
 
-                        await Task.Run(() => process.WaitForExit());
+                        await Task.Run(() => process.WaitForExit()); // 프로세스 종료 대기
 
                         foreach (var node in containerNodes) node.IsCreating = false;
 
@@ -284,6 +308,7 @@ namespace DockerDiagram.Helpers
                         {
                             var allContainers = await containerService.GetContainersAsync();
 
+                            // 배포된 컨테이너들의 실제 ID를 매핑하여 상세 정보를 다시 불러옴
                             foreach (var node in containerNodes)
                             {
                                 var matched = allContainers.FirstOrDefault(c =>
@@ -295,7 +320,7 @@ namespace DockerDiagram.Helpers
                                 if (matched != null)
                                 {
                                     node.ContainerId = matched.Id;
-                                    await node.RefreshDetailsAsync();
+                                    await node.RefreshDetailsAsync(); // 실시간 상태(CPU, 메모리 등) 갱신
                                 }
                             }
 

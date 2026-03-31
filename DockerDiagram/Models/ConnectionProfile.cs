@@ -2,28 +2,24 @@
 
 namespace DockerDiagram.Models
 {
-    // 접속 방식을 정의하는 열거형 (나중에 K8s 등 추가 가능)
-    public enum EndpointType
-    {
-        Local,          // 내 PC의 도커
-        SshRemote,      // 원격 서버의 도커 (SSH 터널링)
-        Kubernetes      // (미래 확장용) K8s API 서버
-    }
-
+    /// <summary>
+    /// 도커 엔진에 연결하기 위한 접속 정보(신분증)를 담는 데이터 모델입니다.
+    /// 로컬 PC 접속뿐만 아니라 SSH 원격 접속에 필요한 네트워크 정보를 모두 포함합니다.
+    /// </summary>
     public class ConnectionProfile
     {
-        public string ProfileId { get; set; } = Guid.NewGuid().ToString();
-        public string Name { get; set; } = "Local Docker";
-        public EndpointType Type { get; set; } = EndpointType.Local;
+        public string ProfileId { get; set; } = Guid.NewGuid().ToString(); // 프로필 고유 식별자
+        public string Name { get; set; } = "Local Docker"; // UI 탭 등에 표시될 연결 이름
+        public EndpointType Type { get; set; } = EndpointType.Local; // 접속 방식 (Local, SshRemote 등)
 
         // =====================================
         // [SSH 원격 접속 전용 데이터]
         // =====================================
-        public string? HostIp { get; set; }
-        public string? SshUsername { get; set; }
-        public int SshPort { get; set; } = 22;
+        public string? HostIp { get; set; } // 원격 서버 IP 주소
+        public string? SshUsername { get; set; } // 원격 서버 SSH 로그인 계정명 (예: ubuntu, root)
+        public int SshPort { get; set; } = 22; // SSH 접속 포트 (기본값 22)
 
-        public int LocalTunnelPort { get; set; }
-        public string? SshKeyFilePath { get; set; }
+        public int LocalTunnelPort { get; set; } // 백그라운드에서 뚫어놓은 내 PC의 비밀 통로 포트 (예: 23750)
+        public string? SshKeyFilePath { get; set; } // 자동 재접속을 위한 SSH 프라이빗 키(.pem) 파일 경로
     }
 }

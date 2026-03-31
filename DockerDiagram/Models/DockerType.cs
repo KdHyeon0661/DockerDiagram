@@ -2,102 +2,91 @@
 
 namespace DockerDiagram.Models
 {
-    // 1. 공통 베이스 클래스 (Id, Name, StateColor)
+    /// <summary>
+    /// 도커 엔진에서 가져온 리소스(컨테이너, 볼륨, 네트워크 등)들의 공통 속성을 묶어둔 최상위 클래스입니다.
+    /// UI에 바인딩되어 상태가 변할 때마다 화면을 갱신(ViewModelBase)합니다.
+    /// </summary>
     public abstract class DockerResource : ViewModelBase
     {
         private string _id = string.Empty;
-        public string Id
-        {
-            get => _id;
-            set { if (_id != value) { _id = value; OnPropertyChanged(); } }
-        }
+        public string Id { get => _id; set => SetProperty(ref _id, value); } // 리소스의 고유 식별자 (ID)
 
         private string _name = string.Empty;
-        public string Name
-        {
-            get => _name;
-            set { if (_name != value) { _name = value; OnPropertyChanged(); } }
-        }
+        public string Name { get => _name; set => SetProperty(ref _name, value); } // 리소스의 이름
 
         private string _stateColor = "#FFFFFF";
-        public string StateColor
-        {
-            get => _stateColor;
-            set { if (_stateColor != value) { _stateColor = value; OnPropertyChanged(); } }
-        }
+        public string StateColor { get => _stateColor; set => SetProperty(ref _stateColor, value); } // 상태를 나타내는 UI 색상 (예: running=초록, exited=빨강)
     }
 
-    // 컨테이너 클래스 (Image, State, Ports 포함 + NodeType)
-    public class DockerContainer : DockerResource
+    /// <summary>
+    /// 컨테이너, 볼륨, 인터넷 등 다이어그램의 '단일 노드'들을 아우르는 공통 부모입니다.
+    /// MainViewModel 등에서 노드들을 한 번에 묶어서 처리할 때 유용하게 사용됩니다.
+    /// </summary>
+    public abstract class DockerNodeBase : DockerResource
+    {
+        // 상속받는 자식들은 반드시 자기만의 NodeType을 명시하도록 강제합니다.
+        public abstract NodeType Type { get; }
+    }
+
+    /// <summary>
+    /// 도커 컨테이너의 실시간 상태 정보를 담는 모델 클래스입니다.
+    /// </summary>
+    public class DockerContainer : DockerNodeBase // DockerResource 대신 DockerNodeBase 상속!
     {
         private string _image = string.Empty;
-        public string Image
-        {
-            get => _image;
-            set { if (_image != value) { _image = value; OnPropertyChanged(); } }
-        }
+        public string Image { get => _image; set => SetProperty(ref _image, value); } // 컨테이너를 생성한 기반 이미지명
 
         private string _state = string.Empty;
-        public string State
-        {
-            get => _state;
-            set { if (_state != value) { _state = value; OnPropertyChanged(); } }
-        }
+        public string State { get => _state; set => SetProperty(ref _state, value); } // 현재 상태 (running, exited 등)
 
         private string _ports = string.Empty;
-        public string Ports
-        {
-            get => _ports;
-            set { if (_ports != value) { _ports = value; OnPropertyChanged(); } }
-        }
+        public string Ports { get => _ports; set => SetProperty(ref _ports, value); } // 호스트와 연결된 포트 매핑 정보
 
-        // 컨테이너도 노드의 일종이므로 Type을 가짐
-        private NodeType _type = NodeType.Container;
-        public NodeType Type
-        {
-            get => _type;
-            private set { if (_type != value) { _type = value; OnPropertyChanged(); } }
-        }
+        public override NodeType Type => NodeType.Container; // override로 구현
     }
 
-    // 볼륨 클래스 (불필요한 속성 제거 + NodeType만 유지)
-    public class DockerVolume : DockerResource
+    /// <summary>
+    /// 도커 볼륨의 정보를 담는 모델 클래스입니다.
+    /// </summary>
+    public class DockerVolume : DockerNodeBase // DockerResource 대신 DockerNodeBase 상속!
     {
-        private NodeType _type = NodeType.Volume;
-
-        public NodeType Type
-        {
-            get => _type;
-            private set { if (_type != value) { _type = value; OnPropertyChanged(); } }
-        }
+        public override NodeType Type => NodeType.Volume; // override로 구현
     }
 
-    public class DockerInternet : DockerResource
+    /// <summary>
+    /// 외부 네트워크(인터넷) 연결을 시각적으로 표현하기 위한 가상 모델 클래스입니다.
+    /// </summary>
+    public class DockerInternet : DockerNodeBase // DockerResource 대신 DockerNodeBase 상속!
     {
-        private NodeType _type = NodeType.Internet;
-
-        public NodeType Type
-        {
-            get => _type;
-            private set { if (_type != value) { _type = value; OnPropertyChanged(); } }
-        }
+        public override NodeType Type => NodeType.Internet; // override로 구현
     }
 
-    // 3. 그룹 클래스 (GroupType 사용 - 2가지 타입 대응)
-    public class DockerGroup : DockerResource
+    /// <summary>
+    /// 일반 폴더와 도커 네트워크를 모두 아우르는 '그룹'들의 공통 부모(추상) 클래스입니다.
+    /// MainViewModel 등에서 두 그룹을 한 번에 묶어서 처리할 때(다형성) 유용하게 사용됩니다.
+    /// </summary>
+    public abstract class DockerGroupBase : DockerResource
     {
-        private string _driver = string.Empty;
-        public string Driver
-        {
-            get => _driver;
-            set { if (_driver != value) { _driver = value; OnPropertyChanged(); } }
-        }
+        // 상속받는 자식들은 반드시 자기만의 GroupType을 명시하도록 강제합니다.
+        public abstract GroupType Type { get; }
+    }
 
-        private GroupType _type;
-        public GroupType Type
-        {
-            get => _type;
-            set { if (_type != value) { _type = value; OnPropertyChanged(); } }
-        }
+    /// <summary>
+    /// 단순한 시각적 묶음을 위한 일반 폴더(그룹) 모델 클래스입니다.
+    /// </summary>
+    public class DockerGeneralGroup : DockerGroupBase // DockerResource 대신 DockerGroupBase 상속!
+    {
+        public override GroupType Type => GroupType.General; // override로 구현
+    }
+
+    /// <summary>
+    /// 여러 컨테이너를 동일한 네트워크 대역으로 묶어주는 도커 네트워크 모델 클래스입니다.
+    /// </summary>
+    public class DockerNetworkGroup : DockerGroupBase // DockerResource 대신 DockerGroupBase 상속!
+    {
+        private string _driver = "bridge";
+        public string Driver { get => _driver; set => SetProperty(ref _driver, value); }
+
+        public override GroupType Type => GroupType.Network; // override로 구현
     }
 }

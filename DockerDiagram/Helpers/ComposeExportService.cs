@@ -13,8 +13,15 @@ using YamlDotNet.Serialization.NamingConventions;
 
 namespace DockerDiagram.Helpers
 {
+    /// <summary>
+    /// 현재 화면(Sheet)에 그려진 도커 다이어그램을 분석하여, 
+    /// 실제 실행 가능한 docker-compose.yml 파일로 내보내는(Export) 정적 서비스 클래스입니다.
+    /// </summary>
     public static class ComposeExportService
     {
+        /// <summary>
+        /// 사용자에게 저장 위치를 묻는 다이얼로그를 띄우고, 다이어그램 데이터를 YAML 형식의 파일로 저장합니다.
+        /// </summary>
         public static void ExportToCompose(SheetViewModel sheet, IDialogService dialogService)
         {
             if (sheet == null || sheet.Nodes.Count == 0)
@@ -34,7 +41,7 @@ namespace DockerDiagram.Helpers
             {
                 try
                 {
-                    string yamlContent = GenerateYaml(sheet);
+                    string yamlContent = GenerateYaml(sheet); // YAML 문자열 생성
                     File.WriteAllText(dlg.FileName, yamlContent, Encoding.UTF8);
                     dialogService.ShowInfo($"파일이 생성되었습니다!\n{dlg.FileName}", "성공");
                 }
@@ -45,6 +52,9 @@ namespace DockerDiagram.Helpers
             }
         }
 
+        /// <summary>
+        /// 시트의 데이터(노드, 연결선, 그룹)를 분석하여 ComposeFileModel 객체로 매핑한 뒤, YAML 문자열로 직렬화합니다.
+        /// </summary>
         private static string GenerateYaml(SheetViewModel sheet)
         {
             // 1. YAML 변환용 최상위 객체 생성
@@ -87,7 +97,7 @@ namespace DockerDiagram.Helpers
                 if (connectedVolumes.Count > 0)
                     service.Volumes = connectedVolumes;
 
-                // 의존성(depends_on)
+                // 의존성(depends_on) 정보 세팅
                 var depConns = sheet.Connectors
                     .Where(c => c.Source == node && c.RelationType == RelationType.Dependency &&
                                 c.Target is NodeViewModel tNode && tNode.Type == NodeType.Container)
@@ -103,7 +113,7 @@ namespace DockerDiagram.Helpers
                     }
                 }
 
-                // 네트워크 정보 조회
+                // 네트워크 정보 조회 및 세팅
                 var connectedNets = GetConnectedNetworks(node, sheet);
                 if (connectedNets.Count > 0)
                 {
@@ -177,6 +187,10 @@ namespace DockerDiagram.Helpers
         }
 
         // --- 헬퍼 메서드들 ---
+
+        /// <summary>
+        /// 도커 컴포즈의 서비스 이름 규칙에 맞게 특수문자를 언더바(_)로 치환합니다.
+        /// </summary>
         private static string SanitizeServiceName(string rawName)
         {
             if (string.IsNullOrWhiteSpace(rawName)) return "service";
@@ -186,9 +200,15 @@ namespace DockerDiagram.Helpers
             return string.IsNullOrEmpty(s) ? "service" : s;
         }
 
+        /// <summary>
+        /// 도커 컨테이너 이름 규칙에 맞게 사용할 수 없는 문자를 제거합니다.
+        /// </summary>
         private static string SanitizeContainerName(string rawName) =>
             string.IsNullOrWhiteSpace(rawName) ? "container" : Regex.Replace(rawName, "[^a-zA-Z0-9_.-]", "");
 
+        /// <summary>
+        /// 중복된 서비스 이름이 있을 경우 뒤에 숫자를 붙여 고유한 이름으로 만듭니다.
+        /// </summary>
         private static string EnsureUniqueName(string name, HashSet<string> usedNames)
         {
             if (!usedNames.Contains(name)) return name;
@@ -197,8 +217,14 @@ namespace DockerDiagram.Helpers
             return $"{name}_{count}";
         }
 
+        /// <summary>
+        /// 주어진 문자열이 유효한 형태의 IPv4 주소인지 검사합니다.
+        /// </summary>
         private static bool IsValidIp(string ip) => !string.IsNullOrWhiteSpace(ip) && ip.Count(c => c == '.') == 3;
 
+        /// <summary>
+        /// 특정 컨테이너와 연결된 볼륨 목록을 찾고, .env 파일과 연동할 수 있는 환경변수 포맷의 문자열 리스트로 반환합니다.
+        /// </summary>
         private static List<string> GetConnectedVolumes(NodeViewModel container, SheetViewModel sheet)
         {
             var list = new List<string>();
@@ -214,9 +240,6 @@ namespace DockerDiagram.Helpers
 
                 string hostPath = volNode.Name;
 
-                // =================================================================
-                // ★ [환경 변수 적용부] 호스트 경로를 환경 변수 포맷으로 가공합니다.
-                // =================================================================
                 // 1. 특수문자를 언더바(_)로 치환하여 안전한 환경 변수명 생성
                 string safeEnvName = Regex.Replace(hostPath, @"[^a-zA-Z0-9_]", "_").ToUpperInvariant();
 
@@ -230,6 +253,9 @@ namespace DockerDiagram.Helpers
 
         private class NetworkInfo { public string? NetworkName; public string? IpAddress; }
 
+        /// <summary>
+        /// 특정 컨테이너가 속해있는 네트워크 그룹 목록과 각각의 할당된 IP를 찾아 반환합니다.
+        /// </summary>
         private static List<NetworkInfo> GetConnectedNetworks(NodeViewModel container, SheetViewModel sheet)
         {
             var list = new List<NetworkInfo>();
@@ -249,6 +275,9 @@ namespace DockerDiagram.Helpers
             return list;
         }
 
+        /// <summary>
+        /// 특정 네트워크 안에 정적 IP를 가진 컨테이너가 있다면, 해당 IP를 분석하여 자동으로 서브넷(Subnet) 대역을 계산해 반환합니다.
+        /// </summary>
         private static string? GetSubnetIfRequired(string networkName, List<NodeViewModel> containers)
         {
             foreach (var container in containers)

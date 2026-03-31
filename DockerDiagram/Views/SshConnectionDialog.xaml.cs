@@ -7,11 +7,18 @@ using DockerDiagram.ViewModels;
 
 namespace DockerDiagram.Views
 {
+    /// <summary>
+    /// 사용자로부터 원격 서버의 SSH 접속 정보(IP, 계정, 키 파일 등)를 입력받아, 도커 데몬에 안전하게 연결하기 위한 UI 팝업 창(View) 클래스입니다.
+    /// 내부적으로 백그라운드 SSH 터널링(포트 포워딩)을 구축하고, 통신 성공 시 메인 화면에 원격 서버 전용 탭(Sheet)을 새롭게 추가하는 핵심 진입점 역할을 합니다.
+    /// </summary>
     public partial class SshConnectionDialog : Window
     {
         private readonly MainViewModel _mainVm;
         private readonly IDialogService _dialogService;
 
+        /// <summary>
+        /// 원격 서버 연결 대화상자를 초기화하며, 통신 성공 시 새로운 시트를 추가할 메인 뷰모델과 커스텀 알림을 띄울 다이얼로그 서비스를 주입받습니다.
+        /// </summary>
         public SshConnectionDialog(MainViewModel mainVm, IDialogService dialogService)
         {
             InitializeComponent();
@@ -20,6 +27,9 @@ namespace DockerDiagram.Views
         }
 
         // 1. SSH 키 파일(.pem, .ppk) 찾아보기
+        /// <summary>
+        /// 사용자의 로컬 PC 탐색기를 열어 SSH 접속에 필요한 프라이빗 인증 키 파일(.pem, .ppk 등)의 경로를 선택합니다.
+        /// </summary>
         private void BtnBrowseKey_Click(object sender, RoutedEventArgs e)
         {
             var openDlg = new OpenFileDialog
@@ -35,6 +45,11 @@ namespace DockerDiagram.Views
         }
 
         // 2. 연결 및 시트 추가 버튼 클릭
+        /// <summary>
+        /// '연결 및 시트 추가' 버튼 클릭 시 호출됩니다. 
+        /// 입력된 접속 정보를 바탕으로 로컬 PC에 SSH 터널을 뚫고, 원격 도커 엔진에 Ping을 보내 생존 여부를 최종 확인한 후,
+        /// 성공 시 원격 서버의 데이터를 실시간으로 동기화할 새로운 시트(SheetViewModel)를 메인 뷰모델에 추가합니다.
+        /// </summary>
         private async void BtnConnect_Click(object sender, RoutedEventArgs e)
         {
             // 기초 유효성 검사

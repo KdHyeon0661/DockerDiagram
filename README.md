@@ -7,6 +7,11 @@
 
 ## 주요 기능
 
+### 멀티 탭 및 원격 환경 지원 (SSH 터널링) **[NEW]**
+- **Local PC**의 Docker Desktop 뿐만 아니라, **원격 서버의 Docker Daemon**에도 접속하여 관리할 수 있습니다.
+- **SSH 터널링**을 통한 안전한 연결 및 프라이빗 키 인증을 지원합니다.
+- 각 환경(엔드포인트)은 **독립된 탭(Sheet)**으로 구성되어 여러 서버의 인프라를 동시에 설계하고 모니터링할 수 있습니다.
+
 ### Docker 리소스 탐색 & 동기화
 - Docker 엔진과 주기적으로 동기화하여 다음 항목을 표시합니다.
   - **Containers**
@@ -16,16 +21,23 @@
 - 목록에서 항목을 **드래그 앤 드롭**으로 캔버스에 배치합니다.
 - 목록 항목에서 **삭제(컨테이너/볼륨/네트워크/이미지)**를 지원합니다.
   - 이미지 삭제 실패 시 **강제 삭제(force)**를 제안하는 흐름이 포함되어 있습니다.
+- **[NEW]** 전용 **이미지 관리(Image Manager)** 및 검색 창을 지원합니다.
+- **[NEW]** **시스템 대청소(System Prune)** 기능을 통해 중지된 컨테이너나 미사용 볼륨, 네트워크를 GUI에서 일괄 정리할 수 있습니다.
 
 ### 캔버스(다이어그램) 편집
 - 노드(Node): 컨테이너/볼륨/네트워크를 시각 요소로 배치
 - 커넥터(Connector): 노드 간 관계를 표현
 - 라우팅: `OrthogonalRouter`로 **직교(꺾이는) 경로** 생성 (포트 방향 포함)
 
+### 강력한 컨테이너 생성 파이프라인 **[NEW]**
+- **UI 직접 설정**: 포트, 볼륨, 환경변수 등을 생성 다이얼로그에서 직관적으로 입력
+- **CLI 파싱 (Hybrid)**: `docker run` 형태의 명령어를 그대로 붙여넣으면, 앱이 자동으로 분석하여 캔버스에 노드를 배치하고 실행
+- **Dockerfile 빌드**: 작성한 도커파일 텍스트나 업로드한 파일을 기반으로 백그라운드에서 이미지를 빌드한 뒤 즉시 컨테이너로 구동
+
 ### 관계(Connector) 타입
 코드상 관계 타입은 3가지로 정의되어 있으며, 상황에 따라 표시 정보가 다릅니다.
 - **Dependency**: Container ↔ Container
-- **VolumeMount**: Container ↔ Volume (마운트 경로 표시 가능)
+- **VolumeMount**: Container ↔ Volume (마운트 경로 표시 가능, 연결 시 자동 백업/복원 마운트 처리 지원)
 - **NetworkAttach**: Container ↔ Network (컨테이너 IP 표시 가능)
 
 ### 그룹(Group)
@@ -109,16 +121,19 @@ dotnet run
 
 ## 프로젝트 구조
 
-```
+본 프로젝트는 **MVVM 패턴**과 **의존성 주입(DI)**을 준수하여 설계되었습니다.
+
+```text
 DockerDiagram/
 ├─ DockerDiagram.csproj
 ├─ App.xaml / App.xaml.cs
-├─ MainWindow.xaml / MainWindow.xaml.cs
+├─ MainWindow.xaml / MainWindow.xaml.cs    # 캔버스 줌/팬, 마우스 드래그/리사이징 UI 라우터
 ├─ Helpers/
-│  ├─ DockerApiService.cs          # Docker.DotNet 기반 API (start/stop/pause/restart, copy, exec 등)
-│  ├─ DockerServiceHelper.cs       # Docker Desktop 실행/감지 (Windows)
+│  ├─ DockerApiService.cs          # Docker.DotNet API 기반 코어 통신 서비스
+│  ├─ DockerServiceHelper.cs       # Docker Desktop 실행/감지
+│  ├─ SshTunnelManager.cs          # SSH 포트 포워딩 관리
 │  ├─ ComposeExportService.cs      # docker-compose.yml 생성
-│  ├─ FileService.cs              # .vdm 저장/로드(QuickSave 포함)
+│  ├─ FileService.cs               # .vdm 저장/로드(QuickSave 포함)
 │  ├─ OrthogonalRouter.cs          # 직교 라우팅 + PortDirection
 │  └─ RelayCommand.cs / ViewModelBase.cs ...
 ├─ Models/
@@ -127,17 +142,20 @@ DockerDiagram/
 │  ├─ TemplateItem.cs
 │  └─ SaveData.cs                  # .vdm 파일 모델
 ├─ ViewModels/
-│  ├─ MainViewModel.cs             # 전체 상태/동기화/시트 관리/삭제/Export/Save
-│  ├─ SheetViewModel.cs            # 캔버스 상태(줌/팬, 노드/커넥터/그룹)
+│  ├─ MainViewModel.cs             # 탭(Sheet) 관리, 전역 커맨드, CLI 파싱 등 컨트롤 타워
+│  ├─ SheetViewModel.cs            # 개별 캔버스 상태(줌/팬, 노드/커넥터/그룹)
 │  ├─ NodeViewModel.cs             # 노드(컨테이너/볼륨/네트워크) + 컨테이너 제어 커맨드
 │  ├─ ConnectorViewModel.cs        # 연결선(관계 타입, IP/마운트 경로 표시)
 │  └─ GroupViewModel.cs            # 그룹(Arrange, StartAll/StopAll)
-└─ Views/
+└─ Views/                          # IDialogService를 주입받는 순수 UI 팝업 창들
    ├─ ContainerDialog.xaml(.cs)
    ├─ VolumeDialog.xaml(.cs)
    ├─ NetworkDialog.xaml(.cs)
    ├─ MountDialog.xaml(.cs)
-   └─ ArrangeDialog.xaml(.cs)
+   ├─ ArrangeDialog.xaml(.cs)
+   ├─ ImageManagerWindow.xaml(.cs) # 이미지 관리 뷰
+   ├─ PruneDialog.xaml(.cs)        # 시스템 대청소 뷰
+   └─ SshConnectionDialog.xaml(.cs)# 원격 SSH 연결 뷰
 ```
 
 ---
@@ -148,6 +166,9 @@ DockerDiagram/
 - Docker Desktop이 **정상적으로 Running**인지 확인
 - Windows에서 Named Pipe(`npipe://./pipe/docker_engine`) 접근 권한 문제일 수 있습니다.
 - Docker Desktop 재시작 후 재시도
+
+### 컨테이너 터널링/SSH 접속 문제
+- 로컬 PC에서 SSH 접속에 필요한 프라이빗 키(.pem, .ppk)의 권한 및 포트(기본 22) 개방 상태를 확인해 주세요.
 
 ### Terminal 버튼이 동작하지 않을 때
 - `docker` CLI가 PATH에 없으면 `docker exec ...`가 실패합니다.
@@ -164,8 +185,8 @@ DockerDiagram/
 
 ## 추가 예정
 
-- **private 이미지 관련 처리**
 - **swarm 기능**
+- **k8s 기능**
 - **엔드포인트 지정**
 - **전반적인 구조 개선**
 - **etc**

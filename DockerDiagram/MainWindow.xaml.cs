@@ -12,68 +12,89 @@ using DockerDiagram.ViewModels;
 
 namespace DockerDiagram
 {
+    /// <summary>
+    /// 애플리케이션의 메인 UI 윈도우(View)입니다.
+    /// 마우스 드래그 앤 드롭, 캔버스 패닝(이동) 및 줌, 객체 리사이징, 선 긋기 등 
+    /// 사용자의 복잡한 시각적 상호작용(Interaction)을 감지하고 제어하여 MainViewModel로 전달하는 UI 컨트롤 타워 역할을 합니다.
+    /// </summary>
     [SupportedOSPlatform("windows")]
     public partial class MainWindow : Window
     {
         // --- 1. 기본 변수들 ---
+        // 사이드바에서 아이템을 캔버스로 끌어올 때(Drag & Drop) 사용하는 시작점 및 드래그 상태
         private Point _toolStartPoint;
         private bool _isToolDragging = false;
 
+        // 캔버스 내 일반 그리기(드래그) 시작 좌표
         private Point _startPoint;
 
+        // 이미 캔버스에 배치된 노드를 마우스로 잡고 이동할 때 사용하는 변수들
         private bool _isNodeDragging = false;
-        private Point _nodeClickOffset;
+        private Point _nodeClickOffset; // 마우스 커서와 노드 좌상단 간의 거리 보정값
         private FrameworkElement? _draggedNodeElement = null;
 
+        // 컨테이너 포트 간 선(Connector)을 직접 그을 때 사용하는 상태 변수들
         private bool _isConnecting = false;
         private IConnectableItem? _sourceItem = null;
         private Point _startPointCanvas;
         private Border? _lastHitPort = null;
         private PortDirection _sourceDir = PortDirection.None;
 
+        // 노드나 그룹의 모서리를 잡아당겨 크기를 조절(Resizing)할 때 사용하는 변수들
         private bool _isResizing = false;
         private string _resizeDir = "";
         private NodeViewModel? _resizingNode = null;
         private Point _resizeStartWorldPos;
         private Rect _resizeStartNodeRect;
 
+        // 마우스 우클릭으로 캔버스 전체 화면을 이동(Panning)시킬 때 사용하는 변수들
         private bool _isPanning = false;
         private Point _panStartClick;
         private Point _panStartTranslate;
 
+        // 상단 멀티 탭(시트) 순서를 드래그해서 바꿀 때 사용하는 상태 변수들
         private Point _sheetDragStartPoint;
         private bool _isSheetDragging = false;
         private bool _isClickedOnTab = false;
         private SheetViewModel? _renamingSheet;
 
+        // 탭 스크롤 좌우 이동 거리 상수
         private const double SCROLL_OFFSET = 400.0;
 
         // --- 2. 그룹핑(Grouping) 관련 변수 ---
+        // 사용자가 직접 화면에 박스를 그려서 그룹/네트워크를 묶는 모드 활성화 플래그
         private bool _isGroupingMode = false;
+        private bool _isNetworkDrawingMode = false;
 
+        // 이미 만들어진 그룹 전체를 잡고 이동할 때 사용하는 상태 변수들
         private bool _isGroupMoving = false;
         private GroupViewModel? _movingGroup = null;
         private Point _groupClickOffset;
 
-        private bool _isNetworkDrawingMode = false;
-
         // --- 3. 재연결(Reconnection) 관련 변수 ---
+        // 이미 그어진 선(Connector)의 끝점을 잡고 다른 곳으로 연결을 옮길 때 사용하는 상태 변수들
         private bool _isReconnecting = false;
         private ConnectorViewModel? _reconnectingConn = null;
         private string _reconnectType = "";
 
+        // 그룹 리사이징 정보 보관용
         private GroupViewModel? _resizingGroup = null;
         private Rect _resizeStartGroupRect;
 
+        // 백그라운드 상태 모니터링 타이머들
         private DispatcherTimer _dockerMonitorTimer;
         private DispatcherTimer _autoSaveTimer;
 
+        // 팝업/알림창 출력을 담당하는 다이얼로그 서비스
         private readonly IDialogService _dialogService;
 
         // ViewModel에 쉽게 접근하기 위한 헬퍼 프로퍼티
         private MainViewModel ViewModel => (MainViewModel)this.DataContext;
 
-        // 생성자
+        /// <summary>
+        /// MainWindow를 초기화하고 의존성(ViewModel, Service)을 주입받습니다.
+        /// 앱 전반의 백그라운드 타이머(도커 상태 감시, 자동 저장)를 세팅합니다.
+        /// </summary>
         public MainWindow(MainViewModel viewModel, IDockerService dockerService, IDialogService dialogService)
         {
             InitializeComponent();
@@ -92,13 +113,12 @@ namespace DockerDiagram
             _autoSaveTimer = new DispatcherTimer();
             _autoSaveTimer.Interval = TimeSpan.FromSeconds(30);
             _autoSaveTimer.Tick += AutoSaveTimer_Tick;
-
-            // 참고: 인자로 받은 dockerService는 App.xaml.cs에서 생성된 기본(로컬) 서비스입니다.
-            // 필드에 할당하는 대신, ViewModel의 첫 번째 시트(Local)가 이미 이 서비스를 들고 있으므로
-            // 앞으로는 ViewModel.ActiveSheet.DockerService를 통해 모든 서비스에 접근합니다.
         }
 
-        // 2. 종료 시 (변경사항 있을 때만 묻기)
+        /// <summary>
+        /// 앱이 완전히 종료되기 직전에 호출되는 이벤트입니다.
+        /// 작업 중인 캔버스에 저장되지 않은 변경사항(IsModified 플래그)이 있다면 사용자에게 묻고 안전하게 저장(Quick Save)합니다.
+        /// </summary>
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
             if (this.DataContext is not MainViewModel vm) return;
@@ -120,7 +140,6 @@ namespace DockerDiagram
                 }
                 else
                 {
-                    // DialogService 사용을 권장하나 기존 로직 유지
                     string? savedPath = FileService.SaveDiagramAs(vm, _dialogService);
                     if (string.IsNullOrEmpty(savedPath))
                     {
@@ -130,7 +149,9 @@ namespace DockerDiagram
             }
         }
 
-        // 자동 저장 로직
+        /// <summary>
+        /// 설정된 주기(기본 30초)마다 백그라운드에서 조용히 실행되어 작업 내용을 현재 파일에 덮어쓰기 하는 자동 저장 핸들러입니다.
+        /// </summary>
         private void AutoSaveTimer_Tick(object? sender, EventArgs e)
         {
             var vm = this.DataContext as MainViewModel;
@@ -147,34 +168,29 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 윈도우 UI가 메모리에 성공적으로 로드된 직후 실행됩니다.
+        /// 상태 모니터링 타이머들을 시작하고, 도커 프로세스 생존 여부를 최초로 검사합니다.
+        /// </summary>
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
             UpdateScrollButtonsState();
 
-            // ViewModel이 정상적으로 바인딩되었는지 확인
             if (ViewModel == null) return;
 
-            // 창 제목 업데이트
             UpdateTitle();
 
-            // 현재 시트(기본은 로컬)의 도커 상태 체크
-            // 내부적으로 ActiveSheet.DockerService를 사용하도록 수정되어야 합니다.
             await CheckDockerStateAsync();
 
-            // 도커 감시 타이머 시작
             if (!_dockerMonitorTimer.IsEnabled) _dockerMonitorTimer.Start();
-
-            // 자동 저장 타이머 시작
             if (!_autoSaveTimer.IsEnabled) _autoSaveTimer.Start();
-
-            // ★ [중요] 기존의 FileService.LoadDiagramFromPathAsync 로직은 제거했습니다.
-            // MainViewModel 생성자에서 이미 파일을 불러오고 있으므로, 
-            // 여기서 또 불러오면 중복 로드 버그가 발생하기 때문입니다.
         }
 
+        /// <summary>
+        /// 백그라운드에서 주기적으로 도커(Docker Desktop) 엔진이 꺼져있는지 감시하는 타이머 핸들러입니다.
+        /// </summary>
         private async void DockerMonitorTimer_Tick(object? sender, EventArgs e)
         {
-            // 현재 탭(시트)이 '로컬'일 때만 내 PC의 도커가 켜져 있는지 확인합니다.
             if (ViewModel.ActiveSheet?.Profile.Type == EndpointType.Local)
             {
                 if (DockerServiceHelper.IsDockerRunning()) return;
@@ -185,9 +201,11 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 도커 엔진이 꺼져있음을 감지했을 때 사용자에게 알림을 띄우고, 승인 시 도커를 다시 실행시켜주는 자동 복구(Failover) 로직입니다.
+        /// </summary>
         private async Task CheckDockerStateAsync()
         {
-            // 현재 시트가 로컬이 아니면 팝업을 띄우지 않고 조용히 넘어갑니다.
             if (ViewModel.ActiveSheet?.Profile.Type != EndpointType.Local) return;
             if (DockerServiceHelper.IsDockerRunning()) return;
 
@@ -199,7 +217,6 @@ namespace DockerDiagram
             {
                 try
                 {
-                    // ★ 삭제된 _systemService 대신, 현재 시트(로컬)의 도커 서비스를 전달!
                     await DockerServiceHelper.StartDockerAsync(ViewModel.ActiveSheet.DockerService, _dialogService);
 
                     if (DataContext is MainViewModel vm)
@@ -218,8 +235,11 @@ namespace DockerDiagram
             }
         }
 
-
         // --- 스크롤 로직 ---
+
+        /// <summary>
+        /// 상단 멀티 탭(시트) 목록이 화면을 넘어갈 정도로 길어질 경우, 좌/우 화살표 버튼을 클릭해 탭을 부드럽게 스크롤하는 로직입니다.
+        /// </summary>
         private void ScrollLeft_Click(object sender, RoutedEventArgs e)
         {
             double newOffset = Math.Max(0, TabScrollViewer.HorizontalOffset - SCROLL_OFFSET);
@@ -235,6 +255,9 @@ namespace DockerDiagram
         private void TabScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e) => UpdateScrollButtonsState();
         private void TabScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateScrollButtonsState();
 
+        /// <summary>
+        /// 탭 스크롤 위치에 따라 좌/우 이동 화살표 버튼의 활성화(Enable) 상태를 갱신합니다.
+        /// </summary>
         private void UpdateScrollButtonsState()
         {
             Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() =>
@@ -249,6 +272,11 @@ namespace DockerDiagram
         }
 
         // --- 좌표 변환 헬퍼 ---
+
+        /// <summary>
+        /// 캔버스를 확대/축소(Zoom)하거나 패닝(Panning)했을 때, 화면상의 마우스 클릭 위치를 
+        /// 내부 좌표계(World Point) 기준으로 변환하여 정확히 어떤 위치를 클릭했는지 보정해 주는 핵심 헬퍼입니다.
+        /// </summary>
         private Point GetWorldPosition(MouseEventArgs e)
         {
             var parent = (UIElement)ZoomPanGrid.Parent;
@@ -260,6 +288,10 @@ namespace DockerDiagram
         }
 
         // --- 키보드 입력 ---
+
+        /// <summary>
+        /// 캔버스 위에서 사용자가 키보드의 'Delete' 키를 눌렀을 때 선택된 항목(노드, 선, 그룹 등)을 즉시 삭제하는 전역 단축키 처리기입니다.
+        /// </summary>
         private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.Delete)
@@ -270,12 +302,20 @@ namespace DockerDiagram
         }
 
         // --- 옵션 팝업 및 기능 버튼 ---
+
+        /// <summary>
+        /// 하단(또는 툴바)에 있는 톱니바퀴 모양의 옵션 메뉴를 클릭하여 팝업을 엽니다.
+        /// </summary>
         private void OptionButton_Click(object sender, RoutedEventArgs e)
         {
             MapSizePanel.Visibility = Visibility.Collapsed;
             OptionPopup.IsOpen = true;
         }
 
+        /// <summary>
+        /// 팝업 메뉴에서 '그룹 모드'를 활성화하거나 비활성화하여, 사용자가 마우스로 도화지에 영역을 그려 노드들을 묶을 수 있게 제어합니다.
+        /// 활성화 시 다른 그리기 모드(네트워크 등)를 끄고 십자가 커서로 변경합니다.
+        /// </summary>
         private void BtnGroupMode_Checked(object sender, RoutedEventArgs e)
         {
             _isGroupingMode = true;
@@ -290,6 +330,9 @@ namespace DockerDiagram
             Mouse.OverrideCursor = null;
         }
 
+        /// <summary>
+        /// 다이어그램 캔버스의 전체 크기(가로/세로)를 사용자가 직접 설정할 수 있는 '맵 크기 조절 패널'의 가시성을 토글(열기/닫기)합니다.
+        /// </summary>
         private void BtnShowMapSize_Click(object sender, RoutedEventArgs e)
         {
             if (MapSizePanel.Visibility == Visibility.Visible)
@@ -308,8 +351,14 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 맵 크기 조절 패널 닫기 버튼.
+        /// </summary>
         private void CloseMapSize_Click(object sender, RoutedEventArgs e) => MapSizePanel.Visibility = Visibility.Collapsed;
 
+        /// <summary>
+        /// 사용자가 입력한 가로/세로 값을 검증한 뒤 현재 활성화된 시트(ActiveSheet)의 실제 맵 크기로 즉시 적용(Apply)합니다.
+        /// </summary>
         private void ApplyMapSize_Click(object sender, RoutedEventArgs e)
         {
             var vm = DataContext as MainViewModel;
@@ -323,6 +372,9 @@ namespace DockerDiagram
             OptionPopup.IsOpen = false;
         }
 
+        /// <summary>
+        /// 다이어그램 캔버스 위에서 마우스 휠을 굴렸을 때 발생하는 이벤트를 가로채어 화면을 줌 인/줌 아웃(확대/축소) 처리합니다.
+        /// </summary>
         private void Diagram_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
         {
             var vm = DataContext as MainViewModel;
@@ -332,6 +384,9 @@ namespace DockerDiagram
             vm.ActiveSheet.Scale *= zoomFactor;
         }
 
+        /// <summary>
+        /// 캔버스 빈 공간을 마우스 우클릭으로 눌렀을 때, 화면 전체를 이동시키는 패닝(Panning) 모드를 시작하고 마우스를 캡처합니다.
+        /// </summary>
         private void Diagram_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
         {
             _isPanning = true;
@@ -341,6 +396,9 @@ namespace DockerDiagram
             ZoomPanGrid.CaptureMouse();
         }
 
+        /// <summary>
+        /// 우클릭을 떼었을 때 패닝(Panning) 모드를 종료하고, 이전 도구 상태(그리기 모드 등)에 맞춰 마우스 커서를 복구합니다.
+        /// </summary>
         private void Diagram_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
         {
             if (_isPanning)
@@ -353,6 +411,11 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 캔버스 내 마우스 좌클릭 이벤트입니다. 
+        /// 사용자가 '그룹/네트워크 그리기 모드'인 경우 클릭한 지점부터 영역 생성을 시작하고(자식 요소로 이벤트 전파 차단),
+        /// 일반 모드인 경우 빈 배경을 클릭했는지를 판별하여 현재 선택된 요소를 해제(ClearSelection)합니다.
+        /// </summary>
         // 3. 캔버스 클릭 (네트워크/그룹 그리기 시작)
         private void Diagram_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
@@ -410,6 +473,11 @@ namespace DockerDiagram
             // 그래야 노드를 클릭했을 때 노드 선택/드래그 로직이 정상 작동합니다.
         }
 
+        /// <summary>
+        /// 캔버스 위에서 마우스가 움직일 때 발생하는 모든 드래그 관련 액션을 총괄하는 핵심 라우팅 메서드입니다.
+        /// 현재 활성화된 상태 플래그에 따라 '영역 그리기', '화면 패닝', '그룹 이동', '크기 조절(리사이징)', '선 긋기(연결/재연결)' 등 
+        /// 적절한 시각적 피드백을 실시간으로 렌더링합니다.
+        /// </summary>
         // 4. 캔버스 드래그 (네트워크 사각형 크기 조절 포함)
         private void Diagram_MouseMove(object sender, MouseEventArgs e)
         {
@@ -646,6 +714,11 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 캔버스 위에서 마우스 왼쪽 버튼을 뗐을 때 호출되는 최종 이벤트 핸들러입니다.
+        /// 드래그로 진행 중이던 시각적 상호작용(영역 그리기, 노드/그룹 이동, 연결선 긋기, 리사이징 등)을 확정하고,
+        /// 계산된 최종 좌표나 상태를 뷰모델(ViewModel)의 비즈니스 로직에 반영하여 실제 데이터 모델을 업데이트합니다.
+        /// </summary>
         // 5. 마우스 뗌 (네트워크/그룹 생성 완료)
         private async void Diagram_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
@@ -674,9 +747,9 @@ namespace DockerDiagram
                     if (w > 20 && h > 20)
                     {
                         // A) 그룹 생성
-                        if (_isGroupingMode)
+                        if (_isGroupingMode && vm.ActiveSheet?.DockerService is INetworkService netService)
                         {
-                            var newGroup = new GroupViewModel(x, y, w, h, null, _dialogService);
+                            var newGroup = new GroupViewModel(x, y, w, h, netService, _dialogService);
                             newGroup.ParentSheet = vm.ActiveSheet;
                             vm.ActiveSheet.Groups.Add(newGroup);
                             vm.ActiveSheet.RefreshGroupContainment(newGroup);
@@ -687,7 +760,7 @@ namespace DockerDiagram
                         // B) 네트워크 생성
                         else if (_isNetworkDrawingMode)
                         {
-                            var dlg = new Views.NetworkDialog();
+                            var dlg = new Views.NetworkDialog(_dialogService);
                             dlg.Owner = this;
                             if (dlg.ShowDialog() == true)
                             {
@@ -725,6 +798,7 @@ namespace DockerDiagram
                     var sheet = (DataContext as MainViewModel)?.ActiveSheet;
                     if (sheet != null)
                     {
+                        // 이동이 끝난 노드의 위치를 기반으로 어떤 그룹 영역에 포함되는지 검사하여 자동 소속 처리
                         var targetGroups = sheet.FindGroupsAt(nodeVm.X, nodeVm.Y, nodeVm.Width, nodeVm.Height);
 
                         foreach (var group in sheet.Groups)
@@ -818,6 +892,10 @@ namespace DockerDiagram
         }
 
         // --- 기타 UI 이벤트들 ---
+
+        /// <summary>
+        /// 그룹의 헤더(상단 제목 영역)를 마우스로 눌렀을 때, 그룹 전체 이동(드래그) 모드를 활성화합니다.
+        /// </summary>
         private void GroupHeader_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (sender is not FrameworkElement border) return;
@@ -833,6 +911,9 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 그룹의 본문(배경 영역)을 클릭했을 때 해당 그룹을 선택 상태로 전환합니다.
+        /// </summary>
         private void GroupBody_MouseDown(object sender, MouseButtonEventArgs e)
         {
             var rect = sender as FrameworkElement;
@@ -845,6 +926,10 @@ namespace DockerDiagram
             e.Handled = true;
         }
 
+        /// <summary>
+        /// 연결선의 양 끝에 위치한 그립(원형 핸들)을 클릭했을 때, 
+        /// 기존 선을 떼어내어 다른 대상에게 연결하는 '재연결(Reconnection)' 모드를 시작합니다.
+        /// </summary>
         private void ConnectorGrip_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (sender is not Ellipse ellipse) return;
@@ -862,6 +947,9 @@ namespace DockerDiagram
             e.Handled = true;
         }
 
+        /// <summary>
+        /// 상단 다이어그램 탭(시트)을 마우스로 클릭했을 때, 탭 순서를 변경하기 위한 드래그 앤 드롭 준비 상태에 돌입합니다.
+        /// </summary>
         private void SheetTab_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             _sheetDragStartPoint = e.GetPosition(null);
@@ -869,12 +957,16 @@ namespace DockerDiagram
             _isClickedOnTab = true;
         }
 
+        /// <summary>
+        /// 탭을 클릭한 상태로 일정 거리 이상 이동하면 드래그 앤 드롭 이벤트를 발생시켜 탭의 순서 변경 작업을 시작합니다.
+        /// </summary>
         protected override void OnPreviewMouseMove(MouseEventArgs e)
         {
             base.OnPreviewMouseMove(e);
             if (e.LeftButton == MouseButtonState.Pressed && !_isSheetDragging && _isClickedOnTab)
             {
                 var point = e.GetPosition(null);
+                // 마우스가 클릭된 상태에서 10픽셀 이상 움직이면 드래그로 간주
                 if (Math.Abs(point.X - _sheetDragStartPoint.X) > 10 || Math.Abs(point.Y - _sheetDragStartPoint.Y) > 10)
                 {
                     var hitElem = VisualTreeHelper.HitTest(SheetListBox, e.GetPosition(SheetListBox))?.VisualHit;
@@ -890,6 +982,9 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 드래그 중인 탭을 다른 탭 위에 떨어뜨렸을 때(Drop), 뷰모델에 순서 변경(MoveSheet)을 요청하여 UI에 반영합니다.
+        /// </summary>
         private void SheetTab_Drop(object sender, DragEventArgs e)
         {
             if (e.Data.GetDataPresent("SheetData"))
@@ -912,6 +1007,10 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 시트 이름 변경(Rename) 팝업을 띄우는 이벤트 핸들러입니다.
+        /// 시트 탭의 컨텍스트 메뉴에서 호출되며, 현재 시트의 이름을 텍스트 박스에 로드하고 포커스를 줍니다.
+        /// </summary>
         private void RenameSheet_Click(object sender, RoutedEventArgs e)
         {
             var menuItem = sender as MenuItem;
@@ -927,6 +1026,9 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 시트 이름 변경을 확정(OK)하고 팝업을 닫습니다.
+        /// </summary>
         private void RenameOK_Click(object sender, RoutedEventArgs e)
         {
             if (_renamingSheet != null && !string.IsNullOrWhiteSpace(txtRename.Text))
@@ -935,12 +1037,18 @@ namespace DockerDiagram
             _renamingSheet = null;
         }
 
+        /// <summary>
+        /// 시트 이름 변경을 취소하고 팝업을 닫습니다.
+        /// </summary>
         private void RenameCancel_Click(object sender, RoutedEventArgs e)
         {
             RenameOverlay.Visibility = Visibility.Collapsed;
             _renamingSheet = null;
         }
 
+        /// <summary>
+        /// 시트 탭의 컨텍스트 메뉴에서 시트 삭제를 클릭했을 때 호출됩니다.
+        /// </summary>
         private void DeleteSheet_Click(object sender, RoutedEventArgs e)
         {
             var menuItem = sender as MenuItem;
@@ -950,13 +1058,29 @@ namespace DockerDiagram
                 (DataContext as MainViewModel)?.DeleteSheet(sheet);
         }
 
+        /// <summary>
+        /// 탭 영역 오른쪽에 위치한 전체 시트 목록 보기 드롭다운 버튼을 클릭했을 때 호출됩니다.
+        /// </summary>
         private void SheetMenuButton_Click(object sender, RoutedEventArgs e) => SheetMenuPopup.IsOpen = true;
+
+        /// <summary>
+        /// 전체 시트 목록 드롭다운에서 특정 시트를 선택하면, 즉시 해당 시트로 이동하고 팝업을 닫습니다.
+        /// </summary>
         private void SheetMenuList_SelectionChanged(object sender, SelectionChangedEventArgs e) => SheetMenuPopup.IsOpen = false;
+
+        /// <summary>
+        /// 시트가 변경될 때, 탭 스크롤 영역에서 선택된 탭이 화면에 보이도록(ScrollIntoView) 스크롤을 자동 조절합니다.
+        /// </summary>
         private void SheetListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (SheetListBox.SelectedItem != null) SheetListBox.ScrollIntoView(SheetListBox.SelectedItem);
         }
 
+        /// <summary>
+        /// 왼쪽 사이드바 도구(Tool)를 마우스로 눌렀을 때 호출됩니다.
+        /// 사용자가 버튼을 클릭한 것인지, 아니면 드래그 앤 드롭을 시작하려는 것인지 구분하기 위해 시작 좌표를 기록합니다.
+        /// 네트워크나 그룹 도구의 경우, 캔버스 그리기 모드로 즉시 전환하고 이벤트를 소비합니다.
+        /// </summary>
         // 1. 사이드바 아이콘 클릭 (네트워크면 그리기 모드 진입)
         private void Tool_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
@@ -995,6 +1119,11 @@ namespace DockerDiagram
             Mouse.OverrideCursor = null;   // 커서 원래대로 (화살표)
         }
 
+        /// <summary>
+        /// 왼쪽 사이드바에서 마우스를 누른 채 이동할 때 호출됩니다.
+        /// 일정 거리(5픽셀) 이상 움직이면 '드래그 앤 드롭'의 시작으로 간주하고,
+        /// 선택한 도구(컨테이너, 볼륨, 템플릿 등)의 타입에 맞는 DataObject를 생성하여 OS 수준의 드래그 파이프라인(DoDragDrop)에 태워 보냅니다.
+        /// </summary>
         // 2. 마우스 이동 (네트워크 모드면 드래그 앤 드롭 방지 + 기존 목록 드래그 처리)
         private void Tool_PreviewMouseMove(object sender, MouseEventArgs e)
         {
@@ -1064,6 +1193,10 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 왼쪽 사이드바 도구를 드래그하지 않고 단순히 '클릭(Click)'하고 마우스를 뗐을 때 호출됩니다.
+        /// 드래그 앤 드롭 없이 캔버스 기본 위치(200, 200)에 즉시 요소를 생성하는 다이얼로그 팝업(ContainerDialog, VolumeDialog 등)을 띄워줍니다.
+        /// </summary>
         private async void Tool_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
             if (!_isToolDragging)
@@ -1083,7 +1216,7 @@ namespace DockerDiagram
 
                         if (type == NodeType.Container)
                         {
-                            var dlg = new Views.ContainerDialog();
+                            var dlg = new Views.ContainerDialog(_dialogService);
                             dlg.Owner = this;
 
                             if (dlg.ShowDialog() == true)
@@ -1130,7 +1263,7 @@ namespace DockerDiagram
                         }
                         else if (type == NodeType.Volume)
                         {
-                            var dlg = new Views.VolumeDialog();
+                            var dlg = new Views.VolumeDialog(_dialogService);
                             dlg.Owner = this;
                             if (dlg.ShowDialog() == true)
                             {
@@ -1139,19 +1272,26 @@ namespace DockerDiagram
                         }
                         else if (type == NodeType.Internet)
                         {
-                            vm.ActiveSheet.CreateInternetAt(new DockerInternet { Name = "Internet" }, defaultX, defaultY);
+                            // ★ [수정됨] CreateInternetAt 대신 통합된 CreateNodeAt 사용!
+                            vm.ActiveSheet.CreateNodeAt(new DockerInternet { Name = "Internet" }, defaultX, defaultY);
                         }
                     }
                 }
             }
         }
 
+        /// <summary>
+        /// 사이드바에서 드래그한 도구나 기존 도커 리소스를 다이어그램 캔버스(도화지)에 떨어뜨렸을 때(Drop) 발생하는 핵심 이벤트입니다.
+        /// 드롭된 화면 좌표를 캔버스 내부 좌표(World Point)로 변환하고 10px 단위 그리드에 스냅(Snap)한 뒤,
+        /// 데이터 타입과 생성 모드(새로 만들기 vs 기존 요소 배치)에 따라 알맞은 다이얼로그를 띄우거나 노드를 즉시 배치합니다.
+        /// </summary>
         // 캔버스 드롭 핸들러 (네트워크 삭제 반영)
         private async void Canvas_Drop(object sender, DragEventArgs e)
         {
             var vm = DataContext as MainViewModel;
             if (vm?.ActiveSheet == null) return;
 
+            // 마우스 드롭 좌표를 캔버스 내부 좌표로 변환 및 10단위 스냅(Snap) 처리
             Point mouseOnScreen = e.GetPosition((UIElement)ZoomPanGrid.Parent);
             Point worldPos = ZoomPanGrid.RenderTransform.Inverse.Transform(mouseOnScreen);
             double snapX = Math.Round((worldPos.X - 80) / 10) * 10;
@@ -1165,11 +1305,11 @@ namespace DockerDiagram
                 var d = e.Data.GetData("DockerContainerObject") as DockerResource;
                 if (d == null) return;
 
-                if (string.IsNullOrEmpty(d.Id)) // "New" 아이템
+                if (string.IsNullOrEmpty(d.Id)) // "New" 아이템 (새로 생성해야 하는 객체)
                 {
                     if (d is DockerContainer container)
                     {
-                        var dlg = new Views.ContainerDialog();
+                        var dlg = new Views.ContainerDialog(_dialogService);
                         dlg.Owner = this;
                         if (container.Image != "New Container") dlg.ImageName = container.Image;
 
@@ -1205,7 +1345,7 @@ namespace DockerDiagram
                             }
                             catch (Exception ex)
                             {
-                                _dialogService.ShowMessage($"에러 : {ex.Message}");
+                                _dialogService.ShowError($"에러 : {ex.Message}", "오류");
                             }
                             finally { Mouse.OverrideCursor = null; }
                         }
@@ -1214,7 +1354,7 @@ namespace DockerDiagram
                     {
                         if (volume.Name == "New Volume")
                         {
-                            var dlg = new Views.VolumeDialog();
+                            var dlg = new Views.VolumeDialog(_dialogService);
                             dlg.Owner = this;
                             if (dlg.ShowDialog() == true)
                             {
@@ -1228,13 +1368,14 @@ namespace DockerDiagram
                     }
                     else if (d is DockerInternet internet)
                     {
-                        vm.ActiveSheet.CreateInternetAt(new DockerInternet { Name = "Internet" }, snapX, snapY);
+                        vm.ActiveSheet.CreateNodeAt(new DockerInternet { Name = "Internet" }, snapX, snapY);
                     }
                 }
-                else // 기존 아이템
+                else // 기존 아이템 (이미 도커에 존재하는 객체를 화면에만 꺼내는 경우)
                 {
                     if (d is DockerContainer existingContainer)
                     {
+                        // 도커 상태값에 맞춰 노드 상태 색상을 갱신
                         if (string.Equals(existingContainer.State, "running", StringComparison.OrdinalIgnoreCase)) existingContainer.StateColor = "#28a745";
                         else if (string.Equals(existingContainer.State, "exited", StringComparison.OrdinalIgnoreCase) || string.Equals(existingContainer.State, "dead", StringComparison.OrdinalIgnoreCase)) existingContainer.StateColor = "#dc3545";
                         else existingContainer.StateColor = "#808080";
@@ -1245,11 +1386,11 @@ namespace DockerDiagram
             // [CASE B] 네트워크 그룹 (DockerGroupObject)
             else if (e.Data.GetDataPresent("DockerGroupObject"))
             {
-                var group = e.Data.GetData("DockerGroupObject") as DockerGroup;
+                var group = e.Data.GetData("DockerGroupObject") as DockerNetworkGroup;
                 if (group != null)
                 {
                     await vm.CreateNodeAtAsync(group, snapX, snapY);
-                    needsLayerUpdate = true; // ★ [체크] 그룹이 추가되었으니 레이어 정리 필요
+                    needsLayerUpdate = true;
                 }
             }
 
@@ -1259,6 +1400,10 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 사이드바의 '실제 도커 리소스(컨테이너, 볼륨, 네트워크)' 목록에서 항목을 마우스로 드래그할 때 호출됩니다.
+        /// 선택된 항목의 타입에 따라 알맞은 모델 데이터를 `DataObject`로 포장하여 시스템의 드래그 앤 드롭 파이프라인에 전달합니다.
+        /// </summary>
         // ExistingItem_MouseMove 수정 (네트워크일 경우 DockerGroup으로 포장)
         private void ExistingItem_MouseMove(object sender, MouseEventArgs e)
         {
@@ -1283,7 +1428,7 @@ namespace DockerDiagram
                         DragDrop.DoDragDrop(border, data, DragDropEffects.Copy);
                     }
                     // 3. 네트워크(그룹)인 경우
-                    else if (border?.DataContext is DockerGroup group)
+                    else if (border?.DataContext is DockerNetworkGroup group)
                     {
                         DataObject data = new DataObject("DockerGroupObject", group);
                         DragDrop.DoDragDrop(border, data, DragDropEffects.Copy);
@@ -1294,6 +1439,10 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 사이드바의 '템플릿' 목록에서 항목을 드래그할 때 호출됩니다.
+        /// 해당 템플릿의 이미지 정보를 바탕으로 신규 컨테이너 생성을 위한 데이터를 준비하여 드래그를 시작합니다.
+        /// </summary>
         // 기존 템플릿 아이템 드래그
         private void TemplateItem_MouseMove(object sender, MouseEventArgs e)
         {
@@ -1320,18 +1469,28 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 기존 도커 리소스 항목 드래그 시작 전, 마우스 클릭 지점을 기억하여 미세한 흔들림으로 인한 오작동을 방지(드래그 임계값 계산용)합니다.
+        /// </summary>
         private void ExistingItem_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
             _toolStartPoint = e.GetPosition(null);
             _isToolDragging = false;
         }
 
+        /// <summary>
+        /// 템플릿 항목 드래그 시작 전 클릭 지점을 기록합니다.
+        /// </summary>
         private void TemplateItem_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
             _toolStartPoint = e.GetPosition(null);
             _isToolDragging = false;
         }
 
+        /// <summary>
+        /// 노드나 네트워크 그룹 객체의 모서리(크기 조절 그립)를 마우스로 눌렀을 때 호출됩니다.
+        /// 리사이징 모드를 활성화하고 원본 크기와 초기 좌표를 기록하여, MouseMove 이벤트에서 부드럽게 크기를 변환할 수 있도록 합니다.
+        /// </summary>
         private void Resize_MouseDown(object sender, MouseButtonEventArgs e)
         {
             var el = sender as FrameworkElement;
@@ -1357,6 +1516,10 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 노드의 상/하/좌/우에 위치한 연결 포트(Port) 동그라미를 마우스로 눌렀을 때 호출됩니다.
+        /// 다른 노드나 볼륨으로 이어지는 선(Connector) 긋기 모드를 시작하며, 아직 생성 중(Creating)인 불안정한 객체에서는 선을 그을 수 없도록 차단합니다.
+        /// </summary>
         private void Port_MouseDown(object sender, MouseButtonEventArgs e)
         {
             var port = sender as FrameworkElement;
@@ -1379,6 +1542,10 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 노드의 상단 헤더 영역을 마우스로 클릭했을 때, 해당 노드의 이동(드래그) 모드를 시작합니다.
+        /// 마우스 커서와 노드 원점 간의 오프셋을 계산하여 자연스러운 드래그를 준비합니다.
+        /// </summary>
         private void Node_Header_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (_isConnecting || _isResizing) return;
@@ -1395,6 +1562,9 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 마우스를 드래그하는 동안 노드의 좌표를 실시간으로 갱신하여 화면에 반영합니다.
+        /// </summary>
         private void Node_MouseMove(object sender, MouseEventArgs e)
         {
             if (_isNodeDragging && _draggedNodeElement != null)
@@ -1405,6 +1575,10 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 마우스 버튼을 떼어 노드 드래그를 종료합니다.
+        /// (참고: 최종 드롭 위치에 따른 그룹 소속 판별 로직은 최상위 캔버스의 MouseUp 이벤트에서 일괄 처리됩니다.)
+        /// </summary>
         private void Node_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
             if (_isNodeDragging)
@@ -1415,6 +1589,10 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 노드의 본문(Body) 영역을 클릭했을 때, 해당 노드를 선택 상태(SelectedElement)로 전환하거나 이미 선택되어 있다면 해제합니다.
+        /// 선택된 노드는 우측 사이드바에 상세 정보(Inspect)가 표시됩니다.
+        /// </summary>
         private void Node_Body_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (_isConnecting || _isResizing) return;
@@ -1429,6 +1607,10 @@ namespace DockerDiagram
             e.Handled = true;
         }
 
+        /// <summary>
+        /// 캔버스에 그려진 연결선(Connector) 자체를 클릭했을 때, 선을 선택 상태로 전환합니다.
+        /// 선택된 선은 Delete 키를 눌러 삭제할 수 있습니다.
+        /// </summary>
         private void Connector_MouseDown(object sender, MouseButtonEventArgs e)
         {
             var el = sender as FrameworkElement;
@@ -1442,6 +1624,10 @@ namespace DockerDiagram
         }
 
         // --- 헬퍼 메서드들 ---
+
+        /// <summary>
+        /// 특정 객체(노드, 그룹)의 4면(좌, 우, 상, 하) 중 지정된 방향에 위치한 연결 포트의 정확한 절대 좌표(Point)를 계산합니다.
+        /// </summary>
         private Point GetExactBorderPoint(IConnectableItem item, PortDirection dir)
         {
             switch (dir)
@@ -1454,6 +1640,10 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// WPF 시각적 트리(Visual Tree)를 거슬러 올라가며 조건(Predicate)을 만족하는 특정 타입의 부모 요소를 찾습니다.
+        /// 마우스 클릭 이벤트에서 클릭된 UI 조각(HitTest 결과)이 어떤 뷰모델 객체에 속하는지 역추적할 때 사용됩니다.
+        /// </summary>
         private T? FindParent<T>(DependencyObject? child, Func<T, bool> predicate) where T : DependencyObject
         {
             while (child != null)
@@ -1464,6 +1654,10 @@ namespace DockerDiagram
             return null;
         }
 
+        /// <summary>
+        /// 사용자의 마우스 좌표가 대상 사각형(Rect)의 4개 면 중 어느 면에 가장 가까운지 수학적으로 계산합니다.
+        /// 연결선을 아무렇게나 놓았을 때 가장 자연스러운 포트(상/하/좌/우)를 자동 결정하기 위해 사용됩니다.
+        /// </summary>
         private PortDirection GetClosestDirection(Point mouse, Rect rect)
         {
             double distLeft = Math.Abs(mouse.X - rect.Left);
@@ -1477,6 +1671,10 @@ namespace DockerDiagram
             return PortDirection.Bottom;
         }
 
+        /// <summary>
+        /// 특정 그룹 안에 들어있는 자식 노드들을 모두 감싸는 최소한의 경계 영역(Bounding Box)을 계산합니다.
+        /// 사용자가 그룹 상자를 드래그하여 크기를 줄일 때, 자식 노드들을 침범하며 작아지지 못하게 막는 경계선으로 활용됩니다.
+        /// </summary>
         private Rect GetGroupContentBounds(GroupViewModel group)
         {
             if (group.ContainedNodes.Count == 0) return Rect.Empty;
@@ -1497,6 +1695,9 @@ namespace DockerDiagram
             return new Rect(minX, minY, maxX - minX, maxY - minY);
         }
 
+        /// <summary>
+        /// 현재 작업 중인 파일의 이름에 따라 윈도우 상단의 앱 제목 표시줄 텍스트를 업데이트합니다.
+        /// </summary>
         private void UpdateTitle()
         {
             var vm = this.DataContext as MainViewModel;
@@ -1510,19 +1711,20 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 시트 탭에서 마우스 우클릭 -> [시트 비우기] 메뉴를 선택했을 때 호출됩니다.
+        /// 선택한 시트의 모든 객체를 지우기 전 사용자에게 확인을 받습니다.
+        /// </summary>
         private void ClearSheet_Click(object sender, RoutedEventArgs e)
         {
             // 우클릭한 메뉴 아이템에서 데이터(SheetViewModel)를 가져옴
             if (sender is MenuItem menuItem && menuItem.DataContext is SheetViewModel targetSheet)
             {
                 // 확인 메시지 띄우기
-                var result = MessageBox.Show(
-                    $"'{targetSheet.Title}' 시트의 모든 내용을 지우시겠습니까?\n(컨테이너, 연결선, 그룹이 모두 삭제됩니다)",
-                    "시트 비우기",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
+                bool isConfirmed = _dialogService.ShowConfirm(
+                    $"'{targetSheet.Title}' 시트의 모든 내용을 지우시겠습니까?\n(컨테이너, 연결선, 그룹이 모두 삭제됩니다)", "시트 비우기");
 
-                if (result == MessageBoxResult.Yes)
+                if (isConfirmed)
                 {
                     // 해당 시트의 내용물만 싹 비움
                     targetSheet.Nodes.Clear();
@@ -1532,6 +1734,10 @@ namespace DockerDiagram
             }
         }
 
+        /// <summary>
+        /// 톱니바퀴(옵션) 팝업 메뉴에서 [이미지 관리] 버튼을 클릭했을 때 호출됩니다.
+        /// 사용하지 않는 이미지를 정리하고 검색할 수 있는 전용 팝업 창을 엽니다.
+        /// </summary>
         private void ManageImages_Click(object sender, RoutedEventArgs e)
         {
             // 1. 톱니바퀴 드롭다운 팝업 닫기
@@ -1546,6 +1752,10 @@ namespace DockerDiagram
             imgWindow.ShowDialog();
         }
 
+        /// <summary>
+        /// 툴바 상단의 프로필/설정 버튼을 클릭했을 때 호출됩니다.
+        /// 원격 서버에 SSH 터널링을 통해 새로운 도커 엔진 탭을 연결하는 다이얼로그를 띄웁니다.
+        /// </summary>
         private void BtnSettings_Click(object sender, RoutedEventArgs e)
         {
             var sshDlg = new Views.SshConnectionDialog(this.ViewModel, _dialogService);

@@ -9,6 +9,10 @@ using System.Text;
 
 namespace DockerDiagram.Helpers
 {
+    /// <summary>
+    /// 화면(ViewModel)을 대신하여 실제 도커 엔진(백엔드)과 직접 통신을 수행하는 핵심 서비스 클래스입니다.
+    /// 로컬(Named Pipe/Socket) 접속뿐만 아니라 SSH 터널링을 통한 원격 서버 접속까지 모두 처리합니다.
+    /// </summary>
     public class DockerApiService : IDockerService
     {
         private readonly DockerClient _client;
@@ -16,6 +20,9 @@ namespace DockerDiagram.Helpers
 
         public ConnectionProfile CurrentProfile { get; private set; }
 
+        /// <summary>
+        /// 연결 프로필(신분증)을 받아, 로컬 또는 원격 SSH 터널링 환경에 맞는 도커 클라이언트 객체를 초기화합니다.
+        /// </summary>
         // 생성자에서 신분증(ConnectionProfile)을 받도록 변경!
         public DockerApiService(ConnectionProfile profile)
         {
@@ -48,6 +55,9 @@ namespace DockerDiagram.Helpers
         // 1. ISystemService 구현
         // =========================================================
 
+        /// <summary>
+        /// 현재 도커 엔진이 정상적으로 실행 중이고 응답 가능한 상태인지(Ping) 확인합니다.
+        /// </summary>
         public async Task<bool> PingAsync()
         {
             try
@@ -65,6 +75,9 @@ namespace DockerDiagram.Helpers
         // 2. IContainerService 구현
         // =========================================================
 
+        /// <summary>
+        /// 도커 엔진에 존재하는 모든 컨테이너 목록을 가져오고, 화면에 띄우기 좋은 데이터 모델로 변환하여 반환합니다.
+        /// </summary>
         public async Task<List<DockerContainer>> GetContainersAsync()
         {
             var containers = await _client.Containers.ListContainersAsync(
@@ -111,6 +124,9 @@ namespace DockerDiagram.Helpers
         // 3. IImageService 구현
         // =========================================================
 
+        /// <summary>
+        /// 다운로드되어 있는 로컬 도커 이미지 목록을 가져오며, 하나의 이미지가 여러 태그를 가졌을 경우 분리하여 반환합니다.
+        /// </summary>
         public async Task<List<DockerImage>> GetImagesAsync()
         {
             var images = await _client.Images.ListImagesAsync(new ImagesListParameters { All = false });
@@ -155,6 +171,9 @@ namespace DockerDiagram.Helpers
         // 4. IVolumeService 구현
         // =========================================================
 
+        /// <summary>
+        /// 도커 엔진에 생성된 물리적 볼륨(Volume) 목록을 조회합니다.
+        /// </summary>
         public async Task<List<DockerVolume>> GetVolumesAsync()
         {
             var volumes = await _client.Volumes.ListAsync();
@@ -169,14 +188,16 @@ namespace DockerDiagram.Helpers
         // 5. INetworkService 구현
         // =========================================================
 
-        public async Task<List<DockerGroup>> GetNetworksAsync()
+        /// <summary>
+        /// 도커 엔진에 생성된 가상 네트워크 그룹 목록을 조회합니다.
+        /// </summary>
+        public async Task<List<DockerNetworkGroup>> GetNetworksAsync() // 반환 타입 변경!
         {
             var networks = await _client.Networks.ListNetworksAsync();
-            return networks.Select(n => new DockerGroup
+            return networks.Select(n => new DockerNetworkGroup // 객체 생성 변경!
             {
                 Name = n.Name,
                 Id = n.ID,
-                Type = GroupType.Network,
                 Driver = n.Driver
             }).ToList();
         }
@@ -185,21 +206,33 @@ namespace DockerDiagram.Helpers
         // 상세 기능 구현
         // ---------------------------------------------------------
 
+        /// <summary>
+        /// 특정 컨테이너의 상세 설정(네트워크, 볼륨 마운트, 환경변수 등)을 깊이 있게 조회합니다.
+        /// </summary>
         public async Task<ContainerInspectResponse> InspectContainerAsync(string containerId)
         {
             return await _client.Containers.InspectContainerAsync(containerId);
         }
 
+        /// <summary>
+        /// 특정 볼륨의 상세 정보를 조회합니다.
+        /// </summary>
         public async Task<VolumeResponse> InspectVolumeAsync(string name)
         {
             return await _client.Volumes.InspectAsync(name);
         }
 
+        /// <summary>
+        /// 특정 네트워크의 상세 정보를 조회합니다.
+        /// </summary>
         public async Task<NetworkResponse> InspectNetworkAsync(string networkId)
         {
             return await _client.Networks.InspectNetworkAsync(networkId);
         }
 
+        /// <summary>
+        /// 특정 볼륨을 마운트하여 사용하고 있는 컨테이너들의 이름 목록을 찾아 반환합니다.
+        /// </summary>
         public async Task<List<string>> GetContainersUsingVolumeAsync(string volumeName)
         {
             var containers = await _client.Containers.ListContainersAsync(
@@ -220,26 +253,47 @@ namespace DockerDiagram.Helpers
             return result;
         }
 
+        /// <summary>
+        /// 지정된 컨테이너를 시작(Start)합니다.
+        /// </summary>
         public async Task StartContainerAsync(string id)
             => await _client.Containers.StartContainerAsync(id, new ContainerStartParameters());
 
+        /// <summary>
+        /// 지정된 컨테이너를 안전하게 정지(Stop)시킵니다.
+        /// </summary>
         public async Task StopContainerAsync(string id)
             => await _client.Containers.StopContainerAsync(id, new ContainerStopParameters { WaitBeforeKillSeconds = 5 });
 
+        /// <summary>
+        /// 지정된 컨테이너의 실행을 일시 정지(Pause)합니다.
+        /// </summary>
         public async Task PauseContainerAsync(string id)
             => await _client.Containers.PauseContainerAsync(id);
 
+        /// <summary>
+        /// 일시 정지된 컨테이너를 다시 재개(Unpause)합니다.
+        /// </summary>
         public async Task UnpauseContainerAsync(string id)
             => await _client.Containers.UnpauseContainerAsync(id);
 
+        /// <summary>
+        /// 지정된 컨테이너를 재시작(Restart)합니다.
+        /// </summary>
         public async Task RestartContainerAsync(string id)
             => await _client.Containers.RestartContainerAsync(id, new ContainerRestartParameters());
 
+        /// <summary>
+        /// 지정된 컨테이너를 영구적으로 강제 삭제(Remove)합니다. 연결된 볼륨은 보호됩니다.
+        /// </summary>
         public async Task RemoveContainerAsync(string id)
         {
             await _client.Containers.RemoveContainerAsync(id, new ContainerRemoveParameters { Force = true, RemoveVolumes = false });
         }
 
+        /// <summary>
+        /// 지정된 이미지와 태그를 도커 허브(또는 레지스트리)에서 로컬로 다운로드(Pull)합니다.
+        /// </summary>
         public async Task PullImageAsync(string image, string tag)
         {
             await _client.Images.CreateImageAsync(
@@ -248,6 +302,9 @@ namespace DockerDiagram.Helpers
                 new Progress<JSONMessage>());
         }
 
+        /// <summary>
+        /// 사용자가 뷰모델에 설정한 각종 옵션(포트, 환경변수, 볼륨, 명령어 등)을 바탕으로 새 컨테이너를 생성하고 즉시 실행합니다.
+        /// </summary>
         public async Task<string> CreateAndStartContainerAsync(
     string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes,
     string restartPolicy, long memoryMb, double cpuCount,
@@ -337,6 +394,9 @@ namespace DockerDiagram.Helpers
             return response.ID;
         }
 
+        /// <summary>
+        /// 특정 컨테이너 내부의 파일이나 디렉토리를 호스트 PC(내 컴퓨터)의 지정된 경로로 복사(추출)해옵니다.
+        /// </summary>
         public async Task CopyFromContainerAsync(string containerId, string containerPath, string hostPath)
         {
             var tarResponse = await _client.Containers.GetArchiveFromContainerAsync(containerId, new GetArchiveFromContainerParameters
@@ -347,6 +407,9 @@ namespace DockerDiagram.Helpers
             TarFile.ExtractToDirectory(tarResponse.Stream, hostPath, overwriteFiles: true);
         }
 
+        /// <summary>
+        /// 호스트 PC(내 컴퓨터)의 파일이나 디렉토리를 임시 TAR 아카이브로 압축한 뒤, 특정 컨테이너 내부의 지정된 경로로 복사(삽입)합니다.
+        /// </summary>
         public async Task CopyToContainerAsync(string containerId, string hostPath, string containerPath)
         {
             string tempTarFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".tar");
@@ -373,6 +436,9 @@ namespace DockerDiagram.Helpers
             }
         }
 
+        /// <summary>
+        /// 지정된 이름과 드라이버(기본값 local)를 사용하여 도커 엔진에 새로운 물리적 볼륨을 생성합니다.
+        /// </summary>
         public async Task CreateVolumeAsync(string name, string driver)
         {
             await _client.Volumes.CreateAsync(new VolumesCreateParameters
@@ -382,6 +448,9 @@ namespace DockerDiagram.Helpers
             });
         }
 
+        /// <summary>
+        /// 지정된 이름과 드라이버(기본값 bridge)를 사용하여 도커 엔진에 새로운 가상 네트워크 망을 생성하고 고유 ID를 반환합니다.
+        /// </summary>
         public async Task<string> CreateNetworkAsync(string name, string driver)
         {
             var response = await _client.Networks.CreateNetworkAsync(new NetworksCreateParameters
@@ -393,21 +462,33 @@ namespace DockerDiagram.Helpers
             return response.ID;
         }
 
+        /// <summary>
+        /// 지정된 ID의 도커 이미지를 로컬 저장소에서 삭제합니다. 강제(force) 옵션을 통해 사용 중인 이미지도 지울 수 있습니다.
+        /// </summary>
         public async Task DeleteImageAsync(string imageId, bool force = false)
         {
             await _client.Images.DeleteImageAsync(imageId, new ImageDeleteParameters { Force = force });
         }
 
+        /// <summary>
+        /// 지정된 이름의 도커 볼륨을 영구적으로 삭제합니다.
+        /// </summary>
         public async Task RemoveVolumeAsync(string name)
         {
             await _client.Volumes.RemoveAsync(name, false);
         }
 
+        /// <summary>
+        /// 지정된 ID의 가상 네트워크 망을 도커 엔진에서 영구적으로 삭제합니다.
+        /// </summary>
         public async Task RemoveNetworkAsync(string id)
         {
             await _client.Networks.DeleteNetworkAsync(id);
         }
 
+        /// <summary>
+        /// 시스템의 기본 터미널(cmd.exe)을 띄우고 'docker exec' 명령어를 실행하여, 사용자가 해당 컨테이너의 셸(bash, sh 등)에 직접 접속할 수 있도록 돕습니다.
+        /// </summary>
         public void OpenTerminal(string containerId)
         {
             string commands = $"docker exec -it {containerId} /bin/bash || " +
@@ -424,6 +505,9 @@ namespace DockerDiagram.Helpers
             Process.Start(processInfo);
         }
 
+        /// <summary>
+        /// 실행 중인 컨테이너 내부에서 특정 명령어(Command)를 백그라운드에서 비동기적으로 실행하고, 그 결과를 디버그 로그로 기록합니다.
+        /// </summary>
         public async Task ExecuteCommandAsync(string containerId, string command)
         {
             try
@@ -479,6 +563,9 @@ namespace DockerDiagram.Helpers
             }
         }
 
+        /// <summary>
+        /// 특정 컨테이너를 지정된 가상 네트워크 망에 연결(편입)시킵니다. 필요시 정적 IP를 할당할 수 있습니다.
+        /// </summary>
         public async Task ConnectNetworkAsync(string networkId, string containerId, string? staticIp = null)
         {
             try
@@ -513,6 +600,9 @@ namespace DockerDiagram.Helpers
             }
         }
 
+        /// <summary>
+        /// 특정 컨테이너를 지정된 가상 네트워크 망에서 강제로 연결 해제시킵니다.
+        /// </summary>
         public async Task DisconnectNetworkAsync(string networkId, string containerId)
         {
             await _client.Networks.DisconnectNetworkAsync(networkId, new NetworkDisconnectParameters
@@ -522,6 +612,9 @@ namespace DockerDiagram.Helpers
             });
         }
 
+        /// <summary>
+        /// 특정 컨테이너의 실시간 리소스 사용량(CPU 퍼센트, 메모리 사용량 및 제한)을 측정하여 반환합니다.
+        /// </summary>
         public async Task<ContainerStats> GetContainerStatsAsync(string containerId)
         {
             try
@@ -556,13 +649,21 @@ namespace DockerDiagram.Helpers
             return new ContainerStats();
         }
 
+        /// <summary>
+        /// 도커 API로부터 전달받은 컨테이너 통계(Stats) 데이터를 바탕으로 실시간 CPU 사용률(%)을 계산합니다.
+        /// 도커의 CPU 측정 방식에 따라, 이전 측정값(PreCPUStats)과 현재 측정값(CPUStats)의 차이(Delta)를 구한 뒤
+        /// 전체 시스템 CPU 사용량 대비 컨테이너가 점유한 비율을 계산하고 코어 수(OnlineCPUs)를 곱하여 최종 퍼센티지를 도출합니다.
+        /// </summary>
         private double CalculateCpuPercentage(ContainerStatsResponse stats)
         {
+            // 컨테이너 자체의 CPU 사용량 변화량
             double cpuDelta = stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage;
+            // 호스트 시스템 전체의 CPU 사용량 변화량
             double systemDelta = stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage;
 
             if (systemDelta > 0.0 && cpuDelta > 0.0)
             {
+                // (컨테이너 변화량 / 시스템 변화량) * 코어 수 * 100 = 최종 CPU 점유율(%)
                 return (cpuDelta / systemDelta) * stats.CPUStats.OnlineCPUs * 100.0;
             }
 
@@ -572,24 +673,36 @@ namespace DockerDiagram.Helpers
         // =========================================================
         // ★ [필수] IDisposable 패턴 구현 (사라졌던 부분)
         // =========================================================
+
+        /// <summary>
+        /// 메모리 누수 방지 및 네트워크 소켓 고갈을 막기 위한 표준 IDisposable 패턴 구현부입니다.
+        /// 이 서비스 클래스가 소멸될 때, 도커 엔진과 통신하기 위해 열어두었던 HTTP 클라이언트(_client) 등 관리되는(Managed) 리소스를 안전하게 해제합니다.
+        /// </summary>
         protected virtual void Dispose(bool disposing)
         {
             if (!_disposedValue)
             {
                 if (disposing)
                 {
+                    // HttpClient 등 내부적으로 사용하던 IDisposable 객체들을 명시적으로 해제
                     _client?.Dispose();
                 }
                 _disposedValue = true;
             }
         }
 
+        /// <summary>
+        /// 사용이 끝난 도커 클라이언트 객체의 네트워크 통신 리소스를 안전하게 해제(메모리 누수 방지)합니다.
+        /// </summary>
         public void Dispose()
         {
             Dispose(disposing: true);
             GC.SuppressFinalize(this);
         }
 
+        /// <summary>
+        /// 특정 컨테이너가 뱉어낸 최근 로그(표준 출력 및 에러)를 지정된 줄(Tail) 수만큼 가져와 문자열로 반환합니다.
+        /// </summary>
         public async Task<string> GetContainerLogsAsync(string containerId, int tailCount = 500)
         {
             try

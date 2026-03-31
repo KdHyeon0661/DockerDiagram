@@ -1,5 +1,5 @@
 ﻿using DockerDiagram.Helpers;
-using DockerDiagram.Models; // ★ ConnectionProfile을 쓰기 위해 추가
+using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 using System.Collections.Generic;
 using System.Runtime.Versioning;
