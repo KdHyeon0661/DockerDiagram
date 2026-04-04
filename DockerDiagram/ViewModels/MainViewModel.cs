@@ -1,4 +1,5 @@
-﻿using DockerDiagram.Helpers;
+﻿using Docker.DotNet.Models;
+using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -28,6 +29,25 @@ namespace DockerDiagram.ViewModels
         private INetworkService _networkService => ActiveSheet?.DockerService ?? _defaultDockerService;
         private IImageService _imageService => ActiveSheet?.DockerService ?? _defaultDockerService;
         private ISystemService _systemService => ActiveSheet?.DockerService ?? _defaultDockerService;
+
+        private string _hubSearchTerm = string.Empty;
+        public string HubSearchTerm { get => _hubSearchTerm; set => SetProperty(ref _hubSearchTerm, value); } // 검색어
+
+        private ObservableCollection<ImageSearchResponse> _hubSearchResults = new();
+        public ObservableCollection<ImageSearchResponse> HubSearchResults { get => _hubSearchResults; set => SetProperty(ref _hubSearchResults, value); } // 검색 결과 리스트
+
+        private bool _isSearchingHub;
+        public bool IsSearchingHub { get => _isSearchingHub; set => SetProperty(ref _isSearchingHub, value); } // 검색 중 로딩 스피너용
+
+        // --- 다운로드(Pull) 진행률 표시용 ---
+        private bool _isPulling;
+        public bool IsPulling { get => _isPulling; set => SetProperty(ref _isPulling, value); }
+
+        private double _pullProgressValue;
+        public double PullProgressValue { get => _pullProgressValue; set => SetProperty(ref _pullProgressValue, value); } // 0 ~ 100 퍼센트
+
+        private string _pullProgressMessage = string.Empty;
+        public string PullProgressMessage { get => _pullProgressMessage; set => SetProperty(ref _pullProgressMessage, value); } // 텍스트 상태 (예: "Extracting... 45MB")
 
         // 도커 컴포즈(docker-compose.yml) 내보내기 커맨드
         public ICommand ExportComposeCommand { get; }
@@ -230,6 +250,9 @@ namespace DockerDiagram.ViewModels
         public ICommand ImportComposeCommand { get; }
         public ICommand SystemPruneCommand { get; }
 
+        public ICommand SearchHubCommand { get; }
+        public ICommand PullImageCommand { get; }
+
         // --- 생성자 ---
         /// <summary>
         /// MainViewModel을 초기화합니다.
@@ -274,6 +297,9 @@ namespace DockerDiagram.ViewModels
             LoadCommand = new AsyncRelayCommand(LoadActionAsync);
 
             SystemPruneCommand = new AsyncRelayCommand(ExecuteSystemPruneAsync);
+
+            SearchHubCommand = new AsyncRelayCommand(ExecuteSearchHubAsync);
+            PullImageCommand = new AsyncRelayCommand(ExecutePullImageAsync);
 
             if (ActiveSheet != null) AttachSheetEvents();
 
@@ -803,7 +829,7 @@ namespace DockerDiagram.ViewModels
         /// [사전 검증 -> 임시 노드 생성 -> 이미지 다운로드(Pull) -> 컨테이너 Run -> 네트워크/볼륨 자동 연결 -> UI 갱신]
         /// 이라는 복잡한 라이프사이클을 하나의 트랜잭션처럼 매끄럽게 처리하는 핵심 메서드입니다.
         /// </summary>
-        public async Task CreateNewContainerNodeAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, double x, double y, string networkName = "bridge", string command = "", bool tty = false)
+        public async Task CreateNewContainerNodeAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, double x, double y, string networkName = "bridge", string command = "", bool tty = false, string? regUser = null, string? regPass = null, string? regServer = null)
         {
             if (ActiveSheet == null) return;
 
@@ -900,8 +926,8 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                // 이미지 다운로드 시도 (없으면 에러 후 생성 취소)
-                try { await _imageService.PullImageAsync(image, tag); }
+                // ★ 여기서 UI에서 받아온 인증 정보를 PullImageAsync로 넘겨서 다운로드합니다!
+                try { await _imageService.PullImageAsync(image, tag, regUser, regPass, regServer); }
                 catch (Exception pullEx)
                 {
                     Debug.WriteLine($"[Image Pull] 원격 이미지 다운로드 실패: {pullEx.Message}");
@@ -2375,6 +2401,186 @@ namespace DockerDiagram.ViewModels
             finally
             {
                 Mouse.OverrideCursor = null;
+            }
+        }
+
+        /// <summary>
+        /// 도커파일(텍스트 또는 파일)을 사용하여 새로운 도커 이미지만 빌드합니다.
+        /// 컨테이너를 생성하지 않으며, 빌드 완료 후 이미지 목록을 동기화합니다.
+        /// </summary>
+        public async Task BuildImageOnlyAsync(string targetImageName, string dockerfileContent, string uploadedFilePath)
+        {
+            // 이미지 이름이 없으면 임의로 생성
+            if (string.IsNullOrWhiteSpace(targetImageName))
+            {
+                targetImageName = $"custom-image:{Guid.NewGuid().ToString().Substring(0, 4)}";
+            }
+
+            string buildContextPath = "";
+            string dockerfilePath = "";
+            bool isTempContext = false;
+
+            try
+            {
+                // UI 마우스를 대기 상태로
+                System.Windows.Input.Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
+                _dialogService.ShowConfirm($"[{targetImageName}] 이미지 빌드를 시작합니다...\n(백그라운드에서 진행됩니다.)", "빌드 시작");
+
+                // 1. 업로드한 파일 vs 직접 입력한 텍스트 판별
+                if (!string.IsNullOrEmpty(uploadedFilePath) && File.Exists(uploadedFilePath))
+                {
+                    dockerfilePath = uploadedFilePath;
+                    buildContextPath = Path.GetDirectoryName(uploadedFilePath);
+                }
+                else
+                {
+                    isTempContext = true;
+                    buildContextPath = Path.Combine(Path.GetTempPath(), "DockerDiagramBuild_" + Guid.NewGuid().ToString().Substring(0, 8));
+                    Directory.CreateDirectory(buildContextPath);
+
+                    dockerfilePath = Path.Combine(buildContextPath, "Dockerfile");
+                    await File.WriteAllTextAsync(dockerfilePath, dockerfileContent);
+                }
+
+                // 2. 백그라운드에서 docker build 명령어 실행
+                bool buildSuccess = false;
+
+                await Task.Run(() =>
+                {
+                    var startInfo = new ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = $"/c docker build -t {targetImageName} -f \"{dockerfilePath}\" \"{buildContextPath}\"",
+                        CreateNoWindow = true,         // 창 숨기기
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+
+                    using (var process = Process.Start(startInfo))
+                    {
+                        if (process != null)
+                        {
+                            process.WaitForExit(); // 끝날 때까지 대기
+                            buildSuccess = process.ExitCode == 0;
+                        }
+                    }
+                });
+
+                // 3. 결과 처리 (컨테이너 생성 안 함!)
+                if (buildSuccess)
+                {
+                    _dialogService.ShowConfirm($"[{targetImageName}] 이미지가 성공적으로 생성되었습니다!", "빌드 완료");
+
+                    // ★ 핵심: 빌드가 끝났으니 도커 엔진과 동기화해서 새로 만든 이미지를 왼쪽 목록에 띄워줍니다.
+                    await SyncWithDockerEngine();
+                }
+                else
+                {
+                    _dialogService.ShowConfirm($"[{targetImageName}] 이미지 빌드에 실패했습니다.\nDockerfile 문법을 확인해 주세요.", "빌드 오류");
+                }
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"빌드 중 시스템 오류 발생: {ex.Message}", "오류");
+            }
+            finally
+            {
+                System.Windows.Input.Mouse.OverrideCursor = null;
+
+                // 임시 폴더 삭제
+                if (isTempContext && Directory.Exists(buildContextPath))
+                {
+                    try { Directory.Delete(buildContextPath, true); } catch { }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 도커 허브에서 이미지를 검색합니다.
+        /// </summary>
+        private async Task ExecuteSearchHubAsync(object? parameter)
+        {
+            if (string.IsNullOrWhiteSpace(HubSearchTerm)) return;
+
+            IsSearchingHub = true;
+            HubSearchResults.Clear();
+
+            try
+            {
+                // 현재 활성화된 도커 서비스(로컬 또는 SSH) 가져오기
+                var dockerService = ActiveSheet?.DockerService ?? _defaultDockerService;
+
+                var results = await dockerService.SearchImagesAsync(HubSearchTerm);
+
+                foreach (var res in results)
+                {
+                    HubSearchResults.Add(res);
+                }
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"검색 중 오류가 발생했습니다: {ex.Message}", "검색 실패");
+            }
+            finally
+            {
+                IsSearchingHub = false;
+            }
+        }
+
+        /// <summary>
+        /// 검색 결과에서 선택한 이미지를 로컬로 다운로드(Pull) 합니다.
+        /// </summary>
+        private async Task ExecutePullImageAsync(object? parameter)
+        {
+            // 리스트에서 선택된 항목을 파라미터로 받음
+            if (parameter is not ImageSearchResponse selectedImage) return;
+
+            string targetImage = selectedImage.Name;
+            string targetTag = "latest"; // 1차적으로는 최신 버전(latest)을 고정으로 받습니다.
+
+            bool confirm = _dialogService.ShowConfirm($"[{targetImage}:{targetTag}] 이미지를 다운로드하시겠습니까?", "이미지 Pull");
+            if (!confirm) return;
+
+            IsPulling = true;
+            PullProgressValue = 0;
+            PullProgressMessage = "다운로드 준비 중...";
+
+            try
+            {
+                var dockerService = ActiveSheet?.DockerService ?? _defaultDockerService;
+
+                // ★ IProgress 객체를 생성하여 UI 갱신 로직을 정의합니다. (백그라운드 스레드에서 자동으로 호출됨)
+                var progress = new Progress<JSONMessage>(message =>
+                {
+                    // 상태 메시지 업데이트 (예: "Downloading...", "Extracting...")
+                    PullProgressMessage = $"{message.Status} {message.ProgressMessage}";
+
+                    // 용량(Byte) 정보가 넘어오면 퍼센트(%)를 계산하여 프로그레스 바를 채웁니다.
+                    if (message.Progress != null && message.Progress.Total > 0)
+                    {
+                        PullProgressValue = ((double)message.Progress.Current / message.Progress.Total) * 100;
+                    }
+                });
+
+                // 1단계에서 만든 프로그레스 연동 Pull 메서드 호출!
+                await dockerService.PullImageWithProgressAsync(targetImage, targetTag, progress);
+
+                PullProgressValue = 100;
+                PullProgressMessage = "다운로드 완료!";
+
+                _dialogService.ShowInfo($"[{targetImage}] 이미지 다운로드가 완료되었습니다.", "Pull 성공");
+
+                await SyncWithDockerEngine();
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"이미지 다운로드 실패: {ex.Message}", "Pull 오류");
+                PullProgressMessage = "오류 발생";
+            }
+            finally
+            {
+                IsPulling = false;
             }
         }
     }

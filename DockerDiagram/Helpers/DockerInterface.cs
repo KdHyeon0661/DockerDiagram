@@ -30,6 +30,7 @@ namespace DockerDiagram.Helpers
 
         // 새로운 컨테이너를 생성하고 즉시 실행합니다.
         Task<string> CreateAndStartContainerAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, string command = "", bool tty = false);
+        Task UpdateContainerResourcesAsync(string containerId, double cpuCount, long memoryMb);
 
         Task CopyFromContainerAsync(string containerId, string containerPath, string hostPath); // 컨테이너 내부의 파일을 호스트 PC로 복사합니다.
         Task CopyToContainerAsync(string containerId, string hostPath, string containerPath); // 호스트 PC의 파일을 컨테이너 내부로 복사합니다.
@@ -37,6 +38,7 @@ namespace DockerDiagram.Helpers
         Task ExecuteCommandAsync(string containerId, string command); // 컨테이너 내부에서 특정 명령어를 1회성으로 실행합니다.
         Task<ContainerStats> GetContainerStatsAsync(string containerId); // 컨테이너의 실시간 자원 사용량(CPU, 메모리)을 조회합니다.
         Task<string> GetContainerLogsAsync(string containerId, int tailCount = 500); // 컨테이너의 실행 로그를 최근 500줄 가져옵니다.
+        Task<SystemInfoResponse> GetSystemInfoAsync();
     }
 
     /// <summary>
@@ -49,6 +51,8 @@ namespace DockerDiagram.Helpers
         Task CreateVolumeAsync(string name, string driver); // 새로운 도커 볼륨을 생성합니다.
         Task RemoveVolumeAsync(string name); // 도커 볼륨을 삭제합니다.
         Task<List<string>> GetContainersUsingVolumeAsync(string volumeName); // 특정 볼륨을 마운트하여 사용 중인 컨테이너 ID 목록을 가져옵니다.
+        Task BackupVolumeAsync(string volumeName, string hostTarFilePath);
+        Task RestoreVolumeAsync(string volumeName, string hostTarFilePath);
     }
 
     /// <summary>
@@ -78,7 +82,9 @@ namespace DockerDiagram.Helpers
     public interface IImageService
     {
         Task<List<DockerImage>> GetImagesAsync(); // 로컬에 저장된 도커 이미지 목록을 가져옵니다.
-        Task PullImageAsync(string image, string tag); // 레지스트리에서 새로운 이미지를 다운로드(Pull)합니다.
+        Task PullImageAsync(string image, string tag, string? username = null, string? password = null, string? serverAddress = null); // 레지스트리에서 새로운 이미지를 다운로드(Pull)합니다.
         Task DeleteImageAsync(string imageId, bool force = false); // 로컬에 저장된 이미지를 삭제합니다.
+        Task<List<ImageSearchResponse>> SearchImagesAsync(string term, int limit = 20);
+        Task PullImageWithProgressAsync(string image, string tag, IProgress<JSONMessage> progress, string? username = null, string? password = null, string? serverAddress = null);
     }
 }

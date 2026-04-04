@@ -915,7 +915,21 @@
                                 </Button.ContentTemplate>
                             </Button>
                             <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
-
+                            <Button Click="MenuBuildImage_Click" Style="{StaticResource MenuItemStyle}" ToolTip="도커파일을 빌드하여 새 이미지를 만듭니다.">
+                                <Button.ContentTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="25"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="🛠️" HorizontalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Text="Build Image Only..."/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
+                            <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
                             <Button Command="{Binding SystemPruneCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="사용 안 하는 컨테이너/이미지/볼륨/네트워크 일괄 삭제">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
@@ -1229,6 +1243,36 @@
 
                         <DataTemplate DataType="{x:Type vm:NodeViewModel}">
                             <Grid Margin="5">
+
+                                <Grid.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="💾 로컬 PC로 백업 (.tar)" Command="{Binding BackupVolumeCommand}">
+                                            <MenuItem.Style>
+                                                <Style TargetType="MenuItem">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Type}" Value="Volume">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </MenuItem.Style>
+                                        </MenuItem>
+
+                                        <MenuItem Header="📂 로컬 백업 복원 (.tar)" Command="{Binding RestoreVolumeCommand}">
+                                            <MenuItem.Style>
+                                                <Style TargetType="MenuItem">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Type}" Value="Volume">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </MenuItem.Style>
+                                        </MenuItem>
+                                    </ContextMenu>
+                                </Grid.ContextMenu>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>

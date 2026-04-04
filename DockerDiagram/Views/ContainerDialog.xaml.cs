@@ -41,6 +41,10 @@ namespace DockerDiagram.Views
         public bool IsInteractive => chkInteractive.IsChecked == true;
         public string Command => txtCommand.Text.Trim();
 
+        public string RegServer => txtRegServer.Text.Trim();
+        public string RegUser => txtRegUser.Text.Trim();
+        public string RegPass => txtRegPass.Password.Trim();
+
         public List<string> Ports
         {
             get
@@ -131,7 +135,6 @@ namespace DockerDiagram.Views
             {
                 if (string.IsNullOrWhiteSpace(ContainerName) || string.IsNullOrWhiteSpace(ImageName))
                 {
-                    // ★ MessageBox.Show 대신 _dialogService.ShowInfo 사용!
                     _dialogService.ShowInfo("컨테이너 명과 이미지 명을 입력하세요.", "입력 오류");
                     return;
                 }

@@ -1,0 +1,35 @@
+﻿<Window x:Class="DockerDiagram.Views.BuildImageDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Build Image Only" Height="400" Width="500"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="#F5F5F5">
+    <Grid Margin="15">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="생성될 이미지 이름 (Tag)" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
+        <TextBox x:Name="txtImageTag" Grid.Row="1" Padding="5" Margin="0,0,0,15" BorderBrush="#CCC" ToolTip="예: my-custom-app:latest"/>
+
+        <Grid Grid.Row="2" Margin="0,0,0,15">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Grid Margin="0,0,0,5">
+                <TextBlock Text="Dockerfile 내용" FontWeight="Bold" Foreground="#333" VerticalAlignment="Center"/>
+                <Button Content="📂 찾아보기..." Background="Transparent" BorderThickness="0" Foreground="Blue" Cursor="Hand" HorizontalAlignment="Right" Click="BtnBrowse_Click"/>
+            </Grid>
+            <TextBox x:Name="txtDockerfile" Grid.Row="1" AcceptsReturn="True" TextWrapping="Wrap" Padding="10" FontFamily="Consolas" Background="#F8F9FA" BorderBrush="#CCC" VerticalScrollBarVisibility="Auto"/>
+        </Grid>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Build" Width="100" Height="35" Background="#007ACC" Foreground="White" FontWeight="Bold" BorderThickness="0" Margin="0,0,10,0" Cursor="Hand" Click="BtnBuild_Click"/>
+            <Button Content="Cancel" Width="80" Height="35" Background="#E0E0E0" BorderThickness="0" Cursor="Hand" Click="BtnCancel_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -1,16 +1,17 @@
 ﻿using DockerDiagram.Helpers;
 using DockerDiagram.Models;
-using System.Diagnostics;
-using System.Collections.ObjectModel;
-using System.Collections.Specialized;
-using System.Windows.Input;
-using System.Windows.Threading;
-using System.Windows;
-using System.IO;
-using System.Linq;
+using LiveCharts;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Threading;
 
 namespace DockerDiagram.ViewModels
 {
@@ -117,6 +118,20 @@ namespace DockerDiagram.ViewModels
 
         // UsedByContainers: 문자열 -> 리스트로 변경 (볼륨 상세 정보용)
         public ObservableCollection<string> UsedByContainers { get; } = new();
+
+        private double _maxCpuCount = 8.0;
+        public double MaxCpuCount { get => _maxCpuCount; set => SetProperty(ref _maxCpuCount, value); }
+
+        private double _targetCpuCount = 1.0;
+        public double TargetCpuCount { get => _targetCpuCount; set => SetProperty(ref _targetCpuCount, value); }
+
+        private long _maxMemoryMb = 8192;
+        public long MaxMemoryMb { get => _maxMemoryMb; set => SetProperty(ref _maxMemoryMb, value); }
+
+        private long _targetMemoryMb = 512;
+        public long TargetMemoryMb { get => _targetMemoryMb; set => SetProperty(ref _targetMemoryMb, value); }
+
+        public ICommand UpdateResourcesCommand { get; }
 
         // --- 실시간 리소스 모니터링 ---
         private string _cpuUsage = "0.0%";
@@ -422,7 +437,14 @@ namespace DockerDiagram.ViewModels
         public ICommand CopyToContainerCommand { get; }
         public ICommand CopyFromContainerCommand { get; }
         public ICommand AddEnvAndRecreateCommand { get; }
+        public ICommand BackupVolumeCommand { get; }
+        public ICommand RestoreVolumeCommand { get; }
+
         public AsyncRelayCommand ExtractDockerfileCommand { get; }
+
+        public ChartValues<double> CpuChartValues { get; set; } = new ChartValues<double>();
+        public ChartValues<double> MemoryChartValues { get; set; } = new ChartValues<double>();
+        public ChartValues<string> TimeLabels { get; set; } = new ChartValues<string>();
 
         /// <summary>
         /// 도커 통신에 필요한 백엔드 서비스(컨테이너, 볼륨) 및 알림(다이얼로그) 서비스를 주입받아 객체를 초기화합니다.
@@ -434,10 +456,15 @@ namespace DockerDiagram.ViewModels
             _volumeService = volumeService ?? throw new ArgumentNullException(nameof(volumeService));
             _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
 
+            BackupVolumeCommand = new AsyncRelayCommand(ExecuteBackupVolumeAsync, _ => Type == NodeType.Volume);
+            RestoreVolumeCommand = new AsyncRelayCommand(ExecuteRestoreVolumeAsync, _ => Type == NodeType.Volume);
+
             StartCommand = new AsyncRelayCommand(_ => ControlAction("start"), _ => Type == NodeType.Container && !IsRunning);
             StopCommand = new AsyncRelayCommand(_ => ControlAction("stop"), _ => Type == NodeType.Container && IsRunning);
             PauseCommand = new AsyncRelayCommand(_ => ControlAction("pause"), _ => Type == NodeType.Container && (IsRunning || IsPaused));
             RestartCommand = new AsyncRelayCommand(_ => ControlAction("restart"), _ => Type == NodeType.Container);
+
+            UpdateResourcesCommand = new AsyncRelayCommand(ExecuteUpdateResourcesAsync, _ => Type == NodeType.Container);
 
             TerminalCommand = new RelayCommand(_ => OpenTerminal(), _ => Type == NodeType.Container && IsRunning);
             ExtractDockerfileCommand = new AsyncRelayCommand(_ => ExtractDockerfileAsync(), _ => Type == NodeType.Container);
@@ -528,6 +555,34 @@ namespace DockerDiagram.ViewModels
                     if (string.IsNullOrEmpty(ContainerId)) return;
 
                     var info = await _containerService.InspectContainerAsync(ContainerId);
+
+                    // =====================================================================
+                    // ★ [완벽 수정됨] 도커 엔진(Daemon) 기준 실제 스펙 및 현재 할당값 동기화 ★
+                    // =====================================================================
+                    try
+                    {
+                        // 1. 도커 엔진이 사용 가능한 실제 최대 자원(Maximum) 가져오기
+                        var dockerSystemInfo = await _containerService.GetSystemInfoAsync();
+                        MaxCpuCount = dockerSystemInfo.NCPU > 0 ? dockerSystemInfo.NCPU : Environment.ProcessorCount;
+                        MaxMemoryMb = dockerSystemInfo.MemTotal > 0 ? (dockerSystemInfo.MemTotal / 1048576) : 32768;
+                    }
+                    catch
+                    {
+                        // GetSystemInfoAsync() 호출 실패 시 에러 방지용 Fallback (내 PC 기준)
+                        MaxCpuCount = Environment.ProcessorCount;
+                        MaxMemoryMb = 32768; // 기본 32GB 넉넉히 세팅
+                    }
+
+                    // 2. 이 컨테이너에 '현재' 세팅되어 있는 진짜 리소스 값을 가져와서 UI(슬라이더/텍스트박스)에 기본 세팅
+                    if (info.HostConfig != null)
+                    {
+                        long currentMem = info.HostConfig.Memory;
+                        TargetMemoryMb = currentMem > 0 ? (currentMem / 1048576) : MaxMemoryMb;
+
+                        long currentCpu = info.HostConfig.NanoCPUs;
+                        TargetCpuCount = currentCpu > 0 ? (currentCpu / 1_000_000_000.0) : MaxCpuCount;
+                    }
+                    // =====================================================================
 
                     DetailStatus = info.State.Status;
                     IsRunning = info.State.Running;
@@ -659,6 +714,37 @@ namespace DockerDiagram.ViewModels
                     else if (IsPaused) StatusColor = "#ffc107";
                     else StatusColor = "#dc3545";
 
+                    if (IsRunning)
+                    {
+                        var stats = await _containerService.GetContainerStatsAsync(ContainerId);
+
+                        System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            CpuChartValues.Add(stats.CpuPercentage);
+                            MemoryChartValues.Add(stats.MemoryUsedMB);
+                            TimeLabels.Add(DateTime.Now.ToString("HH:mm:ss"));
+
+                            if (CpuChartValues.Count > 60)
+                            {
+                                CpuChartValues.RemoveAt(0);
+                                MemoryChartValues.RemoveAt(0);
+                                TimeLabels.RemoveAt(0);
+                            }
+                        });
+                    }
+                    else
+                    {
+                        System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            if (CpuChartValues.Count > 0 && CpuChartValues[CpuChartValues.Count - 1] != 0)
+                            {
+                                CpuChartValues.Add(0);
+                                MemoryChartValues.Add(0);
+                                TimeLabels.Add(DateTime.Now.ToString("HH:mm:ss"));
+                            }
+                        });
+                    }
+
                     OnPropertyChanged(nameof(NetworkIpMap));
                     OnPropertyChanged(nameof(NetworkDetailList));
                     OnPropertyChanged(nameof(EnvList));
@@ -694,7 +780,7 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Refresh Error: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Refresh Error: {ex.Message}");
                 DetailStatus = "Error";
                 IsRunning = false;
                 IsPaused = false;
@@ -1001,6 +1087,103 @@ namespace DockerDiagram.ViewModels
             finally
             {
                 Mouse.OverrideCursor = null;
+            }
+        }
+
+        /// <summary>
+        /// 볼륨 백업: 저장할 위치를 묻고 백그라운드에서 백업을 수행합니다.
+        /// </summary>
+        private async Task ExecuteBackupVolumeAsync(object? parameter)
+        {
+            var saveDlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = $"[{Name}] 볼륨 백업 저장",
+                Filter = "Tar Archive (*.tar)|*.tar",
+                FileName = $"{Name}_backup_{DateTime.Now:yyyyMMdd_HHmmss}.tar"
+            };
+
+            if (saveDlg.ShowDialog() == true)
+            {
+                DetailStatus = "Backing up...";
+                StatusColor = "#007ACC";
+
+                try
+                {
+                    await _volumeService.BackupVolumeAsync(Name, saveDlg.FileName);
+                    _dialogService.ShowInfo($"볼륨 백업이 완료되었습니다.\n저장 위치: {saveDlg.FileName}", "백업 성공");
+                }
+                catch (Exception ex)
+                {
+                    _dialogService.ShowError($"백업 중 오류가 발생했습니다.\n{ex.Message}", "백업 실패");
+                }
+                finally
+                {
+                    await RefreshDetailsAsync(); // 상태 원상복구
+                }
+            }
+        }
+
+        /// <summary>
+        /// 볼륨 복원: 복원할 .tar 파일을 선택받고 볼륨에 덮어씁니다.
+        /// </summary>
+        private async Task ExecuteRestoreVolumeAsync(object? parameter)
+        {
+            bool confirm = _dialogService.ShowConfirm($"[{Name}] 볼륨에 데이터를 복원하시겠습니까?\n기존 데이터가 덮어씌워질 수 있습니다.", "복원 경고");
+            if (!confirm) return;
+
+            var openDlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "복원할 백업 파일(.tar) 선택",
+                Filter = "Tar Archive (*.tar)|*.tar|All Files (*.*)|*.*"
+            };
+
+            if (openDlg.ShowDialog() == true)
+            {
+                DetailStatus = "Restoring...";
+                StatusColor = "#E67E22";
+
+                try
+                {
+                    await _volumeService.RestoreVolumeAsync(Name, openDlg.FileName);
+                    _dialogService.ShowInfo($"볼륨 데이터가 성공적으로 복원되었습니다.", "복원 성공");
+                }
+                catch (Exception ex)
+                {
+                    _dialogService.ShowError($"복원 중 오류가 발생했습니다.\n{ex.Message}", "복원 실패");
+                }
+                finally
+                {
+                    await RefreshDetailsAsync(); // 상태 원상복구
+                }
+            }
+        }
+
+        /// <summary>
+        /// 슬라이더에 설정된 값을 바탕으로 실행 중인 컨테이너의 리소스를 실시간 업데이트합니다.
+        /// </summary>
+        private async Task ExecuteUpdateResourcesAsync(object? parameter)
+        {
+            // 컨테이너의 고유 ID가 없으면 실행 불가
+            if (string.IsNullOrWhiteSpace(ContainerId)) return;
+
+            bool confirm = _dialogService.ShowConfirm(
+                $"컨테이너 리소스를 실시간으로 제한하시겠습니까? (재시작 없음)\n\n" +
+                $"- 목표 CPU: {TargetCpuCount:0.1} Core\n" +
+                $"- 목표 Memory: {TargetMemoryMb} MB",
+                "실시간 리소스 변경");
+
+            if (!confirm) return;
+
+            try
+            {
+                // 1단계에서 만든 백엔드 서비스 호출!
+                await _containerService.UpdateContainerResourcesAsync(ContainerId, TargetCpuCount, TargetMemoryMb);
+
+                _dialogService.ShowInfo("리소스 제한이 무중단으로 성공적으로 적용되었습니다.", "업데이트 완료");
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"리소스 업데이트 실패: {ex.Message}\n(참고: CPU 제한이 호스트 코어 수를 넘을 수 없습니다.)", "오류");
             }
         }
     }

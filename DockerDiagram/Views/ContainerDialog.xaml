@@ -18,16 +18,32 @@
                     <TabControl Background="#FAFAFA" BorderBrush="#EEE">
 
                         <TabItem Header="General">
-                            <StackPanel Margin="15">
-                                <TextBlock Text="Container Name" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
-                                <TextBox x:Name="txtName" Padding="5" Margin="0,0,0,15" BorderBrush="#CCC"/>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Margin="15">
+                                    <TextBlock Text="Container Name" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
+                                    <TextBox x:Name="txtName" Padding="5" Margin="0,0,0,15" BorderBrush="#CCC"/>
 
-                                <TextBlock Text="Image Name" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
-                                <TextBox x:Name="txtImage" Padding="5" Margin="0,0,0,15" BorderBrush="#CCC"/>
+                                    <TextBlock Text="Image Name" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
+                                    <TextBox x:Name="txtImage" Padding="5" Margin="0,0,0,15" BorderBrush="#CCC"/>
 
-                                <CheckBox x:Name="chkInteractive" Content="터미널 유지 (Keep STDIN open / TTY)" 
-                                          FontWeight="Bold" Foreground="#333" Margin="0,5,0,0" ToolTip="컨테이너가 즉시 종료되는 것을 방지합니다 (-it)"/>
-                            </StackPanel>
+                                    <CheckBox x:Name="chkInteractive" Content="터미널 유지 (Keep STDIN open / TTY)" 
+                                              FontWeight="Bold" Foreground="#333" Margin="0,5,0,0" ToolTip="컨테이너가 즉시 종료되는 것을 방지합니다 (-it)"/>
+
+                                    <Expander Header="🔒 Private Registry (비공개 저장소 인증)" Margin="0,15,0,0" Background="#FDFDFD" BorderBrush="#DDD" BorderThickness="1">
+                                        <StackPanel Margin="10">
+                                            <TextBlock Text="Registry URL (비워두면 기본 Docker Hub 사용)" Foreground="#555" FontSize="11" Margin="0,0,0,2"/>
+                                            <TextBox x:Name="txtRegServer" Padding="5" Margin="0,0,0,10" BorderBrush="#CCC" ToolTip="예: https://ghcr.io 또는 https://12345.dkr.ecr.aws.com"/>
+
+                                            <TextBlock Text="Username (아이디)" Foreground="#555" FontSize="11" Margin="0,0,0,2"/>
+                                            <TextBox x:Name="txtRegUser" Padding="5" Margin="0,0,0,10" BorderBrush="#CCC"/>
+
+                                            <TextBlock Text="Password / Token (비밀번호/토큰)" Foreground="#555" FontSize="11" Margin="0,0,0,2"/>
+                                            <PasswordBox x:Name="txtRegPass" Padding="5" Margin="0,0,0,5" BorderBrush="#CCC"/>
+                                        </StackPanel>
+                                    </Expander>
+
+                                </StackPanel>
+                            </ScrollViewer>
                         </TabItem>
 
                         <TabItem Header="Ports">
@@ -72,11 +88,18 @@
                         </TabItem>
 
                         <TabItem Header="Command">
-                            <StackPanel Margin="15">
-                                <TextBlock Text="Command / Entrypoint Override" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
-                                <TextBlock Text="이미지의 기본 실행 명령을 무시하고 강제로 실행할 명령어를 입력합니다." FontSize="11" Foreground="Gray" Margin="0,0,0,10"/>
-                                <TextBox x:Name="txtCommand" AcceptsReturn="True" Padding="5" FontFamily="Consolas" BorderBrush="#CCC" Height="80" ToolTip="예: python app.py 또는 tail -f /dev/null"/>
-                            </StackPanel>
+                            <Grid Margin="15">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Text="Command / Entrypoint Override" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
+                                <TextBlock Grid.Row="1" Text="이미지의 기본 실행 명령을 무시하고 강제로 실행할 명령어를 입력합니다." FontSize="11" Foreground="Gray" Margin="0,0,0,10"/>
+
+                                <TextBox x:Name="txtCommand" Grid.Row="2" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="5" FontFamily="Consolas" BorderBrush="#CCC" ToolTip="예: python app.py 또는 tail -f /dev/null"/>
+                            </Grid>
                         </TabItem>
 
                         <TabItem Header="Network">

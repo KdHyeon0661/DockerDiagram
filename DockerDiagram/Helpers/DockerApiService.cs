@@ -294,11 +294,25 @@ namespace DockerDiagram.Helpers
         /// <summary>
         /// 지정된 이미지와 태그를 도커 허브(또는 레지스트리)에서 로컬로 다운로드(Pull)합니다.
         /// </summary>
-        public async Task PullImageAsync(string image, string tag)
+        public async Task PullImageAsync(string image, string tag, string? username = null, string? password = null, string? serverAddress = null)
         {
+            AuthConfig? authConfig = null;
+
+            // 아이디와 비밀번호가 모두 전달된 경우에만 인증 객체 생성
+            if (!string.IsNullOrWhiteSpace(username) && !string.IsNullOrWhiteSpace(password))
+            {
+                authConfig = new AuthConfig
+                {
+                    Username = username,
+                    Password = password,
+                    ServerAddress = string.IsNullOrWhiteSpace(serverAddress) ? "https://index.docker.io/v1/" : serverAddress
+                };
+            }
+
+            // authConfig가 null이면 일반 Public Pull로, 값이 있으면 Private Pull로 동작합니다.
             await _client.Images.CreateImageAsync(
                 new ImagesCreateParameters { FromImage = image, Tag = tag },
-                null,
+                authConfig,
                 new Progress<JSONMessage>());
         }
 
@@ -670,10 +684,6 @@ namespace DockerDiagram.Helpers
             return 0.0;
         }
 
-        // =========================================================
-        // ★ [필수] IDisposable 패턴 구현 (사라졌던 부분)
-        // =========================================================
-
         /// <summary>
         /// 메모리 누수 방지 및 네트워크 소켓 고갈을 막기 위한 표준 IDisposable 패턴 구현부입니다.
         /// 이 서비스 클래스가 소멸될 때, 도커 엔진과 통신하기 위해 열어두었던 HTTP 클라이언트(_client) 등 관리되는(Managed) 리소스를 안전하게 해제합니다.
@@ -703,44 +713,254 @@ namespace DockerDiagram.Helpers
         /// <summary>
         /// 특정 컨테이너가 뱉어낸 최근 로그(표준 출력 및 에러)를 지정된 줄(Tail) 수만큼 가져와 문자열로 반환합니다.
         /// </summary>
-        public async Task<string> GetContainerLogsAsync(string containerId, int tailCount = 500)
+        public async Task<string> GetContainerLogsAsync(string containerId, int tailCount = 100)
         {
             try
             {
-                // 로그 요청 파라미터 (최근 N줄, 타임스탬프 포함, 표준 입출력/에러 모두 가져옴)
                 var parameters = new ContainerLogsParameters
                 {
                     ShowStdout = true,
                     ShowStderr = true,
                     Tail = tailCount.ToString(),
-                    Timestamps = true
+                    Timestamps = true // 도커 엔진에서 각 줄 앞에 타임스탬프를 붙여서 보내줌
                 };
 
-                // 도커 클라이언트에서 로그 스트림 받아오기
                 using (var stream = await _client.Containers.GetContainerLogsAsync(containerId, false, parameters))
                 {
                     using (var stdoutMs = new MemoryStream())
                     using (var stderrMs = new MemoryStream())
                     {
-                        // 도커 로그는 특수 헤더가 붙어있어 CopyOutputToAsync로 분리해서 읽어야 함
                         await stream.CopyOutputToAsync(default, stdoutMs, stderrMs, CancellationToken.None);
 
                         stdoutMs.Position = 0;
                         stderrMs.Position = 0;
 
-                        string stdout = Encoding.UTF8.GetString(stdoutMs.ToArray());
-                        string stderr = Encoding.UTF8.GetString(stderrMs.ToArray());
+                        string stdout = System.Text.Encoding.UTF8.GetString(stdoutMs.ToArray());
+                        string stderr = System.Text.Encoding.UTF8.GetString(stderrMs.ToArray());
 
-                        // 일반 출력(stdout)과 에러 출력(stderr)을 합쳐서 반환
-                        return stdout + stderr;
+                        // 원본 로그 문자열 합치기
+                        string rawLogs = stdout + stderr;
+
+                        // ★ 추가됨: 날짜 포맷 예쁘게 가공하기
+                        return FormatDockerLogs(rawLogs);
                     }
                 }
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[DockerDiscovery] GetContainerLogsAsync Error: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[DockerDiscovery] GetContainerLogsAsync Error: {ex.Message}");
                 return $"로그를 가져오는 중 오류가 발생했습니다:\n{ex.Message}";
             }
+        }
+
+        /// <summary>
+        /// 도커 엔진이 반환한 원시 로그의 타임스탬프(ISO 8601)를 파싱하여 보기 편한 로컬 시간 포맷으로 가공합니다.
+        /// </summary>
+        private string FormatDockerLogs(string rawLogs)
+        {
+            if (string.IsNullOrWhiteSpace(rawLogs)) return string.Empty;
+
+            var sb = new System.Text.StringBuilder();
+
+            // 줄 단위로 분리
+            var lines = rawLogs.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var line in lines)
+            {
+                // 타임스탬프와 로그 메시지 사이에는 공백(' ')이 존재함
+                int spaceIndex = line.IndexOf(' ');
+
+                if (spaceIndex > 0)
+                {
+                    string timePart = line.Substring(0, spaceIndex);
+
+                    // 도커의 UTC 타임스탬프 문자열을 DateTime 객체로 변환 시도
+                    if (DateTime.TryParse(timePart, out DateTime dt))
+                    {
+                        // 로컬 시간으로 변경 후, [2024-04-03 14:30:22] 형식으로 가공
+                        string formattedTime = dt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+                        string message = line.Substring(spaceIndex + 1);
+
+                        sb.AppendLine($"[{formattedTime}] {message}");
+                    }
+                    else
+                    {
+                        // 파싱 실패 시 원본 그대로 출력
+                        sb.AppendLine(line);
+                    }
+                }
+                else
+                {
+                    // 공백이 없는 줄(예상치 못한 포맷)도 원본 유지
+                    sb.AppendLine(line);
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// 도커 허브(Docker Hub)에서 이미지를 검색하여 결과를 반환합니다.
+        /// </summary>
+        public async Task<List<ImageSearchResponse>> SearchImagesAsync(string term, int limit = 20)
+        {
+            var parameters = new ImagesSearchParameters
+            {
+                Term = term,
+                Limit = limit
+            };
+
+            var results = await _client.Images.SearchImagesAsync(parameters);
+            return results.ToList();
+        }
+
+        /// <summary>
+        /// 진행률(Progress)을 UI로 실시간 보고하면서 지정된 이미지와 태그를 도커 허브에서 다운로드(Pull)합니다.
+        /// </summary>
+        public async Task PullImageWithProgressAsync(string image, string tag, IProgress<JSONMessage> progress, string? username = null, string? password = null, string? serverAddress = null)
+        {
+            AuthConfig? authConfig = null;
+
+            // 아이디와 비밀번호가 모두 전달된 경우에만 프라이빗 레지스트리 인증 객체 생성
+            if (!string.IsNullOrWhiteSpace(username) && !string.IsNullOrWhiteSpace(password))
+            {
+                authConfig = new AuthConfig
+                {
+                    Username = username,
+                    Password = password,
+                    ServerAddress = string.IsNullOrWhiteSpace(serverAddress) ? "https://index.docker.io/v1/" : serverAddress
+                };
+            }
+
+            // ★ 핵심: IProgress<JSONMessage> 객체를 파라미터로 넘겨주면, 
+            // 다운로드되는 동안 도커 엔진이 알아서 이 객체에 현재 % 와 다운로드 용량을 쏴줍니다!
+            await _client.Images.CreateImageAsync(
+                new ImagesCreateParameters { FromImage = image, Tag = string.IsNullOrWhiteSpace(tag) ? "latest" : tag },
+                authConfig,
+                progress);
+        }
+
+        /// <summary>
+        /// 특정 도커 볼륨을 임시 알파인(Alpine) 컨테이너에 마운트하여 .tar 파일로 압축한 뒤 로컬 PC에 저장(백업)합니다.
+        /// </summary>
+        public async Task BackupVolumeAsync(string volumeName, string hostTarFilePath)
+        {
+            string tempContainerName = $"vdm-backup-{Guid.NewGuid().ToString().Substring(0, 6)}";
+
+            // 1. 임시로 사용할 가벼운 alpine 이미지 다운로드 (이미 있으면 즉시 넘어감)
+            await PullImageAsync("alpine", "latest");
+
+            // 2. 임시 컨테이너 생성 및 시작 (백업할 볼륨을 컨테이너 내부의 /backup_data 에 마운트)
+            string containerId = await CreateAndStartContainerAsync(
+                name: tempContainerName,
+                image: "alpine",
+                tag: "latest",
+                ports: new List<string>(),
+                envs: new List<string>(),
+                volumes: new List<string> { $"{volumeName}:/backup_data" },
+                restartPolicy: "no",
+                memoryMb: 0,
+                cpuCount: 0,
+                command: "sleep 300", // 복사하는 동안 컨테이너가 죽지 않도록 300초 대기
+                tty: false
+            );
+
+            try
+            {
+                // 3. 컨테이너 내부의 /backup_data 폴더 자체를 TAR 스트림으로 가져와서 로컬 파일로 저장
+                var tarResponse = await _client.Containers.GetArchiveFromContainerAsync(containerId, new GetArchiveFromContainerParameters
+                {
+                    Path = "/backup_data"
+                }, false);
+
+                using (var fileStream = File.Create(hostTarFilePath))
+                {
+                    await tarResponse.Stream.CopyToAsync(fileStream);
+                }
+            }
+            finally
+            {
+                // 4. 백업이 끝나면(성공하든 에러가 나든) 흔적 없이 임시 컨테이너 강제 삭제
+                await _client.Containers.RemoveContainerAsync(containerId, new ContainerRemoveParameters { Force = true });
+            }
+        }
+
+        /// <summary>
+        /// 로컬 PC의 .tar 백업 파일을 읽어, 임시 컨테이너를 통해 특정 도커 볼륨에 데이터를 덮어씁니다(복원).
+        /// </summary>
+        public async Task RestoreVolumeAsync(string volumeName, string hostTarFilePath)
+        {
+            string tempContainerName = $"vdm-restore-{Guid.NewGuid().ToString().Substring(0, 6)}";
+
+            await PullImageAsync("alpine", "latest");
+
+            string containerId = await CreateAndStartContainerAsync(
+                name: tempContainerName,
+                image: "alpine",
+                tag: "latest",
+                ports: new List<string>(),
+                envs: new List<string>(),
+                volumes: new List<string> { $"{volumeName}:/backup_data" },
+                restartPolicy: "no",
+                memoryMb: 0,
+                cpuCount: 0,
+                command: "sleep 300",
+                tty: false
+            );
+
+            try
+            {
+                // 로컬의 .tar 파일을 읽어서 컨테이너 내부의 볼륨 마운트 경로(/backup_data)에 압축 해제하며 덮어쓰기
+                using (var fs = File.OpenRead(hostTarFilePath))
+                {
+                    await _client.Containers.ExtractArchiveToContainerAsync(containerId, new ContainerPathStatParameters
+                    {
+                        Path = "/", // 압축 해제 기준 경로 (tar 내부에 backup_data 폴더가 포함되어 있으므로 최상단에 품)
+                        AllowOverwriteDirWithFile = true
+                    }, fs);
+                }
+            }
+            finally
+            {
+                // 복원 후 임시 컨테이너 삭제
+                await _client.Containers.RemoveContainerAsync(containerId, new ContainerRemoveParameters { Force = true });
+            }
+        }
+
+        /// <summary>
+        /// 실행 중인 컨테이너를 중단하지 않고 CPU 및 메모리 제한(Limit)을 실시간으로 동적 변경합니다.
+        /// </summary>
+        public async Task UpdateContainerResourcesAsync(string containerId, double cpuCount, long memoryMb)
+        {
+            var updateParams = new ContainerUpdateParameters();
+
+            // CPU 설정 (NanoCPUs: 1 코어 = 1,000,000,000 단위)
+            if (cpuCount > 0)
+            {
+                updateParams.NanoCPUs = (long)(cpuCount * 1_000_000_000);
+            }
+
+            // 메모리 설정 (Bytes 단위로 변환)
+            if (memoryMb > 0)
+            {
+                long memoryBytes = memoryMb * 1024 * 1024;
+                updateParams.Memory = memoryBytes;
+
+                // ★ 중요: 메모리를 변경할 때 도커 엔진 규칙상 Swap 메모리도 같이 지정해 주어야 에러가 나지 않습니다.
+                // 여기서는 메모리와 Swap을 동일하게 주어(하드 리미트) 칼같이 제한하도록 설정합니다.
+                updateParams.MemorySwap = memoryBytes;
+            }
+
+            // 도커 API를 찔러서 즉시 업데이트 (재시작 불필요!)
+            await _client.Containers.UpdateContainerAsync(containerId, updateParams);
+        }
+
+        /// <summary>
+        /// 도커 엔진(Daemon)의 실제 시스템 스펙(사용 가능한 CPU 코어 수, 전체 물리 메모리 등)을 조회합니다.
+        /// </summary>
+        public async Task<SystemInfoResponse> GetSystemInfoAsync()
+        {
+            return await _client.System.GetSystemInfoAsync();
         }
     }
 }

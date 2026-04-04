@@ -1762,5 +1762,19 @@ namespace DockerDiagram
             sshDlg.Owner = this;
             sshDlg.ShowDialog();
         }
+
+        private async void MenuBuildImage_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new Views.BuildImageDialog();
+            dlg.Owner = this;
+
+            if (dlg.ShowDialog() == true)
+            {
+                if (this.DataContext is ViewModels.MainViewModel vm)
+                {
+                    await vm.BuildImageOnlyAsync(dlg.TagName, dlg.DockerfileContent, dlg.DockerfilePath);
+                }
+            }
+        }
     }
 }
