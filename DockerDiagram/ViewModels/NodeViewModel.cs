@@ -1,6 +1,8 @@
 ﻿using DockerDiagram.Helpers;
 using DockerDiagram.Models;
-using LiveCharts;
+using OxyPlot;
+using OxyPlot.Axes;
+using OxyPlot.Series;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -8,6 +10,7 @@ using System.Collections.Specialized;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
@@ -22,6 +25,7 @@ namespace DockerDiagram.ViewModels
     /// </summary>
     public class NodeViewModel : ViewModelBase, IConnectableItem
     {
+        #region Constants & Fields
         private const int GRID_SIZE = 10;
         private const double MIN_SIZE = 50;
 
@@ -31,176 +35,66 @@ namespace DockerDiagram.ViewModels
 
         // 마운트 정보 원본 저장용 (캐시)
         private List<Docker.DotNet.Models.MountPoint> _cachedMounts = new();
+        private DispatcherTimer? _statsTimer;
+        private CancellationTokenSource? _logStreamCts;
+        private SheetViewModel? _parentSheet;
 
-        // --- 1. 기본 레이아웃 속성 ---
         private double _x;
         private double _y;
         private double _width = 160;
         private double _height = 80;
         private bool _isSelected;
-
-        /// <summary>
-        /// 이 노드의 역할을 정의합니다. (컨테이너, 볼륨, 또는 인터넷)
-        /// </summary>
-        public NodeType Type { get; init; }
+        private bool _isCreating = false;
+        private bool _isRunning;
+        private bool _isPaused;
 
         private string _name = string.Empty;
-        public string Name { get => _name; set => SetProperty(ref _name, value); }
-
-        public string ImageName { get; set; } = string.Empty;
-        public string PortInfo { get; set; } = string.Empty;
-
-        public string Id { get; set; } = Guid.NewGuid().ToString();
-
         private string _containerId = string.Empty;
-
-        /// <summary>
-        /// 도커 엔진에서 발급한 실제 컨테이너(또는 볼륨)의 고유 해시 ID입니다.
-        /// 이 ID를 기반으로 도커 백엔드와 모든 통신(조회, 제어)이 이루어집니다.
-        /// </summary>
-        public string ContainerId
-        {
-            get => _containerId;
-            set
-            {
-                if (SetProperty(ref _containerId, value))
-                {
-                    OnPropertyChanged(nameof(ShortContainerId));
-                }
-            }
-        }
-
-        private static string ShortenId(string? id, int len = 12)
-        {
-            if (string.IsNullOrWhiteSpace(id)) return "";
-            return id.Length <= len ? id : id.Substring(0, len);
-        }
-
-        public string ShortContainerId => (Type == NodeType.Container) ? ShortenId(ContainerId) : "";
-
-        // --- 네트워크 3단계 전환 모드 ---
-        private int _networkDisplayMode = 0;
-        public int NetworkDisplayMode { get => _networkDisplayMode; set => SetProperty(ref _networkDisplayMode, value); }
-
-        // 볼륨 디스플레이 모드 (0: Named, 1: Bind)
-        private int _volumeDisplayMode = 0;
-
-        /// <summary>
-        /// 화면에 표시할 볼륨 정보의 출력 모드를 결정합니다. (0: 도커 Named 볼륨만 표시, 1: 로컬 폴더 Bind 마운트 포함 전체 표시)
-        /// </summary>
-        public int VolumeDisplayMode
-        {
-            get => _volumeDisplayMode;
-            set
-            {
-                if (SetProperty(ref _volumeDisplayMode, value))
-                {
-                    UpdateVolumeList(); // 모드가 바뀌면 리스트 내용 즉시 갱신
-                }
-            }
-        }
-
-        public class NetworkDetail
-        {
-            public string NetworkName { get; set; } = "";
-            public string IPv4 { get; set; } = "-";
-            public string IPv6 { get; set; } = "-";
-        }
-
-        public ObservableCollection<NetworkDetail> NetworkDetailList { get; } = new();
-        public Dictionary<string, string> NetworkIpMap { get; private set; } = new();
-
-        // [리스트] 볼륨 (필터링된 결과 표시)
-        public ObservableCollection<string> MountedVolumeList { get; } = new();
-
-        // [리스트] 연결된 노드 (인터넷, 컨테이너만 표시)
-        public ObservableCollection<string> ConnectedNodes { get; } = new();
-
-        // UsedByContainers: 문자열 -> 리스트로 변경 (볼륨 상세 정보용)
-        public ObservableCollection<string> UsedByContainers { get; } = new();
+        private string _detailStatus = "Unknown";
+        private string _createdDate = "-";
+        private string _startedAt = "-";
+        private string _finishedAt = "-";
+        private string _uptime = "-";
+        private string _ipAddress = "-";
+        private string _ipAddresses = "-";
+        private string _connectedNetworks = "-";
+        private string _mountedVolumes = "None";
+        private string _driver = "-";
+        private string _mountpoint = "-";
+        private string _restartPolicy = "no";
+        private string _healthStatus = "No Check";
+        private string _healthColor = "#888888";
+        private string _containerLogs = "Loading logs...";
+        private string _statusColor = "#28a745";
 
         private double _maxCpuCount = 8.0;
-        public double MaxCpuCount { get => _maxCpuCount; set => SetProperty(ref _maxCpuCount, value); }
-
         private double _targetCpuCount = 1.0;
-        public double TargetCpuCount { get => _targetCpuCount; set => SetProperty(ref _targetCpuCount, value); }
-
         private long _maxMemoryMb = 8192;
-        public long MaxMemoryMb { get => _maxMemoryMb; set => SetProperty(ref _maxMemoryMb, value); }
-
         private long _targetMemoryMb = 512;
-        public long TargetMemoryMb { get => _targetMemoryMb; set => SetProperty(ref _targetMemoryMb, value); }
-
-        public ICommand UpdateResourcesCommand { get; }
-
-        // --- 실시간 리소스 모니터링 ---
         private string _cpuUsage = "0.0%";
-        public string CpuUsage { get => _cpuUsage; set => SetProperty(ref _cpuUsage, value); }
-
         private double _cpuValue = 0;
-        public double CpuValue { get => _cpuValue; set => SetProperty(ref _cpuValue, value); }
-
         private string _memoryUsage = "0B / 0B";
-        public string MemoryUsage { get => _memoryUsage; set => SetProperty(ref _memoryUsage, value); }
-
         private double _memoryValue = 0;
-        public double MemoryValue
-        {
-            get => _memoryValue;
-            set => SetProperty(ref _memoryValue, double.IsNaN(value) ? 0 : value);
-        }
 
-        private DispatcherTimer? _statsTimer;
-
-        // --- 도커 상세 정보 ---
+        private int _networkDisplayMode = 0;
+        private int _volumeDisplayMode = 0;
         private List<string> _portBindings = new();
-        public List<string> PortBindings { get => _portBindings; set => SetProperty(ref _portBindings, value); }
-
         private List<string> _environmentVariables = new();
-        public List<string> EnvironmentVariables
-        {
-            get => _environmentVariables;
-            set
-            {
-                if (SetProperty(ref _environmentVariables, value))
-                {
-                    OnPropertyChanged(nameof(EnvList));
-                }
-            }
-        }
-
-        public List<string> EnvList => EnvironmentVariables;
-
-        private string _uptime = "-";
-        public string Uptime { get => _uptime; set => SetProperty(ref _uptime, value); }
-
-        private string _ipAddress = "-";
-        public string IPAddress { get => _ipAddress; set => SetProperty(ref _ipAddress, value); }
-
-        private string _restartPolicy = "no";
-        public string RestartPolicy { get => _restartPolicy; set => SetProperty(ref _restartPolicy, value); }
-
-        private string _healthStatus = "No Check";
-        public string HealthStatus { get => _healthStatus; set => SetProperty(ref _healthStatus, value); }
-
-        private string _healthColor = "#888888";
-        public string HealthColor { get => _healthColor; set => SetProperty(ref _healthColor, value); }
-
-        private string _containerLogs = "Loading logs...";
-        public string ContainerLogs { get => _containerLogs; set => SetProperty(ref _containerLogs, value); }
-
-        private string _statusColor = "#28a745";
-        public string StatusColor { get => _statusColor; set => SetProperty(ref _statusColor, value); }
-
         private string _hostFilePath = @"C:\temp\";
-        public string HostFilePath { get => _hostFilePath; set => SetProperty(ref _hostFilePath, value); }
-
         private string _containerFilePath = @"/app/data";
-        public string ContainerFilePath { get => _containerFilePath; set => SetProperty(ref _containerFilePath, value); }
-
         private string _newEnvInput = "";
-        public string NewEnvInput { get => _newEnvInput; set => SetProperty(ref _newEnvInput, value); }
 
+        private LineSeries _cpuSeries;
+        private LineSeries _memorySeries;
+        private int _timeIndex = 0; // X축 기준점이 될 시간 흐름 인덱스
+        #endregion
+
+        #region Events
+        public event EventHandler? OnPositionChanged;
+        public event EventHandler? OnModified;
+        #endregion
+
+        #region Layout Properties
         public double X
         {
             get => _x;
@@ -284,7 +178,7 @@ namespace DockerDiagram.ViewModels
                     if (value)
                     {
                         StartMonitoring();
-                        RefreshConnections();
+                        _ = RefreshDetailsAsync();
                     }
                     else
                     {
@@ -293,104 +187,6 @@ namespace DockerDiagram.ViewModels
                 }
             }
         }
-
-        private bool _isCreating = false;
-
-        /// <summary>
-        /// 컨테이너 이미지를 다운로드(Pull)하거나 생성 중인 임시 상태인지 여부를 나타냅니다.
-        /// 이 상태일 때는 노드의 상태 표시줄이 노란색으로 변경되며 일부 제어가 제한됩니다.
-        /// </summary>
-        public bool IsCreating
-        {
-            get => _isCreating;
-            set
-            {
-                if (SetProperty(ref _isCreating, value))
-                {
-                    StatusColor = value ? "#FFC107" : "#28a745";
-                }
-            }
-        }
-
-        public event EventHandler? OnPositionChanged;
-        public event EventHandler? OnModified;
-
-        private bool _isRunning;
-
-        /// <summary>
-        /// 실제 도커 컨테이너가 현재 실행 중(Running)인지 여부를 나타냅니다. 
-        /// 상태가 변경될 때마다 활성화될 수 있는 버튼(Start, Stop, Terminal 등)의 상태를 자동으로 재평가합니다.
-        /// </summary>
-        public bool IsRunning
-        {
-            get => _isRunning;
-            set
-            {
-                if (SetProperty(ref _isRunning, value))
-                {
-                    RaiseCommandStates();
-                }
-            }
-        }
-
-        private bool _isPaused;
-
-        /// <summary>
-        /// 실제 도커 컨테이너가 현재 일시 정지(Paused) 상태인지 여부를 나타냅니다.
-        /// </summary>
-        public bool IsPaused
-        {
-            get => _isPaused;
-            set
-            {
-                if (SetProperty(ref _isPaused, value))
-                {
-                    RaiseCommandStates();
-                }
-            }
-        }
-
-        /// <summary>
-        /// 노드의 실행 상태(Running, Paused)가 변경되었을 때, 
-        /// UI에 연결된 제어 버튼(시작, 정지, 재시작, 터미널 등)들의 활성화/비활성화 가능 여부를 즉시 갱신합니다.
-        /// </summary>
-        private void RaiseCommandStates()
-        {
-            StartCommand?.RaiseCanExecuteChanged();
-            StopCommand?.RaiseCanExecuteChanged();
-            PauseCommand?.RaiseCanExecuteChanged();
-            RestartCommand?.RaiseCanExecuteChanged();
-            TerminalCommand?.RaiseCanExecuteChanged();
-        }
-
-        private string _detailStatus = "Unknown";
-        public string DetailStatus { get => _detailStatus; set => SetProperty(ref _detailStatus, value); }
-
-        private string _createdDate = "-";
-        public string CreatedDate { get => _createdDate; set => SetProperty(ref _createdDate, value); }
-
-        private string _startedAt = "-";
-        public string StartedAt { get => _startedAt; set => SetProperty(ref _startedAt, value); }
-
-        private string _finishedAt = "-";
-        public string FinishedAt { get => _finishedAt; set => SetProperty(ref _finishedAt, value); }
-
-        private string _ipAddresses = "-";
-        public string IpAddresses { get => _ipAddresses; set => SetProperty(ref _ipAddresses, value); }
-
-        private string _connectedNetworks = "-";
-        public string ConnectedNetworksString { get => _connectedNetworks; set => SetProperty(ref _connectedNetworks, value); }
-
-        private string _mountedVolumes = "None";
-        public string MountedVolumes { get => _mountedVolumes; set => SetProperty(ref _mountedVolumes, value); }
-
-        private string _driver = "-";
-        public string Driver { get => _driver; set => SetProperty(ref _driver, value); }
-
-        private string _mountpoint = "-";
-        public string Mountpoint { get => _mountpoint; set => SetProperty(ref _mountpoint, value); }
-
-        private SheetViewModel? _parentSheet;
 
         /// <summary>
         /// 이 노드가 배치된 부모 도화지(Sheet) 객체를 참조합니다.
@@ -415,13 +211,173 @@ namespace DockerDiagram.ViewModels
                 }
             }
         }
+        #endregion
 
-        private void Connectors_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        #region Basic Info Properties
+        /// <summary>
+        /// 이 노드의 역할을 정의합니다. (컨테이너, 볼륨, 또는 인터넷)
+        /// </summary>
+        public NodeType Type { get; init; }
+
+        public string Name { get => _name; set => SetProperty(ref _name, value); }
+        public string ImageName { get; set; } = string.Empty;
+        public string PortInfo { get; set; } = string.Empty;
+        public string Id { get; set; } = Guid.NewGuid().ToString();
+
+        /// <summary>
+        /// 도커 엔진에서 발급한 실제 컨테이너(또는 볼륨)의 고유 해시 ID입니다.
+        /// 이 ID를 기반으로 도커 백엔드와 모든 통신(조회, 제어)이 이루어집니다.
+        /// </summary>
+        public string ContainerId
         {
-            RefreshConnections();
+            get => _containerId;
+            set
+            {
+                if (SetProperty(ref _containerId, value))
+                {
+                    OnPropertyChanged(nameof(ShortContainerId));
+                }
+            }
         }
 
-        // --- Commands ---
+        public string ShortContainerId => (Type == NodeType.Container) ? ShortenId(ContainerId) : "";
+        #endregion
+
+        #region Docker Status Properties
+        /// <summary>
+        /// 컨테이너 이미지를 다운로드(Pull)하거나 생성 중인 임시 상태인지 여부를 나타냅니다.
+        /// 이 상태일 때는 노드의 상태 표시줄이 노란색으로 변경되며 일부 제어가 제한됩니다.
+        /// </summary>
+        public bool IsCreating
+        {
+            get => _isCreating;
+            set
+            {
+                if (SetProperty(ref _isCreating, value))
+                {
+                    StatusColor = value ? "#FFC107" : "#28a745";
+                }
+            }
+        }
+
+        /// <summary>
+        /// 실제 도커 컨테이너가 현재 실행 중(Running)인지 여부를 나타냅니다. 
+        /// 상태가 변경될 때마다 활성화될 수 있는 버튼(Start, Stop, Terminal 등)의 상태를 자동으로 재평가합니다.
+        /// </summary>
+        public bool IsRunning
+        {
+            get => _isRunning;
+            set
+            {
+                if (SetProperty(ref _isRunning, value))
+                {
+                    RaiseCommandStates();
+                }
+            }
+        }
+
+        /// <summary>
+        /// 실제 도커 컨테이너가 현재 일시 정지(Paused) 상태인지 여부를 나타냅니다.
+        /// </summary>
+        public bool IsPaused
+        {
+            get => _isPaused;
+            set
+            {
+                if (SetProperty(ref _isPaused, value))
+                {
+                    RaiseCommandStates();
+                }
+            }
+        }
+
+        public string DetailStatus { get => _detailStatus; set => SetProperty(ref _detailStatus, value); }
+        public string CreatedDate { get => _createdDate; set => SetProperty(ref _createdDate, value); }
+        public string StartedAt { get => _startedAt; set => SetProperty(ref _startedAt, value); }
+        public string FinishedAt { get => _finishedAt; set => SetProperty(ref _finishedAt, value); }
+        public string Uptime { get => _uptime; set => SetProperty(ref _uptime, value); }
+        public string IPAddress { get => _ipAddress; set => SetProperty(ref _ipAddress, value); }
+        public string IpAddresses { get => _ipAddresses; set => SetProperty(ref _ipAddresses, value); }
+        public string ConnectedNetworksString { get => _connectedNetworks; set => SetProperty(ref _connectedNetworks, value); }
+        public string MountedVolumes { get => _mountedVolumes; set => SetProperty(ref _mountedVolumes, value); }
+        public string Driver { get => _driver; set => SetProperty(ref _driver, value); }
+        public string Mountpoint { get => _mountpoint; set => SetProperty(ref _mountpoint, value); }
+        public string RestartPolicy { get => _restartPolicy; set => SetProperty(ref _restartPolicy, value); }
+        public string HealthStatus { get => _healthStatus; set => SetProperty(ref _healthStatus, value); }
+        public string HealthColor { get => _healthColor; set => SetProperty(ref _healthColor, value); }
+        public string ContainerLogs { get => _containerLogs; set => SetProperty(ref _containerLogs, value); }
+        public string StatusColor { get => _statusColor; set => SetProperty(ref _statusColor, value); }
+        #endregion
+
+        #region Resource Monitoring Properties
+        public double MaxCpuCount { get => _maxCpuCount; set => SetProperty(ref _maxCpuCount, value); }
+        public double TargetCpuCount { get => _targetCpuCount; set => SetProperty(ref _targetCpuCount, value); }
+        public long MaxMemoryMb { get => _maxMemoryMb; set => SetProperty(ref _maxMemoryMb, value); }
+        public long TargetMemoryMb { get => _targetMemoryMb; set => SetProperty(ref _targetMemoryMb, value); }
+        public string CpuUsage { get => _cpuUsage; set => SetProperty(ref _cpuUsage, value); }
+        public double CpuValue { get => _cpuValue; set => SetProperty(ref _cpuValue, value); }
+        public string MemoryUsage { get => _memoryUsage; set => SetProperty(ref _memoryUsage, value); }
+        public double MemoryValue
+        {
+            get => _memoryValue;
+            set => SetProperty(ref _memoryValue, double.IsNaN(value) ? 0 : value);
+        }
+
+        public PlotModel CpuPlotModel { get; private set; }
+        public PlotModel MemoryPlotModel { get; private set; }
+        #endregion
+
+        #region Lists & Collections
+        public int NetworkDisplayMode { get => _networkDisplayMode; set => SetProperty(ref _networkDisplayMode, value); }
+
+        /// <summary>
+        /// 화면에 표시할 볼륨 정보의 출력 모드를 결정합니다. (0: 도커 Named 볼륨만 표시, 1: 로컬 폴더 Bind 마운트 포함 전체 표시)
+        /// </summary>
+        public int VolumeDisplayMode
+        {
+            get => _volumeDisplayMode;
+            set
+            {
+                if (SetProperty(ref _volumeDisplayMode, value))
+                {
+                    UpdateVolumeList(); // 모드가 바뀌면 리스트 내용 즉시 갱신
+                }
+            }
+        }
+
+        public class NetworkDetail
+        {
+            public string NetworkName { get; set; } = "";
+            public string IPv4 { get; set; } = "-";
+            public string IPv6 { get; set; } = "-";
+        }
+
+        public ObservableCollection<NetworkDetail> NetworkDetailList { get; } = new();
+        public Dictionary<string, string> NetworkIpMap { get; private set; } = new();
+        public ObservableCollection<string> MountedVolumeList { get; } = new();
+        public ObservableCollection<string> ConnectedNodes { get; } = new();
+        public ObservableCollection<string> UsedByContainers { get; } = new();
+
+        public List<string> PortBindings { get => _portBindings; set => SetProperty(ref _portBindings, value); }
+        public List<string> EnvironmentVariables
+        {
+            get => _environmentVariables;
+            set
+            {
+                if (SetProperty(ref _environmentVariables, value))
+                {
+                    OnPropertyChanged(nameof(EnvList));
+                }
+            }
+        }
+        public List<string> EnvList => EnvironmentVariables;
+
+        public string HostFilePath { get => _hostFilePath; set => SetProperty(ref _hostFilePath, value); }
+        public string ContainerFilePath { get => _containerFilePath; set => SetProperty(ref _containerFilePath, value); }
+        public string NewEnvInput { get => _newEnvInput; set => SetProperty(ref _newEnvInput, value); }
+        #endregion
+
+        #region Commands
         public AsyncRelayCommand StartCommand { get; }
         public AsyncRelayCommand StopCommand { get; }
         public AsyncRelayCommand PauseCommand { get; }
@@ -431,7 +387,6 @@ namespace DockerDiagram.ViewModels
         public ICommand ToggleVolumeModeCommand { get; }
         public ICommand OpenDetailWindowCommand { get; }
         public ICommand RefreshLogsCommand { get; }
-
         public ICommand CopyLogsCommand { get; }
         public ICommand ExportLogsCommand { get; }
         public ICommand CopyToContainerCommand { get; }
@@ -439,13 +394,11 @@ namespace DockerDiagram.ViewModels
         public ICommand AddEnvAndRecreateCommand { get; }
         public ICommand BackupVolumeCommand { get; }
         public ICommand RestoreVolumeCommand { get; }
-
         public AsyncRelayCommand ExtractDockerfileCommand { get; }
+        public ICommand UpdateResourcesCommand { get; }
+        #endregion
 
-        public ChartValues<double> CpuChartValues { get; set; } = new ChartValues<double>();
-        public ChartValues<double> MemoryChartValues { get; set; } = new ChartValues<double>();
-        public ChartValues<string> TimeLabels { get; set; } = new ChartValues<string>();
-
+        #region Constructor
         /// <summary>
         /// 도커 통신에 필요한 백엔드 서비스(컨테이너, 볼륨) 및 알림(다이얼로그) 서비스를 주입받아 객체를 초기화합니다.
         /// UI 버튼과 연결될 수많은 명령(제어, 터미널 열기, 로그 복사, 파일 업/다운로드, Dockerfile 추출 등)을 여기서 세팅합니다.
@@ -535,10 +488,30 @@ namespace DockerDiagram.ViewModels
                 if (string.IsNullOrWhiteSpace(NewEnvInput)) return;
                 _dialogService.ShowInfo($"이 기능은 기존 설정을 바탕으로 컨테이너를 삭제하고 [{NewEnvInput}] 환경변수를 추가하여 다시 생성합니다.\n(기능 연결 필요)", "Recreate");
             });
+
+            // =========================================================
+            // ★ [마이그레이션 완료] OxyPlot 초기화 세팅
+            // =========================================================
+
+            // 1. CPU 차트 모델 및 축 생성
+            CpuPlotModel = new PlotModel { PlotMargins = new OxyThickness(0) };
+            CpuPlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Left, Minimum = 0, Maximum = 100, IsAxisVisible = true, MajorGridlineStyle = LineStyle.Solid, MajorGridlineColor = OxyColors.LightGray });
+            CpuPlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Bottom, IsAxisVisible = false }); // X축 숨김
+
+            _cpuSeries = new LineSeries { Color = OxyColor.Parse("#28a745"), StrokeThickness = 2, MarkerType = MarkerType.None };
+            CpuPlotModel.Series.Add(_cpuSeries);
+
+            // 2. Memory 차트 모델 및 축 생성
+            MemoryPlotModel = new PlotModel { PlotMargins = new OxyThickness(0) };
+            MemoryPlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Left, Minimum = 0, IsAxisVisible = true, MajorGridlineStyle = LineStyle.Solid, MajorGridlineColor = OxyColors.LightGray });
+            MemoryPlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Bottom, IsAxisVisible = false }); // X축 숨김
+
+            _memorySeries = new LineSeries { Color = OxyColor.Parse("#007ACC"), StrokeThickness = 2, MarkerType = MarkerType.None };
+            MemoryPlotModel.Series.Add(_memorySeries);
         }
+        #endregion
 
-        // --- 상세 정보 로드 ---
-
+        #region Public Methods (Lifecycle & Monitoring)
         /// <summary>
         /// 도커 엔진 API를 호출하여 이 노드(컨테이너 또는 볼륨)의 최신 상세 정보(상태, IP, 포트, 마운트 내역, 헬스 체크 등)를 가져와 UI 속성에 동기화합니다.
         /// 패널이 열리거나, 상태 변경 이벤트가 발생할 때 호출되어 다이어그램이 항상 실제 도커 환경과 동일한 팩트(Fact)를 유지하도록 합니다.
@@ -557,23 +530,20 @@ namespace DockerDiagram.ViewModels
                     var info = await _containerService.InspectContainerAsync(ContainerId);
 
                     // =====================================================================
-                    // ★ [완벽 수정됨] 도커 엔진(Daemon) 기준 실제 스펙 및 현재 할당값 동기화 ★
+                    // ★ 도커 엔진(Daemon) 기준 실제 스펙 및 현재 할당값 동기화 ★
                     // =====================================================================
                     try
                     {
-                        // 1. 도커 엔진이 사용 가능한 실제 최대 자원(Maximum) 가져오기
                         var dockerSystemInfo = await _containerService.GetSystemInfoAsync();
                         MaxCpuCount = dockerSystemInfo.NCPU > 0 ? dockerSystemInfo.NCPU : Environment.ProcessorCount;
                         MaxMemoryMb = dockerSystemInfo.MemTotal > 0 ? (dockerSystemInfo.MemTotal / 1048576) : 32768;
                     }
                     catch
                     {
-                        // GetSystemInfoAsync() 호출 실패 시 에러 방지용 Fallback (내 PC 기준)
                         MaxCpuCount = Environment.ProcessorCount;
-                        MaxMemoryMb = 32768; // 기본 32GB 넉넉히 세팅
+                        MaxMemoryMb = 32768;
                     }
 
-                    // 2. 이 컨테이너에 '현재' 세팅되어 있는 진짜 리소스 값을 가져와서 UI(슬라이더/텍스트박스)에 기본 세팅
                     if (info.HostConfig != null)
                     {
                         long currentMem = info.HostConfig.Memory;
@@ -714,40 +684,68 @@ namespace DockerDiagram.ViewModels
                     else if (IsPaused) StatusColor = "#ffc107";
                     else StatusColor = "#dc3545";
 
+                    // =========================================================
+                    // ★ [마이그레이션 완료] OxyPlot 전용 데이터 갱신 로직
+                    // =========================================================
                     if (IsRunning)
                     {
                         var stats = await _containerService.GetContainerStatsAsync(ContainerId);
 
-                        System.Windows.Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            CpuChartValues.Add(stats.CpuPercentage);
-                            MemoryChartValues.Add(stats.MemoryUsedMB);
-                            TimeLabels.Add(DateTime.Now.ToString("HH:mm:ss"));
+                        // ★ [추가됨] 화면의 텍스트(Usage) 값도 실제 통계 데이터로 갱신
+                        CpuUsage = $"{stats.CpuPercentage:F1}%";
+                        MemoryUsage = $"{stats.MemoryUsedMB:F1}MB / {stats.MemoryLimitMB:F1}MB";
 
-                            if (CpuChartValues.Count > 60)
-                            {
-                                CpuChartValues.RemoveAt(0);
-                                MemoryChartValues.RemoveAt(0);
-                                TimeLabels.RemoveAt(0);
-                            }
-                        });
+                        // (선택적) 프로그레스 바 등 Value를 사용하는 다른 UI를 위한 데이터 갱신
+                        CpuValue = stats.CpuPercentage;
+                        MemoryValue = stats.MemoryLimitMB > 0 ? (stats.MemoryUsedMB / stats.MemoryLimitMB) * 100 : 0;
+
+                        // 새 데이터 포인트 추가
+                        _cpuSeries.Points.Add(new DataPoint(_timeIndex, stats.CpuPercentage));
+                        _memorySeries.Points.Add(new DataPoint(_timeIndex, stats.MemoryUsedMB));
+
+                        // 메모리 보호: 60개가 넘으면 제일 오래된 데이터를 잘라냅니다.
+                        if (_cpuSeries.Points.Count > 60)
+                        {
+                            _cpuSeries.Points.RemoveAt(0);
+                            _memorySeries.Points.RemoveAt(0);
+                        }
+
+                        _timeIndex++;
+
+                        // 스크롤 효과를 위해 X축 범위 갱신
+                        var cpuXAxis = CpuPlotModel.Axes.FirstOrDefault(a => a.Position == AxisPosition.Bottom);
+                        var memXAxis = MemoryPlotModel.Axes.FirstOrDefault(a => a.Position == AxisPosition.Bottom);
+                        if (cpuXAxis != null) { cpuXAxis.Minimum = _timeIndex - 60; cpuXAxis.Maximum = _timeIndex; }
+                        if (memXAxis != null) { memXAxis.Minimum = _timeIndex - 60; memXAxis.Maximum = _timeIndex; }
+
+                        // 차트를 다시 그리라고 엔진에 명령
+                        CpuPlotModel.InvalidatePlot(true);
+                        MemoryPlotModel.InvalidatePlot(true);
                     }
                     else
                     {
-                        System.Windows.Application.Current.Dispatcher.Invoke(() =>
-                        {
-                            if (CpuChartValues.Count > 0 && CpuChartValues[CpuChartValues.Count - 1] != 0)
-                            {
-                                CpuChartValues.Add(0);
-                                MemoryChartValues.Add(0);
-                                TimeLabels.Add(DateTime.Now.ToString("HH:mm:ss"));
-                            }
-                        });
-                    }
+                        // ★ [추가됨] 컨테이너가 꺼져있을 때는 텍스트도 0으로 초기화하여 잔상 방지
+                        CpuUsage = "0.0%";
+                        MemoryUsage = "0.0MB / 0.0MB";
+                        CpuValue = 0;
+                        MemoryValue = 0;
 
-                    OnPropertyChanged(nameof(NetworkIpMap));
-                    OnPropertyChanged(nameof(NetworkDetailList));
-                    OnPropertyChanged(nameof(EnvList));
+                        // 꺼져있을 때는 차트가 바닥(0)으로 자연스럽게 떨어지도록 그립니다.
+                        if (_cpuSeries.Points.Count > 0 && _cpuSeries.Points.Last().Y != 0)
+                        {
+                            _cpuSeries.Points.Add(new DataPoint(_timeIndex, 0));
+                            _memorySeries.Points.Add(new DataPoint(_timeIndex, 0));
+                            _timeIndex++;
+
+                            var cpuXAxis = CpuPlotModel.Axes.FirstOrDefault(a => a.Position == AxisPosition.Bottom);
+                            var memXAxis = MemoryPlotModel.Axes.FirstOrDefault(a => a.Position == AxisPosition.Bottom);
+                            if (cpuXAxis != null) { cpuXAxis.Minimum = _timeIndex - 60; cpuXAxis.Maximum = _timeIndex; }
+                            if (memXAxis != null) { memXAxis.Minimum = _timeIndex - 60; memXAxis.Maximum = _timeIndex; }
+
+                            CpuPlotModel.InvalidatePlot(true);
+                            MemoryPlotModel.InvalidatePlot(true);
+                        }
+                    }
                 }
                 else if (Type == NodeType.Volume)
                 {
@@ -789,32 +787,6 @@ namespace DockerDiagram.ViewModels
         }
 
         /// <summary>
-        /// 사용자가 선택한 볼륨 표시 모드(도커 Named 볼륨 또는 로컬 Bind 마운트)에 맞추어, 
-        /// 현재 컨테이너에 연결된 볼륨 목록을 필터링하고 UI 리스트에 갱신합니다.
-        /// </summary>
-        private void UpdateVolumeList()
-        {
-            MountedVolumeList.Clear();
-            if (ParentSheet == null) return;
-
-            var validVolumeNames = ParentSheet.Nodes.Where(n => n.Type == NodeType.Volume).Select(n => n.Name).ToHashSet();
-
-            foreach (var m in _cachedMounts)
-            {
-                if (VolumeDisplayMode == 0)
-                {
-                    if (m.Type == "volume" && validVolumeNames.Contains(m.Name))
-                        MountedVolumeList.Add($"{m.Name} : {m.Destination}");
-                }
-                else
-                {
-                    if (m.Type == "bind")
-                        MountedVolumeList.Add($"{m.Source} -> {m.Destination}");
-                }
-            }
-        }
-
-        /// <summary>
         /// 이 컨테이너가 화면에서 선택(클릭)되었을 때 호출되며, 
         /// 2초 주기로 도커 엔진에 리소스 사용량을 질의하는 백그라운드 모니터링 타이머를 시작합니다.
         /// </summary>
@@ -834,79 +806,6 @@ namespace DockerDiagram.ViewModels
         /// 노드 선택이 해제되면 불필요한 백그라운드 통신을 줄이기 위해 리소스 모니터링 타이머를 정지합니다.
         /// </summary>
         public void StopMonitoring() => _statsTimer?.Stop();
-
-        /// <summary>
-        /// 도커 엔진으로부터 현재 컨테이너의 실시간 CPU 및 메모리 사용량을 가져와 UI 프로그레스 바와 텍스트에 동기화합니다.
-        /// </summary>
-        private async Task UpdateStatsAsync()
-        {
-            if (!IsRunning) return;
-
-            try
-            {
-                var stats = await _containerService.GetContainerStatsAsync(ContainerId);
-
-                CpuUsage = $"{stats.CpuPercentage:F1}%";
-                CpuValue = stats.CpuPercentage;
-
-                MemoryUsage = $"{stats.MemoryUsedMB:F1}MB / {stats.MemoryLimitMB:F1}MB";
-
-                if (stats.MemoryLimitMB > 0)
-                {
-                    MemoryValue = (stats.MemoryUsedMB / stats.MemoryLimitMB) * 100;
-                }
-                else
-                {
-                    MemoryValue = 0;
-                }
-            }
-            catch { }
-        }
-
-        /// <summary>
-        /// 시작, 정지, 일시정지, 재시작 등 사용자가 UI에서 내린 제어 명령(Action)을 
-        /// 실제 도커 백엔드 서비스로 전달하여 실행하고, 완료 직후 상태를 갱신합니다.
-        /// </summary>
-        private async Task ControlAction(string action)
-        {
-            if (string.IsNullOrEmpty(ContainerId)) return;
-
-            try
-            {
-                switch (action)
-                {
-                    case "start": await _containerService.StartContainerAsync(ContainerId); break;
-                    case "stop": await _containerService.StopContainerAsync(ContainerId); break;
-                    case "pause":
-                        if (DetailStatus == "paused") await _containerService.UnpauseContainerAsync(ContainerId);
-                        else await _containerService.PauseContainerAsync(ContainerId);
-                        break;
-                    case "restart": await _containerService.RestartContainerAsync(ContainerId); break;
-                }
-                await RefreshDetailsAsync();
-            }
-            catch (Exception ex)
-            {
-                _dialogService.ShowMessage($"동작 실패 : {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 실행 중인 컨테이너 내부에 직접 명령을 내릴 수 있도록, 호스트 PC의 터미널(cmd)을 띄워 컨테이너 셸(bash/sh)에 연결합니다.
-        /// </summary>
-        private void OpenTerminal()
-        {
-            if (string.IsNullOrEmpty(ContainerId)) return;
-
-            try
-            {
-                _containerService.OpenTerminal(ContainerId);
-            }
-            catch (Exception ex)
-            {
-                _dialogService.ShowMessage($"터미널 오류 : {ex.Message}");
-            }
-        }
 
         /// <summary>
         /// 다이어그램 캔버스 상에서 이 노드와 선(Connector)으로 직접 연결된 
@@ -946,6 +845,133 @@ namespace DockerDiagram.ViewModels
                 }
             }
         }
+        #endregion
+
+        #region Private Helper Methods (Internal Logic)
+        /// <summary>
+        /// 도커 엔진으로부터 현재 컨테이너의 실시간 CPU 및 메모리 사용량을 가져와 UI 프로그레스 바와 텍스트에 동기화합니다.
+        /// </summary>
+        private async Task UpdateStatsAsync()
+        {
+            if (!IsRunning) return;
+
+            try
+            {
+                var stats = await _containerService.GetContainerStatsAsync(ContainerId);
+
+                CpuUsage = $"{stats.CpuPercentage:F1}%";
+                CpuValue = stats.CpuPercentage;
+
+                MemoryUsage = $"{stats.MemoryUsedMB:F1}MB / {stats.MemoryLimitMB:F1}MB";
+
+                if (stats.MemoryLimitMB > 0)
+                {
+                    MemoryValue = (stats.MemoryUsedMB / stats.MemoryLimitMB) * 100;
+                }
+                else
+                {
+                    MemoryValue = 0;
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// 사용자가 선택한 볼륨 표시 모드(도커 Named 볼륨 또는 로컬 Bind 마운트)에 맞추어, 
+        /// 현재 컨테이너에 연결된 볼륨 목록을 필터링하고 UI 리스트에 갱신합니다.
+        /// </summary>
+        private void UpdateVolumeList()
+        {
+            MountedVolumeList.Clear();
+            if (ParentSheet == null) return;
+
+            var validVolumeNames = ParentSheet.Nodes.Where(n => n.Type == NodeType.Volume).Select(n => n.Name).ToHashSet();
+
+            foreach (var m in _cachedMounts)
+            {
+                if (VolumeDisplayMode == 0)
+                {
+                    if (m.Type == "volume" && validVolumeNames.Contains(m.Name))
+                        MountedVolumeList.Add($"{m.Name} : {m.Destination}");
+                }
+                else
+                {
+                    if (m.Type == "bind")
+                        MountedVolumeList.Add($"{m.Source} -> {m.Destination}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// 시작, 정지, 일시정지, 재시작 등 사용자가 UI에서 내린 제어 명령(Action)을 
+        /// 실제 도커 백엔드 서비스로 전달하여 실행하고, 완료 직후 상태를 갱신합니다.
+        /// </summary>
+        private async Task ControlAction(string action)
+        {
+            if (string.IsNullOrEmpty(ContainerId)) return;
+
+            try
+            {
+                switch (action)
+                {
+                    case "start": await _containerService.StartContainerAsync(ContainerId); break;
+                    case "stop": await _containerService.StopContainerAsync(ContainerId); break;
+                    case "pause":
+                        if (DetailStatus == "paused") await _containerService.UnpauseContainerAsync(ContainerId);
+                        else await _containerService.PauseContainerAsync(ContainerId);
+                        break;
+                    case "restart": await _containerService.RestartContainerAsync(ContainerId); break;
+                }
+                await RefreshDetailsAsync();
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowMessage($"동작 실패 : {ex.Message}");
+            }
+        }
+
+        private static string ShortenId(string? id, int len = 12)
+        {
+            if (string.IsNullOrWhiteSpace(id)) return "";
+            return id.Length <= len ? id : id.Substring(0, len);
+        }
+
+        /// <summary>
+        /// 노드의 실행 상태(Running, Paused)가 변경되었을 때, 
+        /// UI에 연결된 제어 버튼(시작, 정지, 재시작, 터미널 등)들의 활성화/비활성화 가능 여부를 즉시 갱신합니다.
+        /// </summary>
+        private void RaiseCommandStates()
+        {
+            StartCommand?.RaiseCanExecuteChanged();
+            StopCommand?.RaiseCanExecuteChanged();
+            PauseCommand?.RaiseCanExecuteChanged();
+            RestartCommand?.RaiseCanExecuteChanged();
+            TerminalCommand?.RaiseCanExecuteChanged();
+        }
+
+        private void Connectors_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        {
+            RefreshConnections();
+        }
+        #endregion
+
+        #region Feature Methods (UI Actions)
+        /// <summary>
+        /// 실행 중인 컨테이너 내부에 직접 명령을 내릴 수 있도록, 호스트 PC의 터미널(cmd)을 띄워 컨테이너 셸(bash/sh)에 연결합니다.
+        /// </summary>
+        private void OpenTerminal()
+        {
+            if (string.IsNullOrEmpty(ContainerId)) return;
+
+            try
+            {
+                _containerService.OpenTerminal(ContainerId);
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowMessage($"터미널 오류 : {ex.Message}");
+            }
+        }
 
         /// <summary>
         /// 이 컨테이너의 세부 정보(로그, 환경변수 상세, 파일 송수신 기능 등)를 확인하고 제어할 수 있는 전용 상세 팝업 창을 엽니다.
@@ -954,7 +980,6 @@ namespace DockerDiagram.ViewModels
         {
             if (Type != NodeType.Container || string.IsNullOrEmpty(ContainerId)) return;
 
-            // ★ [수정됨] 제가 멋대로 붙였던 Views. 를 제거하고 원상복구 했습니다!
             var detailWindow = new ContainerDetailWindow
             {
                 DataContext = this,
@@ -1036,11 +1061,11 @@ namespace DockerDiagram.ViewModels
                 // 5. 볼륨 (VOLUME)
                 if (info.Config.Volumes != null && info.Config.Volumes.Count > 0)
                 {
-                    var vols = string.Join("\", \"", info.Config.Volumes.Keys);
-                    sb.AppendLine($"VOLUME [\"{vols}\"]");
+                    foreach (var vol in info.Config.Volumes.Keys)
+                    {
+                        sb.AppendLine($"VOLUME {vol}");
+                    }
                 }
-
-                sb.AppendLine();
 
                 // 6. 시작 명령어 (ENTRYPOINT / CMD)
                 if (info.Config.Entrypoint != null && info.Config.Entrypoint.Count > 0)
@@ -1186,5 +1211,38 @@ namespace DockerDiagram.ViewModels
                 _dialogService.ShowError($"리소스 업데이트 실패: {ex.Message}\n(참고: CPU 제한이 호스트 코어 수를 넘을 수 없습니다.)", "오류");
             }
         }
+
+        /// <summary>
+        /// UI 창에서 콜백(Action)을 넘겨주면, 도커 엔진과 파이프를 뚫고 로그를 실시간으로 쏴줍니다.
+        /// </summary>
+        public async Task StartLogStreamAsync(Action<string> onLogReceived)
+        {
+            if (string.IsNullOrEmpty(ContainerId)) return;
+
+            // 이미 열린 파이프가 있다면 안전하게 끊고 새로 엽니다.
+            _logStreamCts?.Cancel();
+            _logStreamCts = new CancellationTokenSource();
+
+            try
+            {
+                // 백엔드(DockerApiService)의 스트리밍 메서드 호출
+                await _containerService.StreamContainerLogsAsync(ContainerId, onLogReceived, _logStreamCts.Token);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Log stream error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 창을 닫을 때 메모리 누수를 막기 위해 파이프를 폭파합니다.
+        /// </summary>
+        public void StopLogStream()
+        {
+            _logStreamCts?.Cancel();
+            _logStreamCts?.Dispose();
+            _logStreamCts = null;
+        }
+        #endregion
     }
 }

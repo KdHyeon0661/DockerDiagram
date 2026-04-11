@@ -1,7 +1,7 @@
 ﻿<Window x:Class="DockerDiagram.ContainerDetailWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:lvc="clr-namespace:LiveCharts.Wpf;assembly=LiveCharts.Wpf"
+        xmlns:oxy="http://oxyplot.org/wpf"
         Title="{Binding Name, StringFormat='Details &amp; Logs : {0}'}" 
         Height="650" Width="850" 
         WindowStartupLocation="CenterOwner"
@@ -59,17 +59,8 @@
                                         <TextBlock Text="CPU Usage" Foreground="#888" FontSize="12"/>
                                         <TextBlock Text="{Binding CpuUsage}" Foreground="#28a745" FontWeight="Bold" FontFamily="Consolas" HorizontalAlignment="Right"/>
                                     </Grid>
-                                    <lvc:CartesianChart Grid.Row="1" DisableAnimations="True" Hoverable="False">
-                                        <lvc:CartesianChart.Series>
-                                            <lvc:LineSeries Values="{Binding CpuChartValues}" Stroke="#28a745" Fill="#3328a745" PointGeometry="{x:Null}" LineSmoothness="0.5"/>
-                                        </lvc:CartesianChart.Series>
-                                        <lvc:CartesianChart.AxisY>
-                                            <lvc:Axis MinValue="0" MaxValue="100"/>
-                                        </lvc:CartesianChart.AxisY>
-                                        <lvc:CartesianChart.AxisX>
-                                            <lvc:Axis Labels="{Binding TimeLabels}" ShowLabels="False" />
-                                        </lvc:CartesianChart.AxisX>
-                                    </lvc:CartesianChart>
+
+                                    <oxy:PlotView Grid.Row="1" Model="{Binding CpuPlotModel}" Background="Transparent" Margin="0,5,0,0"/>
                                 </Grid>
 
                                 <Grid Grid.Column="2">
@@ -81,17 +72,8 @@
                                         <TextBlock Text="Memory Usage" Foreground="#888" FontSize="12"/>
                                         <TextBlock Text="{Binding MemoryUsage}" Foreground="#007ACC" FontWeight="Bold" FontFamily="Consolas" HorizontalAlignment="Right"/>
                                     </Grid>
-                                    <lvc:CartesianChart Grid.Row="1" DisableAnimations="True" Hoverable="False">
-                                        <lvc:CartesianChart.Series>
-                                            <lvc:LineSeries Values="{Binding MemoryChartValues}" Stroke="#007ACC" Fill="#33007ACC" PointGeometry="{x:Null}" LineSmoothness="0.5"/>
-                                        </lvc:CartesianChart.Series>
-                                        <lvc:CartesianChart.AxisY>
-                                            <lvc:Axis MinValue="0" />
-                                        </lvc:CartesianChart.AxisY>
-                                        <lvc:CartesianChart.AxisX>
-                                            <lvc:Axis Labels="{Binding TimeLabels}" ShowLabels="False" />
-                                        </lvc:CartesianChart.AxisX>
-                                    </lvc:CartesianChart>
+
+                                    <oxy:PlotView Grid.Row="1" Model="{Binding MemoryPlotModel}" Background="Transparent" Margin="0,5,0,0"/>
                                 </Grid>
                             </Grid>
                         </Border>

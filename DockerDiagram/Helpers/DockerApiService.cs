@@ -6,6 +6,7 @@ using System.Formats.Tar;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace DockerDiagram.Helpers
 {
@@ -626,6 +627,13 @@ namespace DockerDiagram.Helpers
             });
         }
 
+        private class SyncProgress<T> : IProgress<T>
+        {
+            private readonly Action<T> _handler;
+            public SyncProgress(Action<T> handler) => _handler = handler;
+            public void Report(T value) => _handler(value);
+        }
+
         /// <summary>
         /// 특정 컨테이너의 실시간 리소스 사용량(CPU 퍼센트, 메모리 사용량 및 제한)을 측정하여 반환합니다.
         /// </summary>
@@ -634,15 +642,15 @@ namespace DockerDiagram.Helpers
             try
             {
                 var statsParams = new ContainerStatsParameters { Stream = false };
+                ContainerStatsResponse? stats = null;
 
-                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+                // ★ 기존의 비동기 Progress 대신 직접 만든 SyncProgress 사용 (0 나오는 현상 완벽 해결!)
+                var progress = new SyncProgress<ContainerStatsResponse>(r => stats = r);
+
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
                 {
-                    ContainerStatsResponse? stats = null;
-                    var progress = new Progress<ContainerStatsResponse>(r => stats = r);
-
+                    // API 호출이 끝날 때까지 대기
                     await _client.Containers.GetContainerStatsAsync(containerId, statsParams, progress, cts.Token);
-
-                    while (stats == null && !cts.IsCancellationRequested) await Task.Delay(10);
 
                     if (stats != null)
                     {
@@ -750,6 +758,54 @@ namespace DockerDiagram.Helpers
             {
                 System.Diagnostics.Debug.WriteLine($"[DockerDiscovery] GetContainerLogsAsync Error: {ex.Message}");
                 return $"로그를 가져오는 중 오류가 발생했습니다:\n{ex.Message}";
+            }
+        }
+
+        /// <summary>
+        /// 도커 엔진과 영구적인 파이프(MultiplexedStream)를 맺고, 컨테이너가 로그를 뱉을 때마다 onLogLineReceived 콜백으로 한 뭉치씩 쏴줍니다.
+        /// </summary>
+        public async Task StreamContainerLogsAsync(string containerId, Action<string> onLogLineReceived, CancellationToken cancellationToken)
+        {
+            var parameters = new ContainerLogsParameters
+            {
+                ShowStdout = true,
+                ShowStderr = true,
+                Follow = true, // 핵심: 연결 끊지 말고 계속 쏴줘!
+                Tail = "100",  // 맨 처음 열었을 때 최근 100줄을 쏴주고 시작
+                Timestamps = true
+            };
+
+            try
+            {
+                using (var stream = await _client.Containers.GetContainerLogsAsync(containerId, false, parameters, cancellationToken))
+                {
+                    var buffer = new byte[81920]; // 80KB 버퍼
+
+                    // 사용자가 창을 닫을 때까지(cancellationToken) 무한 대기
+                    while (!cancellationToken.IsCancellationRequested)
+                    {
+                        var result = await stream.ReadOutputAsync(buffer, 0, buffer.Length, cancellationToken);
+
+                        if (result.EOF) break; // 컨테이너가 꺼지면 탈출
+
+                        string rawChunk = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                        string formattedChunk = FormatDockerLogs(rawChunk);
+
+                        // UI 쪽으로 "로그 뭉치 왔어요!" 하고 쏴줌
+                        if (!string.IsNullOrWhiteSpace(formattedChunk))
+                        {
+                            onLogLineReceived?.Invoke(formattedChunk);
+                        }
+                    }
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                Debug.WriteLine($"[VDM Stream] {containerId} 로그 파이프 안전 종료 완료.");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[VDM Stream] 로그 스트리밍 중 오류: {ex.Message}");
             }
         }
 

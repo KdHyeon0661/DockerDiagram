@@ -1,12 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
-using System.Windows.Input; // ★ Keyboard.FocusedElement 사용을 위해 추가됨
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using System.ComponentModel;
 using DockerDiagram.ViewModels;
 
 namespace DockerDiagram
@@ -15,34 +15,50 @@ namespace DockerDiagram
     {
         private DispatcherTimer _timer;
 
+        private readonly ObservableCollection<TextBlock> _logItems = new ObservableCollection<TextBlock>();
+        private readonly List<string> _rawLogLines = new List<string>();
+        private const int MAX_LOG_LINES = 2000; // 앱이 뻗지 않도록 최대 2000줄만 유지
+
         public ContainerDetailWindow()
         {
             InitializeComponent();
+
+            // 가상화 ListBox에 스트리밍용 리스트를 연결
+            lbLogs.ItemsSource = _logItems;
 
             _timer = new DispatcherTimer();
             _timer.Interval = TimeSpan.FromSeconds(1);
             _timer.Tick += Timer_Tick;
 
             this.Loaded += ContainerDetailWindow_Loaded;
-            this.Closed += (s, e) => _timer.Stop();
+            this.Closed += ContainerDetailWindow_Closed;
         }
 
         private void ContainerDetailWindow_Loaded(object sender, RoutedEventArgs e)
         {
             _timer.Start();
 
-            // ViewModel의 ContainerLogs 속성이 바뀔 때마다 감지해서 ListBox를 갱신하기 위한 이벤트 연결
-            if (this.DataContext is INotifyPropertyChanged notifyObj)
+            if (this.DataContext is NodeViewModel vm)
             {
-                notifyObj.PropertyChanged += ViewModel_PropertyChanged;
+                // ★ 핵심: 통째로 갱신하던 이벤트를 지우고, 백그라운드 스트리밍 파이프를 시작합니다.
+                _ = vm.StartLogStreamAsync(OnLogChunkReceived);
             }
+        }
 
-            // 처음 창 열릴 때 한번 강제로 그려줌
-            UpdateRichTextLogs();
+        private void ContainerDetailWindow_Closed(object? sender, EventArgs e)
+        {
+            _timer.Stop();
+
+            if (this.DataContext is NodeViewModel vm)
+            {
+                // ★ 중요: 창을 닫을 때 도커와의 로그 파이프라인(Stream)을 안전하게 폭파하여 메모리 누수 방지
+                vm.StopLogStream();
+            }
         }
 
         private async void Timer_Tick(object? sender, EventArgs e)
         {
+            // 사용자가 텍스트 박스에 타이핑 중이거나 슬라이더 조작 중이면 상태 갱신 건너뛰기
             if (Keyboard.FocusedElement is TextBox || Keyboard.FocusedElement is Slider)
             {
                 return;
@@ -54,83 +70,98 @@ namespace DockerDiagram
             }
         }
 
-        /// <summary>
-        /// ViewModel의 값이 변경되었을 때 호출됩니다.
-        /// </summary>
-        private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        // ==============================================================================
+        // ★ [신규] 백그라운드 스트림에서 로그가 쏟아져 들어올 때 호출되는 콜백 메서드
+        // ==============================================================================
+        private void OnLogChunkReceived(string logChunk)
         {
-            // ContainerLogs(로그 원본 데이터)가 새로고침되어 변경될 때마다 화면 갱신
-            if (e.PropertyName == "ContainerLogs")
+            // 백그라운드 스레드에서 UI를 건드리면 크래시가 나므로, UI 스레드(Dispatcher)에 작업을 위임합니다.
+            Dispatcher.InvokeAsync(() =>
             {
-                UpdateRichTextLogs();
+                string searchTerm = txtLogSearch.Text;
+                var lines = logChunk.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+                var scrollViewer = GetScrollViewer(lbLogs);
+                bool isScrolledToEnd = scrollViewer != null && (scrollViewer.VerticalOffset >= scrollViewer.ScrollableHeight - 5);
+
+                foreach (var line in lines)
+                {
+                    // 원본 데이터 저장 (나중에 검색할 때 쓰기 위함)
+                    _rawLogLines.Add(line);
+
+                    // UI TextBlock 하나 생성 후 바로 리스트에 쏙! (Append)
+                    var tb = CreateLogTextBlock(line, searchTerm);
+                    _logItems.Add(tb);
+                }
+
+                // 메모리 보호: 2000줄이 넘어가면 가장 오래된 옛날 로그부터 지워서 앱을 가볍게 유지
+                while (_rawLogLines.Count > MAX_LOG_LINES)
+                {
+                    _rawLogLines.RemoveAt(0);
+                    _logItems.RemoveAt(0);
+                }
+
+                // 사용자가 맨 밑을 보고 있었다면, 새 로그가 들어왔을 때 자동으로 스크롤 내려주기
+                if (isScrolledToEnd && _logItems.Count > 0)
+                {
+                    lbLogs.ScrollIntoView(_logItems[_logItems.Count - 1]);
+                }
+            });
+        }
+
+        /// <summary>
+        /// 검색어가 바뀔 때마다 전체 로그를 다시 색칠합니다. (스트리밍 구조에 맞게 수정됨)
+        /// </summary>
+        private void TxtLogSearch_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            string searchTerm = txtLogSearch.Text;
+            _logItems.Clear();
+
+            // 보관해둔 원본 로그 라인을 꺼내서 검색어에 맞게 다시 형광펜 칠해서 넣기
+            foreach (var line in _rawLogLines)
+            {
+                _logItems.Add(CreateLogTextBlock(line, searchTerm));
+            }
+
+            if (_logItems.Count > 0)
+            {
+                lbLogs.ScrollIntoView(_logItems[_logItems.Count - 1]);
             }
         }
 
         /// <summary>
-        /// [고성능 가상화 모드]
-        /// ViewModel의 원본 로그(String)를 가벼운 TextBlock 리스트로 변환하여 가상화 ListBox에 바인딩합니다.
-        /// 대용량 로그 렌더링 시 메모리와 CPU 점유율을 획기적으로 낮춥니다.
+        /// 로그 문자열 한 줄을 예쁜 UI(TextBlock)로 만들어 반환합니다.
         /// </summary>
-        private void UpdateRichTextLogs()
+        private TextBlock CreateLogTextBlock(string line, string searchTerm)
         {
-            if (this.DataContext is not NodeViewModel vm) return;
-
-            string rawLogs = vm.ContainerLogs ?? string.Empty;
-            string searchTerm = txtLogSearch.Text; // 현재 사용자가 입력한 검색어
-
-            // 줄 단위로 쪼개기
-            var lines = rawLogs.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-
-            // UI에 바인딩할 가벼운 텍스트블록 리스트 (최적화를 위해 Capacity를 미리 할당)
-            var logItems = new List<TextBlock>(lines.Length);
-
-            foreach (var line in lines)
+            var tb = new TextBlock
             {
-                // 줄마다 가벼운 TextBlock 하나씩 생성
-                var tb = new TextBlock
-                {
-                    FontFamily = new FontFamily("Consolas"),
-                    FontSize = 12
-                };
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 12
+            };
 
-                bool isError = line.Contains("ERROR", StringComparison.OrdinalIgnoreCase) ||
-                               line.Contains("Exception", StringComparison.OrdinalIgnoreCase) ||
-                               line.Contains("Fail", StringComparison.OrdinalIgnoreCase);
+            bool isError = line.Contains("ERROR", StringComparison.OrdinalIgnoreCase) ||
+                           line.Contains("Exception", StringComparison.OrdinalIgnoreCase) ||
+                           line.Contains("Fail", StringComparison.OrdinalIgnoreCase);
 
-                bool isWarning = line.Contains("WARN", StringComparison.OrdinalIgnoreCase);
+            bool isWarning = line.Contains("WARN", StringComparison.OrdinalIgnoreCase);
 
-                // 검색어가 있고, 해당 줄에 검색어가 포함되어 있다면 쪼개서 형광펜 칠하기
-                if (!string.IsNullOrWhiteSpace(searchTerm) && line.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
-                {
-                    HighlightSearchTermFast(tb, line, searchTerm, isError, isWarning);
-                }
-                else
-                {
-                    // 검색어가 없으면 통째로 추가
-                    var run = new Run(line);
-                    ApplyBaseStyle(run, isError, isWarning);
-                    tb.Inlines.Add(run);
-                }
-
-                logItems.Add(tb);
+            if (!string.IsNullOrWhiteSpace(searchTerm) && line.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+            {
+                HighlightSearchTermFast(tb, line, searchTerm, isError, isWarning);
+            }
+            else
+            {
+                var run = new Run(line);
+                ApplyBaseStyle(run, isError, isWarning);
+                tb.Inlines.Add(run);
             }
 
-            // 스크롤이 현재 맨 아래를 보고 있는지 판단 (자동 스크롤 유지를 위해)
-            var scrollViewer = GetScrollViewer(lbLogs);
-            bool isScrolledToEnd = scrollViewer != null && (scrollViewer.VerticalOffset >= scrollViewer.ScrollableHeight - 5);
-
-            // 가상화 ListBox에 데이터를 한 번에 밀어넣기 (UI 스레드 렌더링 부하 최소화)
-            lbLogs.ItemsSource = logItems;
-
-            // 맨 아래를 보고 있었다면 업데이트 후에도 맨 아래로 스크롤 유지
-            if (isScrolledToEnd && logItems.Count > 0)
-            {
-                lbLogs.ScrollIntoView(logItems[logItems.Count - 1]);
-            }
+            return tb;
         }
 
         /// <summary>
-        /// TextBlock 내부의 Inlines 속성을 이용하여 특정 단어만 배경색을 칠합니다.
+        /// TextBlock 내부의 Inlines 속성을 이용하여 검색된 단어만 노란 형광펜을 칠합니다.
         /// </summary>
         private void HighlightSearchTermFast(TextBlock tb, string line, string searchTerm, bool isError, bool isWarning)
         {
@@ -138,7 +169,6 @@ namespace DockerDiagram
 
             while (index != -1)
             {
-                // 검색어 앞부분 추가
                 if (index > 0)
                 {
                     var runBefore = new Run(line.Substring(0, index));
@@ -146,21 +176,18 @@ namespace DockerDiagram
                     tb.Inlines.Add(runBefore);
                 }
 
-                // 검색어 본체 추가 (하이라이트!)
                 var runMatch = new Run(line.Substring(index, searchTerm.Length))
                 {
-                    Background = Brushes.Yellow,  // 형광펜 배경
-                    Foreground = Brushes.Black,   // 글씨는 잘 보이게 검은색
+                    Background = Brushes.Yellow,
+                    Foreground = Brushes.Black,
                     FontWeight = FontWeights.Bold
                 };
                 tb.Inlines.Add(runMatch);
 
-                // 검색어 뒷부분 잘라내서 다음 루프로
                 line = line.Substring(index + searchTerm.Length);
                 index = line.IndexOf(searchTerm, StringComparison.OrdinalIgnoreCase);
             }
 
-            // 남은 뒷부분이 있으면 마저 추가
             if (!string.IsNullOrEmpty(line))
             {
                 var runAfter = new Run(line);
@@ -169,9 +196,6 @@ namespace DockerDiagram
             }
         }
 
-        /// <summary>
-        /// 텍스트(Run)에 기본 로그 심각도(Error, Warn, Info)에 따른 색상을 적용합니다.
-        /// </summary>
         private void ApplyBaseStyle(Run run, bool isError, bool isWarning)
         {
             if (isError)
@@ -185,14 +209,10 @@ namespace DockerDiagram
             }
             else
             {
-                // 일반 텍스트는 밝은 회색
                 run.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#D4D4D4"));
             }
         }
 
-        /// <summary>
-        /// ListBox 내부에 숨겨져 있는 ScrollViewer 컴포넌트를 시각적 트리(VisualTree)에서 찾아냅니다.
-        /// </summary>
         private ScrollViewer? GetScrollViewer(DependencyObject depObj)
         {
             if (depObj is ScrollViewer scrollViewer) return scrollViewer;
@@ -204,12 +224,6 @@ namespace DockerDiagram
                 if (result != null) return result;
             }
             return null;
-        }
-
-        // 검색창에 글자를 칠 때마다 즉시 다시 그리기
-        private void TxtLogSearch_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            UpdateRichTextLogs();
         }
     }
 }

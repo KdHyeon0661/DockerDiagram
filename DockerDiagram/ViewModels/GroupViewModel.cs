@@ -1,8 +1,12 @@
 ﻿using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 using DockerDiagram.Views;
+using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Input;
 using System.Windows.Media;
 
@@ -15,64 +19,34 @@ namespace DockerDiagram.ViewModels
     /// </summary>
     public class GroupViewModel : ViewModelBase, IConnectableItem
     {
-        // 서비스
+        #region Fields & Services
         private readonly INetworkService _networkService;
         private readonly IDialogService _dialogService;
 
-        public string Id { get; set; } = string.Empty;
-        public string Driver { get; set; } = "bridge"; // 네트워크 드라이버 정보
-
-        // 위치 및 크기
-        private double _x, _y, _width, _height;
-
         private string _title = "Group";
-        public string Title { get => _title; set => SetProperty(ref _title, value); }
-
         private bool _isSelected;
-        public bool IsSelected { get => _isSelected; set => SetProperty(ref _isSelected, value); }
-
         private int _zIndex;
-        public int ZIndex { get => _zIndex; set => SetProperty(ref _zIndex, value); }
+        private double _x, _y, _width, _height;
+        private SheetViewModel? _parentSheet;
 
-        public double Area => Width * Height;
-
-        public event EventHandler? OnModified;
-
-        public event EventHandler? OnPositionChanged;
-        public string Name => Title; // 인터페이스의 Name을 Group의 Title로 연결
-        public double CenterX => X + (Width / 2);
-        public double CenterY => Y + (Height / 2);
-
-        // 부모 시트 (실행 순서 계산용)
-        public SheetViewModel? ParentSheet { get; set; }
-
-        // 포함된 노드들
-        public ObservableCollection<NodeViewModel> ContainedNodes { get; } = new();
-
-        // 커맨드
-        public ICommand ArrangeCommand { get; }
-        public ICommand StartAllCommand { get; }
-        public ICommand StopAllCommand { get; }
-
-        public GroupType Type { get; }
-
-        // --- 디자인 속성 ---
         private string _borderColor = "#555";
-        public string BorderColor { get => _borderColor; set => SetProperty(ref _borderColor, value); }
-
         private string _headerColor = "White";
-        public string HeaderColor { get => _headerColor; set => SetProperty(ref _headerColor, value); }
-
         private string _headerFontColor = "#333";
-        public string HeaderFontColor { get => _headerFontColor; set => SetProperty(ref _headerFontColor, value); }
-
         private double _strokeThickness = 2;
-        public double StrokeThickness { get => _strokeThickness; set => SetProperty(ref _strokeThickness, value); }
-
         private DoubleCollection? _strokeDashArray = new DoubleCollection { 4, 2 };
-        public DoubleCollection? StrokeDashArray { get => _strokeDashArray; set => SetProperty(ref _strokeDashArray, value); }
+        #endregion
 
-        // --- 위치/크기 속성 ---
+        #region Basic Properties
+        public string Id { get; set; } = string.Empty;
+        public string Title { get => _title; set => SetProperty(ref _title, value); }
+        public string Name => Title; // 인터페이스의 Name을 Group의 Title로 연결
+        public GroupType Type { get; }
+        public string Driver { get; set; } = "bridge"; // 네트워크 드라이버 정보
+        public int ZIndex { get => _zIndex; set => SetProperty(ref _zIndex, value); }
+        public bool IsSelected { get => _isSelected; set => SetProperty(ref _isSelected, value); }
+        #endregion
+
+        #region Layout Properties
         public double X
         {
             get => _x;
@@ -127,6 +101,39 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        public double CenterX => X + (Width / 2);
+        public double CenterY => Y + (Height / 2);
+        public double Area => Width * Height;
+
+        // 부모 시트 (실행 순서 계산용)
+        public SheetViewModel? ParentSheet { get; set; }
+        #endregion
+
+        #region Design Properties
+        public string BorderColor { get => _borderColor; set => SetProperty(ref _borderColor, value); }
+        public string HeaderColor { get => _headerColor; set => SetProperty(ref _headerColor, value); }
+        public string HeaderFontColor { get => _headerFontColor; set => SetProperty(ref _headerFontColor, value); }
+        public double StrokeThickness { get => _strokeThickness; set => SetProperty(ref _strokeThickness, value); }
+        public DoubleCollection? StrokeDashArray { get => _strokeDashArray; set => SetProperty(ref _strokeDashArray, value); }
+        #endregion
+
+        #region Collections
+        // 포함된 노드들
+        public ObservableCollection<NodeViewModel> ContainedNodes { get; } = new();
+        #endregion
+
+        #region Commands
+        public ICommand ArrangeCommand { get; }
+        public ICommand StartAllCommand { get; }
+        public ICommand StopAllCommand { get; }
+        #endregion
+
+        #region Events
+        public event EventHandler? OnModified;
+        public event EventHandler? OnPositionChanged;
+        #endregion
+
+        #region Constructor
         /// <summary>
         /// 지정된 위치와 크기, 타입(일반/네트워크)을 바탕으로 새로운 그룹 객체를 생성하고 초기화합니다.
         /// </summary>
@@ -150,7 +157,9 @@ namespace DockerDiagram.ViewModels
             // 타입이 확정되었으니, 그에 맞는 옷(색상)을 입혀줍니다.
             UpdateAppearance();
         }
+        #endregion
 
+        #region Appearance Methods
         /// <summary>
         /// 그룹의 타입(일반 폴더 또는 네트워크)에 맞춰 테두리 색상, 배경색, 점선/실선 등의 시각적 디자인을 자동으로 변경합니다.
         /// </summary>
@@ -173,9 +182,9 @@ namespace DockerDiagram.ViewModels
                 StrokeDashArray = new DoubleCollection { 4, 2 };
             }
         }
+        #endregion
 
-        // --- 노드 추가/삭제 로직 (네트워크 연동 포함) ---
-
+        #region Node Management Methods
         /// <summary>
         /// 이 그룹 안에 특정 노드(컨테이너 등)를 포함시킵니다. 
         /// 만약 이 그룹이 **'네트워크' 타입**이라면, 도커 엔진과 통신하여 실제 컨테이너를 해당 네트워크 망에 즉시 연결(Connect)합니다.
@@ -258,9 +267,9 @@ namespace DockerDiagram.ViewModels
                 node.Y += dy;
             }
         }
+        #endregion
 
-        // --- 자동 정렬 및 실행 제어 (기존 로직 유지) ---
-
+        #region Arrangement & Execution Methods
         /// <summary>
         /// 그룹 내부에 포함된 노드와 하위 그룹들을 겹치지 않게 트리(Tree) 구조로 분석하여,
         /// 지정된 열(Column) 개수에 맞춰 예쁘게 바둑판 배열로 자동 정렬합니다.
@@ -488,5 +497,6 @@ namespace DockerDiagram.ViewModels
             foreach (var c in containers) { if (!order.Contains(c)) order.Add(c); }
             return order;
         }
+        #endregion
     }
 }

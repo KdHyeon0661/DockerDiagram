@@ -14,13 +14,27 @@ namespace DockerDiagram.ViewModels
     /// </summary>
     public class ConnectorViewModel : ViewModelBase
     {
+        #region Fields & Services
         private readonly IDialogService _dialogService;
 
+        private PointCollection _points = new PointCollection();
+        private PointCollection _arrowPoints = new PointCollection();
+        private int _zIndex = 50;
+        private bool _isSelected;
+
+        private RelationType _relationType;
+        private string? _mountPath;
+        private string? _ipAddress;
+        #endregion
+
+        #region Events
         /// <summary>
         /// 데이터가 변경되었음을 부모(시트)에게 알려 도화지 상단에 "수정됨(*)" 표시를 띄우기 위한 이벤트입니다.
         /// </summary>
         public event EventHandler? OnModified;
+        #endregion
 
+        #region Connection Properties
         // --- 연결선의 양 끝점 (어떤 객체들을 잇고 있는가) ---
         public IConnectableItem Source { get; private set; }
         public IConnectableItem Target { get; private set; }
@@ -29,26 +43,28 @@ namespace DockerDiagram.ViewModels
         public PortDirection SourceDir { get; private set; }
         public PortDirection TargetDir { get; private set; }
 
+        // 노드나 그룹의 경계선 상에서 선이 출발/도착할 정확한 X, Y 좌표를 계산하여 반환합니다.
+        public Point SourcePos => GetExactBorderPoint(Source, SourceDir);
+        public Point TargetPos => GetExactBorderPoint(Target, TargetDir);
+        #endregion
+
+        #region Visual Properties
         /// <summary>
         /// 화면에 그려질 선이 꺾이는 지점(좌표)들의 모음입니다.
         /// </summary>
-        private PointCollection _points = new PointCollection();
         public PointCollection Points { get => _points; set => SetProperty(ref _points, value); }
 
         /// <summary>
         /// 선 끝부분에 그려질 화살표 머리(삼각형)의 좌표 모음입니다.
         /// </summary>
-        private PointCollection _arrowPoints = new PointCollection();
         public PointCollection ArrowPoints { get => _arrowPoints; set => SetProperty(ref _arrowPoints, value); }
 
         // --- 화면 겹침(Z축) 순서 ---
-        private int _zIndex = 50;
         public int ZIndex { get => _zIndex; set => SetProperty(ref _zIndex, value); }
 
         /// <summary>
         /// 사용자가 화면에서 이 선을 클릭해서 선택했는지 여부입니다.
         /// </summary>
-        private bool _isSelected;
         public bool IsSelected
         {
             get => _isSelected;
@@ -61,17 +77,14 @@ namespace DockerDiagram.ViewModels
                 }
             }
         }
+        #endregion
 
-        // 노드나 그룹의 경계선 상에서 선이 출발/도착할 정확한 X, Y 좌표를 계산하여 반환합니다.
-        public Point SourcePos => GetExactBorderPoint(Source, SourceDir);
-        public Point TargetPos => GetExactBorderPoint(Target, TargetDir);
-
+        #region Data Properties
         // ====================================================================
         // --- 연결 데이터 (선이 품고 있는 추가 속성들) ---
         // 이 값들이 바뀔 때마다 OnModified 이벤트를 발생시켜 저장할 거리가 생겼음을 알립니다.
         // ====================================================================
 
-        private RelationType _relationType;
         public RelationType RelationType
         {
             get => _relationType;
@@ -81,7 +94,6 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        private string? _mountPath;
         public string? MountPath
         {
             get => _mountPath;
@@ -91,7 +103,6 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        private string? _ipAddress;
         public string? IpAddress
         {
             get => _ipAddress;
@@ -100,11 +111,9 @@ namespace DockerDiagram.ViewModels
                 if (SetProperty(ref _ipAddress, value)) OnModified?.Invoke(this, EventArgs.Empty);
             }
         }
+        #endregion
 
-        // ====================================================================
-        // --- 생성자 및 이벤트 관리 로직 ---
-        // ====================================================================
-
+        #region Constructor
         public ConnectorViewModel(
             IConnectableItem source,
             IConnectableItem target,
@@ -125,12 +134,9 @@ namespace DockerDiagram.ViewModels
 
             CalculateRoute(); // 최초 생성 시 경로 계산
         }
+        #endregion
 
-        private void OnNodePositionChanged(object? sender, EventArgs e)
-        {
-            CalculateRoute();
-        }
-
+        #region Public Methods
         /// <summary>
         /// 선의 출발지나 도착지가 다른 노드로 아예 변경되었을 때 호출됩니다.
         /// </summary>
@@ -153,7 +159,9 @@ namespace DockerDiagram.ViewModels
 
             CalculateRoute(); // 교체된 타겟을 기준으로 경로 재계산
         }
+        #endregion
 
+        #region Private Routing Methods
         /// <summary>
         /// OrthogonalRouter를 이용해 두 객체 사이의 가장 짧고 꺾임이 자연스러운 경로를 계산합니다.
         /// </summary>
@@ -306,5 +314,13 @@ namespace DockerDiagram.ViewModels
                 basePoint - (perpendicular * arrowWidth)
             };
         }
+        #endregion
+
+        #region Event Handlers
+        private void OnNodePositionChanged(object? sender, EventArgs e)
+        {
+            CalculateRoute();
+        }
+        #endregion
     }
 }
