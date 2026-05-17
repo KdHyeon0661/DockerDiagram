@@ -13,5 +13,8 @@ namespace DockerDiagram.Helpers
         void ShowInfo(string message, string title); // 정보(i) 아이콘이 포함된 안내 메시지 창을 띄웁니다.
         MessageBoxResult ShowYesNoCancel(string message, string title); // 예/아니오/취소 3가지 선택을 묻는 창을 띄웁니다.
         void ShowError(string message, string title); // 제목과 오류(X) 아이콘이 포함된 에러 메시지 창을 띄웁니다.
+        bool ShowHostKeyConfirm(string host, string fingerprintText);
+        string? ShowOpenFileDialog(string filter, string title);
+        string? ShowSaveFileDialog(string filter, string defaultExt, string defaultFileName, string title);
     }
 }

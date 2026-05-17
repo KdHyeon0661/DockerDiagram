@@ -171,14 +171,22 @@ namespace DockerDiagram.ViewModels
         /// <summary>
         /// 특정 노드를 도화지에서 삭제하고, 연결된 선과 소속된 그룹 정보를 함께 정리합니다.
         /// </summary>
-        public void RemoveNode(NodeViewModel node)
+        public async Task RemoveNodeAsync(NodeViewModel node)
         {
-            var relatedConnectors = Connectors.Where(c => c.Source == node || c.Target == node).ToList();
-            foreach (var c in relatedConnectors) Connectors.Remove(c);
+            if (node == null) return;
 
-            foreach (var g in Groups)
+            var relatedConnectors = Connectors.Where(c => c.Source == node || c.Target == node).ToList();
+            foreach (var c in relatedConnectors)
             {
-                if (g.ContainedNodes.Contains(node)) g.RemoveNode(node);
+                Connectors.Remove(c);
+            }
+
+            foreach (var g in Groups.ToList())
+            {
+                if (g.ContainedNodes.Contains(node))
+                {
+                    await g.RemoveNodeAsync(node);
+                }
             }
 
             Nodes.Remove(node);
@@ -235,14 +243,22 @@ namespace DockerDiagram.ViewModels
         /// <summary>
         /// 도화지 위의 노드 좌표를 다시 계산하여, 특정 그룹 영역 안에 들어온 노드는 편입시키고 나간 노드는 제외시킵니다.
         /// </summary>
-        public void RefreshGroupContainment(GroupViewModel group)
+        public async Task RefreshGroupContainmentAsync(GroupViewModel group)
         {
             Rect groupRect = new Rect(group.X, group.Y, group.Width, group.Height);
+
             foreach (var node in Nodes)
             {
                 Point nodeCenter = new Point(node.X + node.Width / 2, node.Y + node.Height / 2);
-                if (groupRect.Contains(nodeCenter)) group.AddNode(node);
-                else group.RemoveNode(node);
+
+                if (groupRect.Contains(nodeCenter))
+                {
+                    await group.AddNodeAsync(node);
+                }
+                else
+                {
+                    await group.RemoveNodeAsync(node);
+                }
             }
         }
 

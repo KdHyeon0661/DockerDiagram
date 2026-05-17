@@ -27,7 +27,6 @@ namespace DockerDiagram.ViewModels
         private bool _isSelected;
         private int _zIndex;
         private double _x, _y, _width, _height;
-        private SheetViewModel? _parentSheet;
 
         private string _borderColor = "#555";
         private string _headerColor = "White";
@@ -189,7 +188,7 @@ namespace DockerDiagram.ViewModels
         /// 이 그룹 안에 특정 노드(컨테이너 등)를 포함시킵니다. 
         /// 만약 이 그룹이 **'네트워크' 타입**이라면, 도커 엔진과 통신하여 실제 컨테이너를 해당 네트워크 망에 즉시 연결(Connect)합니다.
         /// </summary>
-        public async void AddNode(NodeViewModel node, bool isRestoring = false)
+        public async Task AddNodeAsync(NodeViewModel node, bool isRestoring = false)
         {
             if (!ContainedNodes.Contains(node))
             {
@@ -206,13 +205,17 @@ namespace DockerDiagram.ViewModels
                     }
                     catch (Exception ex)
                     {
+                        // 1. 도커 엔진 특성상 무시 가능한 에러 (이미 연결된 상태)
                         if (ex.Message.Contains("이미 연결") || ex.Message.Contains("already") || ex.Message.Contains("in use"))
                         {
                             Debug.WriteLine($"[DockerDiscovery] {node.Name}은(는) 이미 {this.Title} 네트워크에 연결되어 있습니다.");
                         }
+                        // 2. 🚨 진짜 통신 에러 발생 시 (UI 알림 후 상위로 전파)
                         else
                         {
                             Debug.WriteLine($"[DockerDiscovery] 네트워크 연결 실패: {ex.Message}");
+                            _dialogService.ShowError($"'{node.Name}' 컨테이너를 '{this.Title}' 네트워크에 연결하는 중 오류가 발생했습니다.\n{ex.Message}", "Network Error");
+                            throw; // AsyncRelayCommand나 최상위 이벤트 핸들러가 이 예외를 캐치할 수 있도록 던짐
                         }
                     }
                 }
@@ -223,7 +226,7 @@ namespace DockerDiagram.ViewModels
         /// 이 그룹에서 특정 노드를 빼냅니다.
         /// 만약 이 그룹이 **'네트워크' 타입**이라면, 도커 엔진과 통신하여 실제 컨테이너를 해당 네트워크 망에서 즉시 분리(Disconnect)합니다.
         /// </summary>
-        public async void RemoveNode(NodeViewModel node, bool isRestoring = false)
+        public async Task RemoveNodeAsync(NodeViewModel node, bool isRestoring = false) // 💡 Aysnc -> Async 오타 수정 완료
         {
             if (ContainedNodes.Contains(node))
             {
@@ -240,13 +243,17 @@ namespace DockerDiagram.ViewModels
                     }
                     catch (Exception ex)
                     {
+                        // 1. 도커 엔진 특성상 무시 가능한 에러 (애초에 연결되어 있지 않은 상태)
                         if (ex.Message.Contains("is not connected") || ex.Message.Contains("연결되어 있지"))
                         {
                             Debug.WriteLine($"[DockerDiscovery] {node.Name}은(는) 원래 {this.Title} 네트워크에 없습니다.");
                         }
+                        // 2. 🚨 진짜 통신 에러 발생 시 (UI 알림 후 상위로 전파)
                         else
                         {
                             Debug.WriteLine($"[DockerDiscovery] 네트워크 해제 실패: {ex.Message}");
+                            _dialogService.ShowError($"'{node.Name}' 컨테이너를 '{this.Title}' 네트워크에서 해제하는 중 오류가 발생했습니다.\n{ex.Message}", "Network Error");
+                            throw; // AsyncRelayCommand나 최상위 이벤트 핸들러가 이 예외를 캐치할 수 있도록 던짐
                         }
                     }
                 }

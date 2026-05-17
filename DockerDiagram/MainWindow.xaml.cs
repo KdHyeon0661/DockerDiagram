@@ -296,7 +296,7 @@ namespace DockerDiagram
         {
             if (e.Key == Key.Delete)
             {
-                (DataContext as MainViewModel)?.DeleteCommand.Execute(null);
+                (DataContext as MainViewModel)?.Inspector.DeleteCommand.Execute(null);
                 e.Handled = true;
             }
         }
@@ -465,8 +465,7 @@ namespace DockerDiagram
             if (clickedElement == ZoomPanGrid || clickedElement == ViewportCanvas ||
                (clickedElement is System.Windows.Shapes.Rectangle rect && rect.Fill == Brushes.White))
             {
-                // 선택 해제
-                (DataContext as MainViewModel)?.ClearSelection();
+                (DataContext as MainViewModel)?.Inspector.ClearSelection();
             }
 
             // 주의: 일반 모드일 때는 e.Handled = true를 하지 않습니다.
@@ -722,172 +721,188 @@ namespace DockerDiagram
         // 5. 마우스 뗌 (네트워크/그룹 생성 완료)
         private async void Diagram_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            _isClickedOnTab = false;
-
-            // 1. [그리기 모드 완료] (그룹 또는 네트워크)
-            if (ViewportCanvas.IsMouseCaptured && (_isGroupingMode || _isNetworkDrawingMode))
+            // 최상위 이벤트 핸들러(async void)이므로, 내부에서 예외가 터져 앱이 튕기는 것을 완벽히 방어합니다.
+            try
             {
-                ViewportCanvas.ReleaseMouseCapture();
+                _isClickedOnTab = false;
 
-                // 임시 도형 숨기기
-                if (TempGroupRect != null) TempGroupRect.Visibility = Visibility.Collapsed;
-                if (TempPolyline != null) TempPolyline.Visibility = Visibility.Collapsed;
-
-                var vm = DataContext as MainViewModel;
-
-                // 임시 사각형이 있고 ViewModel이 연결된 경우 생성 로직 실행
-                if (vm != null && TempGroupRect != null)
+                // 1. [그리기 모드 완료] (그룹 또는 네트워크)
+                if (ViewportCanvas.IsMouseCaptured && (_isGroupingMode || _isNetworkDrawingMode))
                 {
-                    double w = TempGroupRect.Width;
-                    double h = TempGroupRect.Height;
-                    double x = Canvas.GetLeft(TempGroupRect);
-                    double y = Canvas.GetTop(TempGroupRect);
+                    ViewportCanvas.ReleaseMouseCapture();
 
-                    // 너무 작게(단순 클릭) 한 경우 생성 방지 (최소 20x20)
-                    if (w > 20 && h > 20)
-                    {
-                        // A) 그룹 생성
-                        if (_isGroupingMode && vm.ActiveSheet?.DockerService is INetworkService netService)
-                        {
-                            var newGroup = new GroupViewModel(x, y, w, h, netService, _dialogService);
-                            newGroup.ParentSheet = vm.ActiveSheet;
-                            vm.ActiveSheet.Groups.Add(newGroup);
-                            vm.ActiveSheet.RefreshGroupContainment(newGroup);
-                            vm.SelectedElement = newGroup;
+                    // 임시 도형 숨기기
+                    if (TempGroupRect != null) TempGroupRect.Visibility = Visibility.Collapsed;
+                    if (TempPolyline != null) TempPolyline.Visibility = Visibility.Collapsed;
 
-                            vm.ActiveSheet.UpdateGroupLayering();
-                        }
-                        // B) 네트워크 생성
-                        else if (_isNetworkDrawingMode)
-                        {
-                            var dlg = new Views.NetworkDialog(_dialogService);
-                            dlg.Owner = this;
-                            if (dlg.ShowDialog() == true)
-                            {
-                                // MainViewModel의 함수 내부에서 이미 UpdateGroupLayering을 호출하도록 수정했으므로 여기선 호출만 하면 됨
-                                await vm.CreateNewNetworkGroupAsync(dlg.NetworkName, dlg.Driver, x, y, w, h);
-                            }
-                        }
-                    }
-                }
-
-                // 모드 초기화 및 커서 복구
-                _isGroupingMode = false;
-                _isNetworkDrawingMode = false;
-                Mouse.OverrideCursor = null;
-
-                e.Handled = true;
-                return;
-            }
-
-            // --- 기존 기능들 ---
-
-            // 2. 그룹 이동 종료
-            if (_isGroupMoving)
-            {
-                _isGroupMoving = false;
-                Mouse.Capture(null);
-                _movingGroup = null;
-            }
-
-            // 3. 노드 드래그 종료
-            if (_isNodeDragging)
-            {
-                if (_draggedNodeElement != null && _draggedNodeElement.DataContext is NodeViewModel nodeVm)
-                {
-                    var sheet = (DataContext as MainViewModel)?.ActiveSheet;
-                    if (sheet != null)
-                    {
-                        // 이동이 끝난 노드의 위치를 기반으로 어떤 그룹 영역에 포함되는지 검사하여 자동 소속 처리
-                        var targetGroups = sheet.FindGroupsAt(nodeVm.X, nodeVm.Y, nodeVm.Width, nodeVm.Height);
-
-                        foreach (var group in sheet.Groups)
-                        {
-                            if (targetGroups.Contains(group))
-                            {
-                                group.AddNode(nodeVm);
-                            }
-                            else
-                            {
-                                group.RemoveNode(nodeVm);
-                            }
-                        }
-                    }
-                    _draggedNodeElement.ReleaseMouseCapture();
-                }
-                _isNodeDragging = false;
-                _draggedNodeElement = null;
-            }
-
-            // ★ 4. 재연결 종료 (IConnectableItem 적용)
-            if (_isReconnecting && _reconnectingConn != null)
-            {
-                _isReconnecting = false;
-                (Mouse.Captured as FrameworkElement)?.ReleaseMouseCapture();
-                if (TempPolyline != null) TempPolyline.Visibility = Visibility.Collapsed;
-
-                // 히트 테스트 및 연결 업데이트
-                var hitResult = VisualTreeHelper.HitTest(ZoomPanGrid, e.GetPosition(ZoomPanGrid));
-                if (hitResult != null)
-                {
-                    var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, x => x.DataContext is IConnectableItem);
-                    if (hitNodeObj != null && hitNodeObj.DataContext is IConnectableItem hitItem)
-                    {
-                        Rect nodeRect = new Rect(hitItem.X, hitItem.Y, hitItem.Width, hitItem.Height);
-                        PortDirection newDir = GetClosestDirection(GetWorldPosition(e), nodeRect);
-
-                        if (_reconnectType == "Source")
-                            _reconnectingConn.UpdateConnection(hitItem, newDir, _reconnectingConn.Target, _reconnectingConn.TargetDir);
-                        else
-                            _reconnectingConn.UpdateConnection(_reconnectingConn.Source, _reconnectingConn.SourceDir, hitItem, newDir);
-                    }
-                }
-                _reconnectingConn = null;
-                return;
-            }
-
-            // 5. 리사이징 종료
-            if (_isResizing)
-            {
-                _isResizing = false;
-                (Mouse.Captured as FrameworkElement)?.ReleaseMouseCapture();
-
-                if (_resizingGroup != null)
-                {
                     var vm = DataContext as MainViewModel;
-                    vm?.ActiveSheet?.UpdateGroupLayering();
-                }
 
-                _resizingNode = null;
-                _resizingGroup = null;
-            }
-
-            // ★ 6. 신규 연결 종료 (IConnectableItem 적용 및 _sourceItem 사용)
-            if (_isConnecting)
-            {
-                _isConnecting = false;
-                Mouse.Capture(null);
-                if (TempPolyline != null) TempPolyline.Visibility = Visibility.Collapsed;
-                if (_lastHitPort != null) { _lastHitPort.Background = Brushes.Transparent; _lastHitPort = null; }
-
-                var hitResult = VisualTreeHelper.HitTest(ZoomPanGrid, e.GetPosition(ZoomPanGrid));
-                if (hitResult != null)
-                {
-                    var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, el => el.DataContext is IConnectableItem);
-                    if (hitNodeObj != null && hitNodeObj.DataContext is IConnectableItem targetItem)
+                    // 임시 사각형이 있고 ViewModel이 연결된 경우 생성 로직 실행
+                    if (vm != null && TempGroupRect != null)
                     {
-                        // 그룹은 IsCreating 속성이 없으므로, NodeViewModel일 때만 확인하도록 캐스팅 처리
-                        bool isCreating = (targetItem as NodeViewModel)?.IsCreating ?? false;
+                        double w = TempGroupRect.Width;
+                        double h = TempGroupRect.Height;
+                        double x = Canvas.GetLeft(TempGroupRect);
+                        double y = Canvas.GetTop(TempGroupRect);
 
-                        if (!isCreating && targetItem != _sourceItem && _sourceItem != null)
+                        // 너무 작게(단순 클릭) 한 경우 생성 방지 (최소 20x20)
+                        if (w > 20 && h > 20)
                         {
-                            Rect targetRect = new Rect(targetItem.X, targetItem.Y, targetItem.Width, targetItem.Height);
-                            PortDirection targetDir = GetClosestDirection(GetWorldPosition(e), targetRect);
-                            (DataContext as MainViewModel)?.AddConnection(_sourceItem, targetItem, _sourceDir, targetDir);
+                            // A) 일반 그룹 생성
+                            if (_isGroupingMode && vm.ActiveSheet?.DockerService is INetworkService netService)
+                            {
+                                var newGroup = new GroupViewModel(x, y, w, h, netService, _dialogService);
+                                newGroup.ParentSheet = vm.ActiveSheet;
+                                vm.ActiveSheet.Groups.Add(newGroup);
+
+                                // 🔥 [버그 수정] 동기 메서드에서 비동기(Task) 메서드로 전환된 부분을 await로 안전하게 대기
+                                await vm.ActiveSheet.RefreshGroupContainmentAsync(newGroup);
+
+                                // 🔥 [핵심 수정] vm.SelectedElement 대신 Inspector 부서로 선택을 지시합니다!
+                                vm.Inspector.SelectedElement = newGroup;
+
+                                vm.ActiveSheet.UpdateGroupLayering();
+                            }
+                            // B) 도커 네트워크 생성
+                            else if (_isNetworkDrawingMode)
+                            {
+                                var dlg = new Views.NetworkDialog(_dialogService);
+                                dlg.Owner = this;
+                                if (dlg.ShowDialog() == true)
+                                {
+                                    // MainViewModel의 함수 내부에서 이미 UpdateGroupLayering을 호출하므로 await 대기만 수행
+                                    await vm.CreateNewNetworkGroupAsync(dlg.NetworkName, dlg.Driver, x, y, w, h);
+                                }
+                            }
                         }
                     }
+
+                    // 모드 초기화 및 커서 복구
+                    _isGroupingMode = false;
+                    _isNetworkDrawingMode = false;
+                    Mouse.OverrideCursor = null;
+
+                    e.Handled = true;
+                    return;
                 }
-                _sourceItem = null;
+
+                // --- 기존 기능들 ---
+
+                // 2. 그룹 이동 종료
+                if (_isGroupMoving)
+                {
+                    _isGroupMoving = false;
+                    Mouse.Capture(null);
+                    _movingGroup = null;
+                }
+
+                // 3. 노드 드래그 종료
+                if (_isNodeDragging)
+                {
+                    if (_draggedNodeElement != null && _draggedNodeElement.DataContext is NodeViewModel nodeVm)
+                    {
+                        var sheet = (DataContext as MainViewModel)?.ActiveSheet;
+                        if (sheet != null)
+                        {
+                            // 이동이 끝난 노드의 위치를 기반으로 어떤 그룹 영역에 포함되는지 검사하여 자동 소속 처리
+                            var targetGroups = sheet.FindGroupsAt(nodeVm.X, nodeVm.Y, nodeVm.Width, nodeVm.Height);
+
+                            foreach (var group in sheet.Groups)
+                            {
+                                if (targetGroups.Contains(group))
+                                {
+                                    // 도커 엔진 추가 통신을 막기 위해 복원(isRestoring: true) 플래그 상태로 동기화
+                                    await group.AddNodeAsync(nodeVm, isRestoring: true);
+                                }
+                                else
+                                {
+                                    await group.RemoveNodeAsync(nodeVm);
+                                }
+                            }
+                        }
+                        _draggedNodeElement.ReleaseMouseCapture();
+                    }
+                    _isNodeDragging = false;
+                    _draggedNodeElement = null;
+                }
+
+                // 4. 재연결 종료 (IConnectableItem 적용)
+                if (_isReconnecting && _reconnectingConn != null)
+                {
+                    _isReconnecting = false;
+                    (Mouse.Captured as FrameworkElement)?.ReleaseMouseCapture();
+                    if (TempPolyline != null) TempPolyline.Visibility = Visibility.Collapsed;
+
+                    // 히트 테스트 및 연결 업데이트
+                    var hitResult = VisualTreeHelper.HitTest(ZoomPanGrid, e.GetPosition(ZoomPanGrid));
+                    if (hitResult != null)
+                    {
+                        var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, x => x.DataContext is IConnectableItem);
+                        if (hitNodeObj != null && hitNodeObj.DataContext is IConnectableItem hitItem)
+                        {
+                            Rect nodeRect = new Rect(hitItem.X, hitItem.Y, hitItem.Width, hitItem.Height);
+                            PortDirection newDir = GetClosestDirection(GetWorldPosition(e), nodeRect);
+
+                            if (_reconnectType == "Source")
+                                _reconnectingConn.UpdateConnection(hitItem, newDir, _reconnectingConn.Target, _reconnectingConn.TargetDir);
+                            else
+                                _reconnectingConn.UpdateConnection(_reconnectingConn.Source, _reconnectingConn.SourceDir, hitItem, newDir);
+                        }
+                    }
+                    _reconnectingConn = null;
+                    return;
+                }
+
+                // 5. 리사이징 종료
+                if (_isResizing)
+                {
+                    _isResizing = false;
+                    (Mouse.Captured as FrameworkElement)?.ReleaseMouseCapture();
+
+                    if (_resizingGroup != null)
+                    {
+                        var vm = DataContext as MainViewModel;
+                        vm?.ActiveSheet?.UpdateGroupLayering();
+                    }
+
+                    _resizingNode = null;
+                    _resizingGroup = null;
+                }
+
+                // 6. 신규 연결 종료 (IConnectableItem 적용 및 _sourceItem 사용)
+                if (_isConnecting)
+                {
+                    _isConnecting = false;
+                    Mouse.Capture(null);
+                    if (TempPolyline != null) TempPolyline.Visibility = Visibility.Collapsed;
+                    if (_lastHitPort != null) { _lastHitPort.Background = System.Windows.Media.Brushes.Transparent; _lastHitPort = null; }
+
+                    var hitResult = VisualTreeHelper.HitTest(ZoomPanGrid, e.GetPosition(ZoomPanGrid));
+                    if (hitResult != null)
+                    {
+                        var hitNodeObj = FindParent<FrameworkElement>(hitResult.VisualHit, el => el.DataContext is IConnectableItem);
+                        if (hitNodeObj != null && hitNodeObj.DataContext is IConnectableItem targetItem)
+                        {
+                            // 그룹은 IsCreating 속성이 없으므로, NodeViewModel일 때만 확인하도록 캐스팅 처리
+                            bool isCreating = (targetItem as NodeViewModel)?.IsCreating ?? false;
+
+                            if (!isCreating && targetItem != _sourceItem && _sourceItem != null)
+                            {
+                                Rect targetRect = new Rect(targetItem.X, targetItem.Y, targetItem.Width, targetItem.Height);
+                                PortDirection targetDir = GetClosestDirection(GetWorldPosition(e), targetRect);
+
+                                // AddConnection은 MainViewModel(CEO)의 역할이므로 그대로 둡니다!
+                                (DataContext as MainViewModel)?.AddConnection(_sourceItem, targetItem, _sourceDir, targetDir);
+                            }
+                        }
+                    }
+                    _sourceItem = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                // 최상위 UI 핸들러 통신/로직 에러를 안전하게 방어하고 사용자에게 안내
+                _dialogService.ShowError($"마우스 조작 완료 처리 중 에러가 발생했습니다:\n{ex.Message}", "UI Interaction Error");
             }
         }
 
@@ -921,7 +936,7 @@ namespace DockerDiagram
             var vm = DataContext as MainViewModel;
             if (vm != null && groupVm != null)
             {
-                vm.SelectedElement = groupVm;
+                vm.Inspector.SelectedElement = groupVm;
             }
             e.Handled = true;
         }
@@ -1001,7 +1016,8 @@ namespace DockerDiagram
                     {
                         int oldIdx = vm.Sheets.IndexOf(sourceSheet!);
                         int newIdx = vm.Sheets.IndexOf(targetSheet);
-                        vm.MoveSheet(oldIdx, newIdx);
+                        // 🔥 [수정] SheetManager 부서에게 시트 이동을 지시합니다.
+                        vm.SheetManager.MoveSheet(oldIdx, newIdx);
                     }
                 }
             }
@@ -1032,7 +1048,10 @@ namespace DockerDiagram
         private void RenameOK_Click(object sender, RoutedEventArgs e)
         {
             if (_renamingSheet != null && !string.IsNullOrWhiteSpace(txtRename.Text))
-                (DataContext as MainViewModel)?.RenameSheet(_renamingSheet, txtRename.Text.Trim());
+            {
+                // 🔥 [수정] SheetManager 부서에게 이름 변경을 지시합니다.
+                (DataContext as MainViewModel)?.SheetManager.RenameSheet(_renamingSheet, txtRename.Text.Trim());
+            }
             RenameOverlay.Visibility = Visibility.Collapsed;
             _renamingSheet = null;
         }
@@ -1055,7 +1074,10 @@ namespace DockerDiagram
             var contextMenu = menuItem?.Parent as ContextMenu;
             var border = contextMenu?.PlacementTarget as FrameworkElement;
             if (border?.DataContext is SheetViewModel sheet)
-                (DataContext as MainViewModel)?.DeleteSheet(sheet);
+            {
+                // 🔥 [수정] SheetManager 부서에게 삭제를 지시합니다.
+                (DataContext as MainViewModel)?.SheetManager.DeleteSheet(sheet);
+            }
         }
 
         /// <summary>
@@ -1098,7 +1120,8 @@ namespace DockerDiagram
                 _isNetworkDrawingMode = true;
                 _isGroupingMode = false;       // 그룹 모드 끄기
                 Mouse.OverrideCursor = Cursors.Cross; // 십자가 커서
-                (DataContext as MainViewModel)?.ClearSelection();
+                                                      // 🔥 [수정] Inspector 부서에게 선택 해제를 지시합니다.
+                (DataContext as MainViewModel)?.Inspector.ClearSelection();
                 e.Handled = true; // 이벤트 소비 (DoDragDrop 방지)
                 return;
             }
@@ -1109,7 +1132,8 @@ namespace DockerDiagram
                 _isGroupingMode = true;
                 _isNetworkDrawingMode = false; // 네트워크 모드 끄기
                 Mouse.OverrideCursor = Cursors.Cross; // 십자가 커서
-                (DataContext as MainViewModel)?.ClearSelection();
+                                                      // 🔥 [수정] Inspector 부서에게 선택 해제를 지시합니다.
+                (DataContext as MainViewModel)?.Inspector.ClearSelection();
                 e.Handled = true; // 이벤트 소비 (DoDragDrop 방지)
                 return;
             }
@@ -1596,13 +1620,17 @@ namespace DockerDiagram
         private void Node_Body_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (_isConnecting || _isResizing) return;
+
             var b = sender as FrameworkElement;
             var nodeVm = b?.DataContext as NodeViewModel;
             var mainVm = DataContext as MainViewModel;
+
             if (mainVm != null && nodeVm != null)
             {
-                if (mainVm.SelectedElement == nodeVm) mainVm.SelectedElement = null;
-                else mainVm.SelectedElement = nodeVm;
+                if (mainVm.Inspector.SelectedElement == nodeVm)
+                    mainVm.Inspector.SelectedElement = null;
+                else
+                    mainVm.Inspector.SelectedElement = nodeVm;
             }
             e.Handled = true;
         }
@@ -1616,9 +1644,10 @@ namespace DockerDiagram
             var el = sender as FrameworkElement;
             var connVm = el?.DataContext as ConnectorViewModel;
             var mainVm = DataContext as MainViewModel;
+
             if (mainVm != null && connVm != null)
             {
-                mainVm.SelectedElement = connVm;
+                mainVm.Inspector.SelectedElement = connVm;
                 e.Handled = true;
             }
         }

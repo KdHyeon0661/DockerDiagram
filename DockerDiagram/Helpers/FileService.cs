@@ -2,7 +2,6 @@
 using System.IO;
 using System.Collections.Generic;
 using System.Text.Json;
-using Microsoft.Win32;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
@@ -22,22 +21,24 @@ namespace DockerDiagram.Helpers
         /// </summary>
         public static string? SaveDiagramAs(MainViewModel mainVm, IDialogService dialogService)
         {
-            var dlg = new SaveFileDialog
-            {
-                Filter = "Docker Diagram (*.vdm)|*.vdm",
-                DefaultExt = ".vdm",
-                FileName = !string.IsNullOrEmpty(mainVm.CurrentFilePath)
-                           ? Path.GetFileName(mainVm.CurrentFilePath)
-                           : "MyDockerLayout"
-            };
+            // 🔥 [MVVM 수정 1] 하드코딩된 SaveFileDialog 제거 및 IDialogService 활용
+            string defaultFileName = !string.IsNullOrEmpty(mainVm.CurrentFilePath)
+                ? Path.GetFileName(mainVm.CurrentFilePath)
+                : "MyDockerLayout";
 
-            if (dlg.ShowDialog() == true)
+            string? selectedFileName = dialogService.ShowSaveFileDialog(
+                "Docker Diagram (*.vdm)|*.vdm",
+                ".vdm",
+                defaultFileName,
+                "Save Diagram As");
+
+            if (!string.IsNullOrEmpty(selectedFileName))
             {
-                if (InternalSave(mainVm, dlg.FileName))
+                if (InternalSave(mainVm, selectedFileName))
                 {
-                    SaveLastFilePath(dlg.FileName); // 다음 실행 시 자동 로드를 위해 경로 저장
-                    dialogService.ShowInfo($"저장되었습니다.\n{dlg.FileName}", "완료");
-                    return dlg.FileName;
+                    SaveLastFilePath(selectedFileName); // 다음 실행 시 자동 로드를 위해 경로 저장
+                    dialogService.ShowInfo($"저장되었습니다.\n{selectedFileName}", "완료");
+                    return selectedFileName;
                 }
             }
             return null; // 저장 취소 또는 실패 시
@@ -163,19 +164,19 @@ namespace DockerDiagram.Helpers
             INetworkService networkService,
             IDialogService dialogService)
         {
-            var dlg = new OpenFileDialog
-            {
-                Filter = "Docker Diagram (*.vdm)|*.vdm|JSON File (*.json)|*.json"
-            };
+            // 🔥 [MVVM 수정 2] 하드코딩된 OpenFileDialog 제거 및 IDialogService 활용
+            string? selectedFileName = dialogService.ShowOpenFileDialog(
+                "Docker Diagram (*.vdm)|*.vdm|JSON File (*.json)|*.json",
+                "Load Diagram");
 
-            if (dlg.ShowDialog() == true)
+            if (!string.IsNullOrEmpty(selectedFileName))
             {
-                bool success = await LoadDiagramFromPathAsync(mainVm, dlg.FileName, containerService, volumeService, networkService, dialogService);
+                bool success = await LoadDiagramFromPathAsync(mainVm, selectedFileName, containerService, volumeService, networkService, dialogService);
 
                 if (success)
                 {
-                    SaveLastFilePath(dlg.FileName);
-                    return dlg.FileName;
+                    SaveLastFilePath(selectedFileName);
+                    return selectedFileName;
                 }
             }
             return null; // 불러오기 취소 또는 실패 시
@@ -185,24 +186,42 @@ namespace DockerDiagram.Helpers
         /// 지정된 경로의 다이어그램 파일(.vdm)을 읽어 C# 모델로 역직렬화하고, 
         /// 의존성 순서(노드 -> 그룹 -> 선)에 맞게 뷰모델을 생성하여 화면을 복원합니다.
         /// </summary>
-        public static async Task<bool> LoadDiagramFromPathAsync(
-            MainViewModel mainVm,
-            string filePath,
-            IContainerService containerService,
-            IVolumeService volumeService,
-            INetworkService networkService,
-            IDialogService dialogService)
+        public static async Task<bool> LoadDiagramFromPathAsync(MainViewModel mainVm, string filePath, IContainerService containerService,
+                                                                IVolumeService volumeService, INetworkService networkService, IDialogService dialogService)
         {
             try
             {
                 if (!File.Exists(filePath)) return false;
 
                 string json = await File.ReadAllTextAsync(filePath);
-                var fileData = JsonSerializer.Deserialize<DiagramFile>(json); // JSON을 객체로 복원
+                var fileData = JsonSerializer.Deserialize<DiagramFile>(json);
 
                 if (fileData == null) return false;
 
-                mainVm.Sheets.Clear(); // 복원을 위해 현재 열린 모든 시트를 닫음
+                foreach (var sheet in mainVm.Sheets)
+                {
+                    // 🔥 [핵심 수정] 이벤트 해제 권한이 SheetManager로 이관되었으므로, SheetManager를 통해 호출
+                    mainVm.SheetManager.UnsubscribeSheetEvents(sheet);
+
+                    // 2. SSH 원격 접속 시트였다면 백그라운드 SSH 프로세스 종료
+                    if (sheet.Profile != null && sheet.Profile.Type == EndpointType.SshRemote && !string.IsNullOrEmpty(sheet.Profile.HostIp))
+                    {
+                        SshTunnelManager.ReleaseTunnel(
+                            sheet.Profile.HostIp,
+                            sheet.Profile.SshPort,
+                            sheet.Profile.SshUsername ?? "root"
+                        );
+                    }
+
+                    // 3. 원격 전용 DockerApiService 자원 해제 및 전역 리스트 제거
+                    if (sheet.DockerService != null && sheet.DockerService != containerService)
+                    {
+                        App.ActiveDockerServices.Remove(sheet.DockerService);
+                        sheet.DockerService.Dispose();
+                    }
+                }
+
+                mainVm.Sheets.Clear();
 
                 foreach (var sheetData in fileData.Sheets)
                 {
@@ -219,7 +238,8 @@ namespace DockerDiagram.Helpers
                                 loadedProfile.HostIp,
                                 loadedProfile.SshPort,
                                 loadedProfile.SshUsername ?? "root",
-                                loadedProfile.SshKeyFilePath ?? "");
+                                loadedProfile.SshKeyFilePath ?? "",
+                                dialogService);
 
                             loadedProfile.LocalTunnelPort = localPort;
                             targetDockerService = new DockerApiService(loadedProfile); // 새로 뚫린 터널로 통신하는 전용 서비스 생성
@@ -253,7 +273,6 @@ namespace DockerDiagram.Helpers
                     // ==========================================
                     foreach (var nodeData in sheetData.Nodes)
                     {
-                        // ★ [수정] 생성자의 괄호 안에는 서비스만 넘기고, Type은 중괄호 {} 안에서 init!
                         var nodeVm = new NodeViewModel(currentContainerSvc, currentVolumeSvc, dialogService)
                         {
                             Id = nodeData.Id,
@@ -280,7 +299,6 @@ namespace DockerDiagram.Helpers
                     // ==========================================
                     foreach (var groupData in sheetData.Groups)
                     {
-                        // ★ [수정] 그룹의 경우, 생성자 괄호 안에서 Type을 넘겨주는 방식이 맞습니다. (이전에 수정한 대로 적용)
                         var groupVm = new GroupViewModel(
                             groupData.X,
                             groupData.Y,
@@ -302,7 +320,7 @@ namespace DockerDiagram.Helpers
                             if (itemMap.TryGetValue(nodeId, out var item) && item is NodeViewModel node)
                             {
                                 // isRestoring 플래그를 통해 불필요한 도커 API(ConnectNetwork 등) 호출 방지
-                                groupVm.AddNode(node, isRestoring: true);
+                                await groupVm.AddNodeAsync(node, isRestoring: true);
                             }
                         }
                         sheetVm.Groups.Add(groupVm);

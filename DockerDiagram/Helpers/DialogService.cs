@@ -33,5 +33,33 @@ namespace DockerDiagram.Helpers
             MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
+        public bool ShowHostKeyConfirm(string host, string fingerprintText)
+        {
+            string msg = $"처음 접속하는 서버({host})입니다.\n\n서버의 고유 지문(Fingerprint):\n{fingerprintText}\n\n이 서버를 신뢰하고 계속 연결하시겠습니까?";
+
+            var result = MessageBox.Show(msg, "새로운 호스트 키 검증 (보안)", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            return result == MessageBoxResult.Yes;
+        }
+
+        public string? ShowOpenFileDialog(string filter, string title)
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = filter,
+                Title = title
+            };
+            return dlg.ShowDialog() == true ? dlg.FileName : null;
+        }
+        public string? ShowSaveFileDialog(string filter, string defaultExt, string defaultFileName, string title)
+        {
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = filter,
+                DefaultExt = defaultExt,
+                FileName = defaultFileName,
+                Title = title
+            };
+            return dlg.ShowDialog() == true ? dlg.FileName : null;
+        }
     }
 }

@@ -639,15 +639,16 @@ namespace DockerDiagram.Helpers
         /// </summary>
         public async Task<ContainerStats> GetContainerStatsAsync(string containerId)
         {
+            int timeoutSeconds = CurrentProfile.Type == EndpointType.SshRemote ? 10 : 3;
+
             try
             {
                 var statsParams = new ContainerStatsParameters { Stream = false };
                 ContainerStatsResponse? stats = null;
 
-                // ★ 기존의 비동기 Progress 대신 직접 만든 SyncProgress 사용 (0 나오는 현상 완벽 해결!)
                 var progress = new SyncProgress<ContainerStatsResponse>(r => stats = r);
 
-                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds)))
                 {
                     // API 호출이 끝날 때까지 대기
                     await _client.Containers.GetContainerStatsAsync(containerId, statsParams, progress, cts.Token);
@@ -663,9 +664,13 @@ namespace DockerDiagram.Helpers
                     }
                 }
             }
+            catch (OperationCanceledException)
+            {
+                Debug.WriteLine($"[DockerStats] {containerId}의 통계 데이터 조회 시간({timeoutSeconds}초)이 초과되었습니다.");
+            }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[DockerDiscovery] Stats Error: {ex.Message}");
+                Debug.WriteLine($"[DockerStats] Stats Error: {ex.Message}");
             }
 
             return new ContainerStats();

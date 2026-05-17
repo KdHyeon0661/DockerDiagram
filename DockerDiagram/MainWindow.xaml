@@ -223,12 +223,12 @@
 
                 <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderThickness="0">
                     <StackPanel>
-                        <TextBlock Text="{Binding LastSyncTime}" FontSize="11" Foreground="#888" HorizontalAlignment="Right" Margin="0,0,2,5"/>
+                        <TextBlock Text="{Binding Explorer.LastSyncTime}" FontSize="11" Foreground="#888" HorizontalAlignment="Right" Margin="0,0,2,5"/>
 
                         <Expander Header="Existing Containers" IsExpanded="True" Margin="0,0,0,5" Background="White" BorderBrush="#ccc" BorderThickness="1">
                             <StackPanel>
-                                <TextBox Text="{Binding ContainerSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search..." Margin="5"/>
-                                <ListBox ItemsSource="{Binding ExistingContainers}" BorderThickness="0" MaxHeight="250" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <TextBox Text="{Binding Explorer.ContainerSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search..." Margin="5"/>
+                                <ListBox ItemsSource="{Binding Explorer.ExistingContainers}" BorderThickness="0" MaxHeight="250" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -239,7 +239,7 @@
                                         <DataTemplate>
                                             <DockPanel Margin="0,2" LastChildFill="True">
                                                 <Button DockPanel.Dock="Right" Content="✕" Foreground="#dc3545" Background="Transparent" BorderThickness="0"
-                                            Command="{Binding DataContext.DeleteContainerItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            Command="{Binding DataContext.Explorer.DeleteContainerItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                             CommandParameter="{Binding}"
                                             Cursor="Hand" Padding="8,0" Margin="5,0,0,0"/>
 
@@ -272,8 +272,8 @@
 
                         <Expander Header="Volumes" IsExpanded="False" Margin="0,0,0,5" Background="White" BorderBrush="#ccc" BorderThickness="1">
                             <StackPanel>
-                                <TextBox Text="{Binding VolumeSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search..." Margin="5"/>
-                                <ListBox ItemsSource="{Binding ExistingVolumes}" BorderThickness="0" MaxHeight="200" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <TextBox Text="{Binding Explorer.VolumeSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search..." Margin="5"/>
+                                <ListBox ItemsSource="{Binding Explorer.ExistingVolumes}" BorderThickness="0" MaxHeight="200" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -284,7 +284,7 @@
                                         <DataTemplate>
                                             <DockPanel Margin="0,2" LastChildFill="True">
                                                 <Button DockPanel.Dock="Right" Content="✕" Foreground="#dc3545" Background="Transparent" BorderThickness="0"
-                                            Command="{Binding DataContext.DeleteVolumeItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            Command="{Binding DataContext.Explorer.DeleteVolumeItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                             CommandParameter="{Binding}"
                                             Cursor="Hand" Padding="8,0" Margin="5,0,0,0"/>
 
@@ -303,8 +303,8 @@
 
                         <Expander Header="Networks" IsExpanded="False" Margin="0,0,0,5" Background="White" BorderBrush="#ccc" BorderThickness="1">
                             <StackPanel>
-                                <TextBox Text="{Binding NetworkSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search..." Margin="5"/>
-                                <ListBox ItemsSource="{Binding ExistingNetworks}" BorderThickness="0" MaxHeight="200" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                <TextBox Text="{Binding Explorer.NetworkSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search..." Margin="5"/>
+                                <ListBox ItemsSource="{Binding Explorer.ExistingNetworks}" BorderThickness="0" MaxHeight="200" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -315,7 +315,7 @@
                                         <DataTemplate>
                                             <DockPanel Margin="0,2" LastChildFill="True">
                                                 <Button DockPanel.Dock="Right" Content="✕" Foreground="#dc3545" Background="Transparent" BorderThickness="0"
-                                            Command="{Binding DataContext.DeleteNetworkItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            Command="{Binding DataContext.Explorer.DeleteNetworkItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                             CommandParameter="{Binding}"
                                             Cursor="Hand" Padding="8,0" Margin="5,0,0,0">
                                                     <Button.Style>
@@ -372,12 +372,12 @@
                 <Grid x:Name="ZoomPanGrid">
                     <Grid.RenderTransform>
                         <TransformGroup>
-                            <ScaleTransform x:Name="MapScale" ScaleX="{Binding ActiveSheet.Scale, Mode=TwoWay}" ScaleY="{Binding ActiveSheet.Scale, Mode=TwoWay}"/>
-                            <TranslateTransform x:Name="MapTranslate" X="{Binding ActiveSheet.OffsetX, Mode=TwoWay}" Y="{Binding ActiveSheet.OffsetY, Mode=TwoWay}"/>
+                            <ScaleTransform x:Name="MapScale" ScaleX="{Binding SheetManager.ActiveSheet.Scale, Mode=TwoWay}" ScaleY="{Binding SheetManager.ActiveSheet.Scale, Mode=TwoWay}"/>
+                            <TranslateTransform x:Name="MapTranslate" X="{Binding SheetManager.ActiveSheet.OffsetX, Mode=TwoWay}" Y="{Binding SheetManager.ActiveSheet.OffsetY, Mode=TwoWay}"/>
                         </TransformGroup>
                     </Grid.RenderTransform>
 
-                    <Grid Width="{Binding ActiveSheet.MapWidth}" Height="{Binding ActiveSheet.MapHeight}">
+                    <Grid Width="{Binding SheetManager.ActiveSheet.MapWidth}" Height="{Binding SheetManager.ActiveSheet.MapHeight}">
                         <Grid.Effect>
                             <DropShadowEffect BlurRadius="20" Color="Black" Opacity="0.3" ShadowDepth="0"/>
                         </Grid.Effect>
@@ -403,7 +403,7 @@
                             </Rectangle.Fill>
                         </Rectangle>
 
-                        <ItemsControl ItemsSource="{Binding ActiveSheet.Groups}">
+                        <ItemsControl ItemsSource="{Binding SheetManager.ActiveSheet.Groups}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <Canvas/>
@@ -503,7 +503,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <ItemsControl ItemsSource="{Binding ActiveSheet.Connectors}">
+                        <ItemsControl ItemsSource="{Binding SheetManager.ActiveSheet.Connectors}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <Canvas/>
@@ -522,7 +522,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <ItemsControl ItemsSource="{Binding ActiveSheet.Nodes}">
+                        <ItemsControl ItemsSource="{Binding SheetManager.ActiveSheet.Nodes}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <Canvas/>
@@ -696,7 +696,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <ItemsControl ItemsSource="{Binding ActiveSheet.Connectors}">
+                        <ItemsControl ItemsSource="{Binding SheetManager.ActiveSheet.Connectors}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <Canvas/>
@@ -773,7 +773,7 @@
                                 </Button.ContentTemplate>
                             </Button>
                             <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
-                            <Button Command="{Binding LoadCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="파일 불러오기">
+                            <Button Command="{Binding SheetManager.LoadCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="파일 불러오기">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -788,7 +788,7 @@
                                 </Button.ContentTemplate>
                             </Button>
 
-                            <Button Command="{Binding SaveCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="저장 (덮어쓰기)">
+                            <Button Command="{Binding SheetManager.SaveCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="저장 (덮어쓰기)">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -803,7 +803,7 @@
                                 </Button.ContentTemplate>
                             </Button>
 
-                            <Button Command="{Binding SaveAsCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="다른 이름으로 저장">
+                            <Button Command="{Binding SheetManager.SaveAsCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="다른 이름으로 저장">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -820,7 +820,7 @@
 
                             <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
 
-                            <Button Command="{Binding FlowClearCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="현재 시트 초기화">
+                            <Button Command="{Binding Toolbox.FlowClearCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="현재 시트 초기화">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -835,7 +835,7 @@
                                 </Button.ContentTemplate>
                             </Button>
 
-                            <Button Command="{Binding FlowAllClearCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="모든 시트 내용 지우기">
+                            <Button Command="{Binding Toolbox.FlowAllClearCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="모든 시트 내용 지우기">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -852,7 +852,7 @@
 
                             <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
 
-                            <Button Command="{Binding DeleteAllSheetCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="모든 시트 삭제 후 초기화">
+                            <Button Command="{Binding SheetManager.DeleteAllSheetCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="모든 시트 삭제 후 초기화">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -868,7 +868,7 @@
                             </Button>
 
                             <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
-                            <Button Command="{Binding ExportComposeCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="Generate docker-compose.yml">
+                            <Button Command="{Binding Toolbox.ExportComposeCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="Generate docker-compose.yml">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -883,7 +883,7 @@
                                 </Button.ContentTemplate>
                             </Button>
 
-                            <Button Command="{Binding ImportComposeCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="Generate Sheet using docker-compose.yml">
+                            <Button Command="{Binding Toolbox.ImportComposeCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="Generate Sheet using docker-compose.yml">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -930,7 +930,7 @@
                                 </Button.ContentTemplate>
                             </Button>
                             <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
-                            <Button Command="{Binding SystemPruneCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="사용 안 하는 컨테이너/이미지/볼륨/네트워크 일괄 삭제">
+                            <Button Command="{Binding Toolbox.SystemPruneCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="사용 안 하는 컨테이너/이미지/볼륨/네트워크 일괄 삭제">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
                                         <Grid>
@@ -999,7 +999,7 @@
             <Border.Style>
                 <Style TargetType="Border">
                     <Style.Triggers>
-                        <DataTrigger Binding="{Binding IsDetailPanelOpen}" Value="True">
+                        <DataTrigger Binding="{Binding Inspector.IsDetailPanelOpen}" Value="True">
                             <DataTrigger.EnterActions>
                                 <BeginStoryboard>
                                     <Storyboard>
@@ -1025,7 +1025,7 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <ContentControl Content="{Binding SelectedElement}" Grid.Row="1">
+                <ContentControl Content="{Binding Inspector.SelectedElement}" Grid.Row="1">
                     <ContentControl.Resources>
                         <DataTemplate DataType="{x:Type vm:ConnectorViewModel}">
                             <Grid Margin="5">
@@ -1472,7 +1472,7 @@
                                             <TextBlock Grid.Column="1" Text="{Binding CreatedDate, StringFormat='Created at {0}'}"
                                FontSize="11" Foreground="#555"/>
                                         </Grid>
-                                        
+
                                         <Grid Margin="0,0,0,8">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
@@ -1645,8 +1645,8 @@
                 </ContentControl>
 
                 <UniformGrid Grid.Row="2" Rows="1" Columns="2" VerticalAlignment="Bottom" Height="35" Margin="0,10,0,0">
-                    <Button Content="Delete" Background="#dc3545" Foreground="White" BorderThickness="0" Margin="0,0,5,0" Command="{Binding DeleteCommand}"/>
-                    <Button Content="Close" Margin="5,0,0,0" Command="{Binding ClosePanelCommand}"/>
+                    <Button Content="Delete" Background="#dc3545" Foreground="White" BorderThickness="0" Margin="0,0,5,0" Command="{Binding Inspector.DeleteCommand}"/>
+                    <Button Content="Close" Margin="5,0,0,0" Command="{Binding Inspector.ClosePanelCommand}"/>
                 </UniformGrid>
             </Grid>
         </Border>
@@ -1666,7 +1666,7 @@
                         <Button x:Name="BtnScrollRight" Click="ScrollRight_Click" ToolTip="Scroll Right" Style="{StaticResource NavButtonStyle}">
                             <Path Data="{StaticResource NextIcon}" Fill="#555" Width="10" Height="10" Stretch="Uniform"/>
                         </Button>
-                        <Button Command="{Binding AddSheetCommand}" ToolTip="Add New Sheet" Style="{StaticResource NavButtonStyle}">
+                        <Button Command="{Binding SheetManager.AddSheetCommand}" ToolTip="Add New Sheet" Style="{StaticResource NavButtonStyle}">
                             <Path Data="{StaticResource PlusIcon}" Fill="#555" Width="12" Height="12" Stretch="Uniform"/>
                         </Button>
                         <Button Click="SheetMenuButton_Click" ToolTip="Sheet List" Style="{StaticResource NavButtonStyle}">
@@ -1674,7 +1674,7 @@
                         </Button>
                         <Popup x:Name="SheetMenuPopup" StaysOpen="False" Placement="Top">
                             <Border Background="White" BorderBrush="#999" BorderThickness="1" MaxHeight="300" MinWidth="150">
-                                <ListBox ItemsSource="{Binding Sheets}" SelectedItem="{Binding ActiveSheet}" 
+                                <ListBox ItemsSource="{Binding SheetManager.Sheets}" SelectedItem="{Binding SheetManager.ActiveSheet}" 
                                      BorderThickness="0" DisplayMemberPath="Title" 
                                      SelectionChanged="SheetMenuList_SelectionChanged"
                                      MaxHeight="300"
@@ -1687,7 +1687,7 @@
                 <ScrollViewer x:Name="TabScrollViewer" Grid.Column="1" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" BorderThickness="0" Padding="0" 
                               ScrollChanged="TabScrollViewer_ScrollChanged"
                               SizeChanged="TabScrollViewer_SizeChanged">
-                    <ListBox x:Name="SheetListBox" ItemsSource="{Binding Sheets}" SelectedItem="{Binding ActiveSheet}"
+                    <ListBox x:Name="SheetListBox" ItemsSource="{Binding SheetManager.Sheets}" SelectedItem="{Binding SheetManager.ActiveSheet}"
                              Background="Transparent" BorderThickness="0"
                              ScrollViewer.CanContentScroll="False"
                              PreviewMouseLeftButtonDown="SheetTab_PreviewMouseLeftButtonDown"

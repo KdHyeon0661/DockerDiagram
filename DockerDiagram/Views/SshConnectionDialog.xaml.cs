@@ -74,7 +74,7 @@ namespace DockerDiagram.Views
                 string profileName = txtName.Text.Trim();
 
                 // [STEP 1] SSH 터널 뚫기 (이미 뚫려있으면 기존 포트 재사용)
-                int localPort = await SshTunnelManager.GetOrStartTunnelAsync(ip, sshPort, user, keyPath);
+                int localPort = await SshTunnelManager.GetOrStartTunnelAsync(ip, sshPort, user, keyPath, _dialogService);
 
                 // [STEP 2] 해당 터널로 접속하는 신분증(Profile) 생성
                 var remoteProfile = new ConnectionProfile

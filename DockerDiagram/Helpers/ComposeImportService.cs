@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.Win32;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 using YamlDotNet.Serialization;
@@ -27,17 +26,16 @@ namespace DockerDiagram.Helpers
             INetworkService networkService,
             IDialogService dialogService)
         {
-            var dlg = new OpenFileDialog
-            {
-                Filter = "Docker Compose File (*.yml;*.yaml)|*.yml;*.yaml|All Files (*.*)|*.*",
-                Title = "Import from Docker Compose"
-            };
+            // 🔥 [MVVM 수정 1] UI(OpenFileDialog) 종속성 제거 및 IDialogService 활용
+            string? selectedFileName = dialogService.ShowOpenFileDialog(
+                "Docker Compose File (*.yml;*.yaml)|*.yml;*.yaml|All Files (*.*)|*.*",
+                "Import from Docker Compose");
 
-            if (dlg.ShowDialog() != true) return;
+            if (string.IsNullOrEmpty(selectedFileName)) return;
 
             try
             {
-                string yamlContent = File.ReadAllText(dlg.FileName);
+                string yamlContent = File.ReadAllText(selectedFileName);
 
                 // YamlDotNet을 사용하여 YAML 문자열을 C# 객체(ComposeFileModel)로 역직렬화(Deserialize)
                 var deserializer = new DeserializerBuilder()
@@ -53,11 +51,30 @@ namespace DockerDiagram.Helpers
                     return;
                 }
 
-                string sheetName = Path.GetFileNameWithoutExtension(dlg.FileName);
+                // 탭(Sheet) 이름을 Compose 파일명으로 설정하여 시각적 인지 향상
+                string sheetName = $"Compose ({Path.GetFileName(selectedFileName)})";
 
-                // 새 시트를 생성할 때 기본 로컬 프로필을 할당
-                var defaultProfile = new ConnectionProfile { Name = "Local PC", Type = EndpointType.Local };
-                var newSheet = new SheetViewModel(sheetName, defaultProfile, (IDockerService)containerService, dialogService);
+                // =================================================================
+                // 🔥 [보안 및 유연성 수정] 현재 활성화된 시트의 프로필(신분증)과 도커 서비스를 상속받음
+                // =================================================================
+                ConnectionProfile targetProfile;
+                IDockerService targetDockerService;
+
+                if (mainVm.ActiveSheet != null)
+                {
+                    // 현재 보고 있는 탭이 있다면 그 탭의 접속 정보(로컬이든 SSH든)를 그대로 사용
+                    targetProfile = mainVm.ActiveSheet.Profile;
+                    targetDockerService = mainVm.ActiveSheet.DockerService;
+                }
+                else
+                {
+                    // 열려있는 탭이 하나도 없을 때만 기본 로컬 환경으로 폴백(Fallback)
+                    targetProfile = new ConnectionProfile { Name = "Local PC", Type = EndpointType.Local };
+                    targetDockerService = (IDockerService)containerService; // 주입받은 기본 로컬 서비스
+                }
+
+                var newSheet = new SheetViewModel(sheetName, targetProfile, targetDockerService, dialogService);
+                // =================================================================
 
                 var nodeMap = new Dictionary<string, NodeViewModel>();
                 var groupMap = new Dictionary<string, GroupViewModel>();
@@ -210,7 +227,8 @@ namespace DockerDiagram.Helpers
 
                     var groupVm = new GroupViewModel(currentGroupX, currentGroupY, gWidth, gHeight, networkService, dialogService, netName, GroupType.Network)
                     {
-                        Id = Guid.NewGuid().ToString()
+                        Id = Guid.NewGuid().ToString(),
+                        ParentSheet = newSheet // 그룹이 소속된 시트를 명시적으로 할당
                     };
 
                     newSheet.Groups.Add(groupVm);
@@ -226,7 +244,7 @@ namespace DockerDiagram.Helpers
                         node.X = currentGroupX + 20 + (c * cellWidth);
                         node.Y = currentGroupY + 50 + (r * cellHeight);
 
-                        groupVm.AddNode(node, true);
+                        await groupVm.AddNodeAsync(node, isRestoring: true);
                     }
 
                     // 다음 그룹 배치를 위해 X좌표 이동
@@ -262,13 +280,12 @@ namespace DockerDiagram.Helpers
                 // =================================================================
                 // 4단계: 실제 도커 엔진에 배포(docker compose up)할지 묻는 프로세스
                 // =================================================================
-                var result = System.Windows.MessageBox.Show(
+                // 🔥 [MVVM 수정 2] 하드코딩된 MessageBox 제거 및 IDialogService 활용
+                bool isYes = dialogService.ShowConfirm(
                     $"[{sheetName}] 화면 구성을 완료했습니다.\n이 구성대로 실제 도커 엔진에 컨테이너들을 배포(실행)하시겠습니까?",
-                    "실제 도커 배포",
-                    System.Windows.MessageBoxButton.YesNo,
-                    System.Windows.MessageBoxImage.Question);
+                    "실제 도커 배포");
 
-                if (result == System.Windows.MessageBoxResult.Yes)
+                if (isYes)
                 {
                     var containerNodes = newSheet.Nodes.Where(n => n.Type == NodeType.Container).ToList();
                     foreach (var node in containerNodes) node.IsCreating = true; // UI에 로딩 스피너 표시용
@@ -279,12 +296,12 @@ namespace DockerDiagram.Helpers
                         var psi = new System.Diagnostics.ProcessStartInfo
                         {
                             FileName = "docker",
-                            Arguments = $"compose -f \"{dlg.FileName}\" up -d",
+                            Arguments = $"compose -f \"{selectedFileName}\" up -d",
                             RedirectStandardOutput = true,
                             RedirectStandardError = true,
                             UseShellExecute = false,
                             CreateNoWindow = true,
-                            WorkingDirectory = Path.GetDirectoryName(dlg.FileName)
+                            WorkingDirectory = Path.GetDirectoryName(selectedFileName)
                         };
 
                         using var process = new System.Diagnostics.Process { StartInfo = psi };
@@ -306,7 +323,9 @@ namespace DockerDiagram.Helpers
 
                         if (process.ExitCode == 0)
                         {
-                            var allContainers = await containerService.GetContainersAsync();
+                            // 배포 대상이 원격일 수도 있으므로, 동적으로 결정된 targetDockerService를 사용
+                            var containerSvc = (IContainerService)targetDockerService;
+                            var allContainers = await containerSvc.GetContainersAsync();
 
                             // 배포된 컨테이너들의 실제 ID를 매핑하여 상세 정보를 다시 불러옴
                             foreach (var node in containerNodes)
