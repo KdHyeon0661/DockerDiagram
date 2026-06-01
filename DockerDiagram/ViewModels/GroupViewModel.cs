@@ -25,6 +25,7 @@ namespace DockerDiagram.ViewModels
 
         private string _title = "Group";
         private bool _isSelected;
+        private bool _isDockerConnected = true;
         private int _zIndex;
         private double _x, _y, _width, _height;
 
@@ -36,13 +37,26 @@ namespace DockerDiagram.ViewModels
         #endregion
 
         #region Basic Properties
-        public string Id { get; set; } = string.Empty;
+        public string Id { get; set; } = Guid.NewGuid().ToString();
         public string Title { get => _title; set => SetProperty(ref _title, value); }
         public string Name => Title; // 인터페이스의 Name을 Group의 Title로 연결
         public GroupType Type { get; }
         public string Driver { get; set; } = "bridge"; // 네트워크 드라이버 정보
         public int ZIndex { get => _zIndex; set => SetProperty(ref _zIndex, value); }
         public bool IsSelected { get => _isSelected; set => SetProperty(ref _isSelected, value); }
+        public bool IsDockerConnected
+        {
+            get => _isDockerConnected;
+            set
+            {
+                if (SetProperty(ref _isDockerConnected, value))
+                {
+                    OnPropertyChanged(nameof(IsDockerDisconnected));
+                }
+            }
+        }
+
+        public bool IsDockerDisconnected => Type == GroupType.Network && !IsDockerConnected;
         #endregion
 
         #region Layout Properties
@@ -155,6 +169,7 @@ namespace DockerDiagram.ViewModels
 
             // 타입이 확정되었으니, 그에 맞는 옷(색상)을 입혀줍니다.
             UpdateAppearance();
+            IsDockerConnected = type != GroupType.Network ? true : false;
         }
         #endregion
 
@@ -179,6 +194,41 @@ namespace DockerDiagram.ViewModels
                 HeaderFontColor = "#333";
                 StrokeThickness = 2;
                 StrokeDashArray = new DoubleCollection { 4, 2 };
+            }
+        }
+
+        public async Task<bool> ReconnectDockerResourceAsync()
+        {
+            if (Type != GroupType.Network)
+            {
+                IsDockerConnected = true;
+                return true;
+            }
+
+            try
+            {
+                var networks = await _networkService.GetNetworksAsync();
+                var match = networks.FirstOrDefault(n => !string.IsNullOrWhiteSpace(Id) && n.Id == Id)
+                            ?? networks.FirstOrDefault(n => string.Equals(n.Name, Title, StringComparison.OrdinalIgnoreCase));
+
+                if (match == null)
+                {
+                    _dialogService.ShowInfo($"Docker에서 '{Title}' 네트워크를 찾지 못했습니다.", "Reconnect");
+                    IsDockerConnected = false;
+                    return false;
+                }
+
+                Id = match.Id;
+                Title = match.Name;
+                Driver = match.Driver;
+                IsDockerConnected = true;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                IsDockerConnected = false;
+                _dialogService.ShowError($"Reconnect 실패: {ex.Message}", "Reconnect");
+                return false;
             }
         }
         #endregion

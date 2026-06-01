@@ -9,14 +9,35 @@ namespace DockerDiagram.Helpers
     {
         public string? ContainerName { get; set; } // 명시적 컨테이너 이름 (container_name)
         public string? Image { get; set; } // 사용할 도커 이미지명 (image)
+        public object? Build { get; set; } // build 문자열 또는 context/dockerfile 등이 포함된 맵
         public string? Restart { get; set; } // 재시작 정책 (restart - 예: always, unless-stopped)
-        public List<string>? Ports { get; set; } // 호스트와 연결할 포트 매핑 목록 (ports)
-        public List<string>? Environment { get; set; } // 환경 변수 목록 (environment)
-        public List<string>? Volumes { get; set; } // 볼륨 마운트 목록 (volumes)
-        public List<string>? DependsOn { get; set; } // 실행 의존성 목록 (depends_on)
+        public object? Ports { get; set; } // 문자열 리스트 또는 long syntax 맵 목록
+        public object? Environment { get; set; } // 리스트 또는 key/value 맵
+        public object? Volumes { get; set; } // 문자열 리스트 또는 long syntax 맵 목록
+        public object? DependsOn { get; set; } // 리스트 또는 condition 맵
 
         // 정적 IP가 있으면 딕셔너리, 없으면 단순 문자열 리스트로 처리하기 위해 object 타입 사용 (networks)
         public object? Networks { get; set; }
+
+        public object? EnvFile { get; set; }
+        public object? Command { get; set; }
+        public object? Entrypoint { get; set; }
+        public object? Healthcheck { get; set; }
+        public object? Labels { get; set; }
+        public object? Expose { get; set; }
+        public object? ExtraHosts { get; set; }
+        public object? Dns { get; set; }
+        public string? Hostname { get; set; }
+        public string? User { get; set; }
+        public string? WorkingDir { get; set; }
+        public bool? Privileged { get; set; }
+        public object? CapAdd { get; set; }
+        public object? CapDrop { get; set; }
+        public object? Secrets { get; set; }
+        public object? Configs { get; set; }
+        public object? Profiles { get; set; }
+        public object? Deploy { get; set; }
+        public object? Logging { get; set; }
     }
 
     /// <summary>
@@ -60,5 +81,7 @@ namespace DockerDiagram.Helpers
         public Dictionary<string, ComposeService> Services { get; set; } = new(); // compose 파일의 'services' 블록
         public Dictionary<string, ComposeNetwork>? Networks { get; set; } // compose 파일의 'networks' 블록
         public Dictionary<string, object>? Volumes { get; set; } // compose 파일의 'volumes' 블록
+        public Dictionary<string, object>? Secrets { get; set; }
+        public Dictionary<string, object>? Configs { get; set; }
     }
 }

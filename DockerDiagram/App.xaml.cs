@@ -15,6 +15,7 @@ namespace DockerDiagram
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+            VolumeUndoBackupStore.CleanupOrphanBackups();
 
             IDialogService dialogService = new DialogService();
 
@@ -48,6 +49,8 @@ namespace DockerDiagram
         // 앱이 종료될 때 호출됨
         protected override void OnExit(ExitEventArgs e)
         {
+            VolumeUndoBackupStore.CleanupActiveBackups();
+
             foreach (var service in ActiveDockerServices)
             {
                 service?.Dispose();

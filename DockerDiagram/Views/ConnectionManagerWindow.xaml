@@ -1,0 +1,54 @@
+<Window x:Class="DockerDiagram.Views.ConnectionManagerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Connection Manager"
+        Width="720"
+        Height="420"
+        WindowStartupLocation="CenterOwner"
+        Background="#F6F7F8">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Connection Manager" FontSize="18" FontWeight="SemiBold" Foreground="#333" Margin="0,0,0,12"/>
+
+        <Border Grid.Row="1" Background="White" BorderBrush="#D8DDE3" BorderThickness="1">
+            <DataGrid x:Name="ConnectionGrid"
+                      AutoGenerateColumns="False"
+                      CanUserAddRows="False"
+                      CanUserDeleteRows="False"
+                      IsReadOnly="True"
+                      SelectionMode="Single"
+                      HeadersVisibility="Column"
+                      BorderThickness="0"
+                      GridLinesVisibility="Horizontal"
+                      SelectionChanged="ConnectionGrid_SelectionChanged">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" Width="180"/>
+                    <DataGridTextColumn Header="Type" Binding="{Binding KindLabel}" Width="80"/>
+                    <DataGridTextColumn Header="Host" Binding="{Binding HostSummary}" Width="*"/>
+                    <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="110"/>
+                    <DataGridTextColumn Header="Sheets" Binding="{Binding Sheets.Count}" Width="70"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+
+        <Grid Grid.Row="2" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Orientation="Horizontal">
+                <TextBox x:Name="txtConnectionName" Width="220" Padding="6" VerticalContentAlignment="Center"/>
+                <Button Content="Rename" Width="88" Margin="8,0,0,0" Click="Rename_Click"/>
+                <Button Content="Remove" Width="88" Margin="8,0,0,0" Foreground="#dc3545" Click="Remove_Click"/>
+            </StackPanel>
+
+            <Button Grid.Column="1" Content="Close" Width="88" Click="Close_Click"/>
+        </Grid>
+    </Grid>
+</Window>

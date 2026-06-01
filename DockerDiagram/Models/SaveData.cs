@@ -30,6 +30,7 @@ namespace DockerDiagram.Models
         public double OffsetX { get; set; } // 화면 가로 스크롤 위치
         public double OffsetY { get; set; } // 화면 세로 스크롤 위치
         public double Scale { get; set; } // 화면 확대/축소 비율
+        public string ComposeRawYaml { get; set; } = string.Empty; // Compose import 원본 YAML
 
         // --- 다이어그램 구성 요소 데이터 ---
         public List<NodeData> Nodes { get; set; } = new List<NodeData>(); // 시트 위에 배치된 모든 노드 목록
@@ -59,6 +60,8 @@ namespace DockerDiagram.Models
         public List<string> PortBindings { get; set; } = new List<string>(); // 포트 매핑 정보
         public List<string> EnvironmentVariables { get; set; } = new List<string>(); // 환경 변수 정보
         public string RestartPolicy { get; set; } = "no"; // 재시작 정책 (no, always 등)
+        public string ComposeServiceName { get; set; } = string.Empty; // 원본 compose service 키
+        public string ComposeRawServiceYaml { get; set; } = string.Empty; // 원본 service YAML
     }
 
     /// <summary>

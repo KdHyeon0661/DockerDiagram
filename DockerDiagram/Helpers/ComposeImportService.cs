@@ -44,6 +44,7 @@ namespace DockerDiagram.Helpers
                     .Build();
 
                 var composeData = deserializer.Deserialize<ComposeFileModel>(yamlContent);
+                var rawComposeRoot = ComposeYamlHelper.ParseMapping(yamlContent);
 
                 if (composeData == null || composeData.Services == null || composeData.Services.Count == 0)
                 {
@@ -73,8 +74,15 @@ namespace DockerDiagram.Helpers
                     targetDockerService = (IDockerService)containerService; // 주입받은 기본 로컬 서비스
                 }
 
-                var newSheet = new SheetViewModel(sheetName, targetProfile, targetDockerService, dialogService);
+                var newSheet = new SheetViewModel(sheetName, targetProfile, targetDockerService, dialogService)
+                {
+                    ComposeRawYaml = yamlContent
+                };
                 // =================================================================
+
+                var currentContainerSvc = (IContainerService)targetDockerService;
+                var currentVolumeSvc = (IVolumeService)targetDockerService;
+                var currentNetworkSvc = (INetworkService)targetDockerService;
 
                 var nodeMap = new Dictionary<string, NodeViewModel>();
                 var groupMap = new Dictionary<string, GroupViewModel>();
@@ -86,7 +94,7 @@ namespace DockerDiagram.Helpers
                 {
                     foreach (var vol in composeData.Volumes)
                     {
-                        nodeMap[vol.Key] = new NodeViewModel(containerService, volumeService, dialogService)
+                        nodeMap[vol.Key] = new NodeViewModel(currentContainerSvc, currentVolumeSvc, dialogService)
                         {
                             Id = Guid.NewGuid().ToString(),
                             Name = vol.Key,
@@ -100,17 +108,22 @@ namespace DockerDiagram.Helpers
 
                 foreach (var svc in composeData.Services)
                 {
-                    nodeMap[svc.Key] = new NodeViewModel(containerService, volumeService, dialogService)
+                    var portBindings = ComposeYamlHelper.ToPortBindingList(svc.Value.Ports);
+                    var envVars = ComposeYamlHelper.ToEnvironmentList(svc.Value.Environment);
+
+                    nodeMap[svc.Key] = new NodeViewModel(currentContainerSvc, currentVolumeSvc, dialogService)
                     {
                         Id = Guid.NewGuid().ToString(),
                         Name = !string.IsNullOrEmpty(svc.Value.ContainerName) ? svc.Value.ContainerName : svc.Key,
-                        ImageName = svc.Value.Image ?? "unknown-image",
+                        ImageName = svc.Value.Image ?? ComposeYamlHelper.GetBuildLabel(svc.Value.Build) ?? "unknown-image",
                         Type = NodeType.Container,
                         Width = 160,
                         Height = 80,
                         RestartPolicy = svc.Value.Restart ?? "no",
-                        PortBindings = svc.Value.Ports != null ? new List<string>(svc.Value.Ports) : new List<string>(),
-                        EnvironmentVariables = svc.Value.Environment != null ? new List<string>(svc.Value.Environment) : new List<string>()
+                        PortBindings = portBindings,
+                        EnvironmentVariables = envVars,
+                        ComposeServiceName = svc.Key,
+                        ComposeRawServiceYaml = ComposeYamlHelper.GetServiceYaml(rawComposeRoot, svc.Key)
                     };
                     newSheet.Nodes.Add(nodeMap[svc.Key]);
                 }
@@ -132,18 +145,20 @@ namespace DockerDiagram.Helpers
                 {
                     if (!nodeMap.TryGetValue(svc.Key, out var sourceContainer)) continue;
 
-                    string? primaryNet = null;
+                    var serviceNetworks = ComposeYamlHelper.ToNetworkNames(svc.Value.Networks);
+                    string? primaryNet = serviceNetworks.FirstOrDefault();
 
-                    // 네트워크 정보 파싱 (List 방식과 Dictionary 방식 모두 대응)
-                    if (svc.Value.Networks is List<object> netList && netList.Count > 0)
-                        primaryNet = netList[0].ToString();
-                    else if (svc.Value.Networks is Dictionary<object, object> netDict && netDict.Count > 0)
-                        primaryNet = netDict.Keys.First().ToString();
-
-                    if (primaryNet != null)
+                    if (serviceNetworks.Count > 0)
                     {
-                        if (!visualGroupMap.ContainsKey(primaryNet)) visualGroupMap[primaryNet] = new List<NodeViewModel>();
-                        visualGroupMap[primaryNet].Add(sourceContainer);
+                        foreach (var netName in serviceNetworks)
+                        {
+                            if (!visualGroupMap.ContainsKey(netName)) visualGroupMap[netName] = new List<NodeViewModel>();
+                            if (!visualGroupMap[netName].Contains(sourceContainer)) visualGroupMap[netName].Add(sourceContainer);
+
+                            var staticIp = ComposeYamlHelper.GetNetworkIpv4(svc.Value.Networks, netName);
+                            if (!string.IsNullOrWhiteSpace(staticIp))
+                                sourceContainer.NetworkIpMap[netName] = staticIp;
+                        }
                     }
                     else
                     {
@@ -151,21 +166,29 @@ namespace DockerDiagram.Helpers
                     }
 
                     // 볼륨 마운트 선 연결
-                    if (svc.Value.Volumes != null)
+                    var volumeMounts = ComposeYamlHelper.ToVolumeMounts(svc.Value.Volumes);
+                    if (volumeMounts.Count > 0)
                     {
-                        foreach (var volMapping in svc.Value.Volumes)
+                        foreach (var mount in volumeMounts)
                         {
-                            string volName = volMapping;
-                            string mountPath = "/data";
+                            string volName = mount.Source;
+                            string mountPath = mount.Target;
 
-                            int lastColon = volMapping.LastIndexOf(':');
-                            if (lastColon > 0 && lastColon != 1) // C:\ 같은 윈도우 경로 보호
+                            if (!nodeMap.TryGetValue(volName, out var targetVolume))
                             {
-                                volName = volMapping.Substring(0, lastColon);
-                                mountPath = volMapping.Substring(lastColon + 1);
+                                targetVolume = new NodeViewModel(currentContainerSvc, currentVolumeSvc, dialogService)
+                                {
+                                    Id = Guid.NewGuid().ToString(),
+                                    Name = volName,
+                                    Type = NodeType.Volume,
+                                    Width = 160,
+                                    Height = 80
+                                };
+                                nodeMap[volName] = targetVolume;
+                                newSheet.Nodes.Add(targetVolume);
                             }
 
-                            if (nodeMap.TryGetValue(volName, out var targetVolume))
+                            if (!newSheet.Connectors.Any(c => c.Source == sourceContainer && c.Target == targetVolume))
                             {
                                 newSheet.Connectors.Add(new ConnectorViewModel(sourceContainer, targetVolume, PortDirection.Bottom, PortDirection.Top, dialogService)
                                 {
@@ -184,9 +207,10 @@ namespace DockerDiagram.Helpers
                     }
 
                     // 의존성(depends_on) 선 연결
-                    if (svc.Value.DependsOn != null)
+                    var dependsOn = ComposeYamlHelper.ToDependsOnServiceNames(svc.Value.DependsOn);
+                    if (dependsOn.Count > 0)
                     {
-                        foreach (var dep in svc.Value.DependsOn)
+                        foreach (var dep in dependsOn)
                         {
                             if (nodeMap.TryGetValue(dep, out var targetContainer))
                             {
@@ -225,7 +249,7 @@ namespace DockerDiagram.Helpers
                     double gWidth = (cols * cellWidth) + 40;
                     double gHeight = (rows * cellHeight) + 60;
 
-                    var groupVm = new GroupViewModel(currentGroupX, currentGroupY, gWidth, gHeight, networkService, dialogService, netName, GroupType.Network)
+                    var groupVm = new GroupViewModel(currentGroupX, currentGroupY, gWidth, gHeight, currentNetworkSvc, dialogService, netName, GroupType.Network)
                     {
                         Id = Guid.NewGuid().ToString(),
                         ParentSheet = newSheet // 그룹이 소속된 시트를 명시적으로 할당
@@ -274,8 +298,7 @@ namespace DockerDiagram.Helpers
                     }
                 }
 
-                mainVm.Sheets.Add(newSheet);
-                mainVm.ActiveSheet = newSheet;
+                mainVm.SheetManager.AddExistingSheet(newSheet);
 
                 // =================================================================
                 // 4단계: 실제 도커 엔진에 배포(docker compose up)할지 묻는 프로세스

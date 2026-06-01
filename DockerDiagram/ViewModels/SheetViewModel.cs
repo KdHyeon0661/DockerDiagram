@@ -34,6 +34,7 @@ namespace DockerDiagram.ViewModels
         public string Title { get => _title; set => SetProperty(ref _title, value); } // 탭 등에 표시될 시트 이름
         public ConnectionProfile Profile { get; set; } // 현재 시트가 연결된 도커 접속 정보
         public IDockerService DockerService { get; set; } // 도커 엔진 통신 서비스
+        public string ComposeRawYaml { get; set; } = string.Empty; // Compose import 원본 보존용
         #endregion
 
         #region Map Data (Collections)
@@ -153,16 +154,19 @@ namespace DockerDiagram.ViewModels
                 nodeVm.ImageName = container.Image;
                 nodeVm.StatusColor = container.StateColor;
                 nodeVm.ContainerId = container.Id;
+                nodeVm.IsDockerConnected = !string.IsNullOrWhiteSpace(container.Id);
             }
             else if (nodeModel is DockerVolume volume)
             {
                 nodeVm.StatusColor = "#E67E22";
                 nodeVm.ContainerId = "";
+                nodeVm.IsDockerConnected = true;
             }
             else if (nodeModel is DockerInternet internet)
             {
                 nodeVm.StatusColor = "#E67E22";
                 nodeVm.ContainerId = "";
+                nodeVm.IsDockerConnected = true;
             }
 
             Nodes.Add(nodeVm);

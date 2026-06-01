@@ -101,14 +101,11 @@ namespace DockerDiagram.Views
 
                 if (isAlive)
                 {
-                    // [STEP 5] 성공! MainViewModel에 새 원격 시트 추가
-                    var newRemoteSheet = new SheetViewModel(profileName, remoteProfile, remoteDockerService, _dialogService);
-
-                    _mainVm.Sheets.Add(newRemoteSheet);
-                    _mainVm.ActiveSheet = newRemoteSheet; // 즉시 해당 탭으로 이동
+                    // [STEP 5] 성공! MainViewModel에 새 원격 접속 탭을 추가
 
                     // 앱 전역 서비스 리스트에 등록 (나중에 앱 끌 때 한꺼번에 닫기 위함)
                     App.ActiveDockerServices.Add(remoteDockerService);
+                    _mainVm.SheetManager.AddWorkspace(remoteProfile, remoteDockerService, activate: true, createInitialSheet: true);
 
                     _dialogService.ShowInfo($"'{profileName}' 서버에 연결되었습니다.", "연결 성공");
                     this.DialogResult = true;

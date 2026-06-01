@@ -64,11 +64,12 @@ namespace DockerDiagram.Helpers
             {
                 var fileData = new DiagramFile(); // 파일의 최상위 루트 껍데기 생성
 
+                var allSheets = mainVm.AllSheets.ToList();
                 if (mainVm.ActiveSheet != null)
-                    fileData.ActiveSheetIndex = mainVm.Sheets.IndexOf(mainVm.ActiveSheet);
+                    fileData.ActiveSheetIndex = allSheets.IndexOf(mainVm.ActiveSheet);
 
                 // 모든 시트(탭)를 순회하며 데이터 긁어모으기
-                foreach (var sheetVm in mainVm.Sheets)
+                foreach (var sheetVm in allSheets)
                 {
                     var sheetData = new SheetData
                     {
@@ -78,7 +79,8 @@ namespace DockerDiagram.Helpers
                         MapHeight = sheetVm.MapHeight,
                         OffsetX = sheetVm.OffsetX,
                         OffsetY = sheetVm.OffsetY,
-                        Scale = sheetVm.Scale
+                        Scale = sheetVm.Scale,
+                        ComposeRawYaml = sheetVm.ComposeRawYaml
                     };
 
                     // 시트 안의 모든 노드 정보 수집
@@ -97,7 +99,9 @@ namespace DockerDiagram.Helpers
                             Height = nodeVm.Height,
                             PortBindings = nodeVm.PortBindings ?? new List<string>(),
                             EnvironmentVariables = nodeVm.EnvironmentVariables ?? new List<string>(),
-                            RestartPolicy = nodeVm.RestartPolicy ?? "no"
+                            RestartPolicy = nodeVm.RestartPolicy ?? "no",
+                            ComposeServiceName = nodeVm.ComposeServiceName,
+                            ComposeRawServiceYaml = nodeVm.ComposeRawServiceYaml
                         });
                     }
 
@@ -198,7 +202,7 @@ namespace DockerDiagram.Helpers
 
                 if (fileData == null) return false;
 
-                foreach (var sheet in mainVm.Sheets)
+                foreach (var sheet in mainVm.AllSheets.ToList())
                 {
                     // 🔥 [핵심 수정] 이벤트 해제 권한이 SheetManager로 이관되었으므로, SheetManager를 통해 호출
                     mainVm.SheetManager.UnsubscribeSheetEvents(sheet);
@@ -221,7 +225,7 @@ namespace DockerDiagram.Helpers
                     }
                 }
 
-                mainVm.Sheets.Clear();
+                mainVm.SheetManager.ClearAllWorkspaces();
 
                 foreach (var sheetData in fileData.Sheets)
                 {
@@ -261,6 +265,7 @@ namespace DockerDiagram.Helpers
                     sheetVm.OffsetX = sheetData.OffsetX;
                     sheetVm.OffsetY = sheetData.OffsetY;
                     sheetVm.Scale = sheetData.Scale;
+                    sheetVm.ComposeRawYaml = sheetData.ComposeRawYaml ?? string.Empty;
 
                     var itemMap = new Dictionary<string, IConnectableItem>(); // 노드와 선을 엮기 위한 임시 딕셔너리
 
@@ -287,6 +292,8 @@ namespace DockerDiagram.Helpers
                             PortBindings = nodeData.PortBindings ?? new List<string>(),
                             EnvironmentVariables = nodeData.EnvironmentVariables ?? new List<string>(),
                             RestartPolicy = nodeData.RestartPolicy ?? "no",
+                            ComposeServiceName = nodeData.ComposeServiceName ?? string.Empty,
+                            ComposeRawServiceYaml = nodeData.ComposeRawServiceYaml ?? string.Empty,
                             StatusColor = "#808080" // 초기 색상은 회색(Unkown)으로 고정, 이후 실시간 갱신됨
                         };
 
@@ -346,13 +353,18 @@ namespace DockerDiagram.Helpers
                         }
                     }
 
-                    mainVm.Sheets.Add(sheetVm); // 완성된 시트를 화면에 추가
+                    mainVm.SheetManager.AddExistingSheet(sheetVm, activate: false); // 완성된 시트를 접속 탭 아래에 추가
                 }
 
                 // 저장할 때 보고 있던 탭(ActiveSheet)으로 다시 포커스 이동
-                if (mainVm.Sheets.Count > 0 && fileData.ActiveSheetIndex < mainVm.Sheets.Count)
+                var restoredSheets = mainVm.AllSheets.ToList();
+                if (restoredSheets.Count > 0 && fileData.ActiveSheetIndex < restoredSheets.Count)
                 {
-                    mainVm.ActiveSheet = mainVm.Sheets[fileData.ActiveSheetIndex];
+                    mainVm.ActiveSheet = restoredSheets[fileData.ActiveSheetIndex];
+                }
+                else if (restoredSheets.Count == 0)
+                {
+                    mainVm.SheetManager.AddSheet();
                 }
 
                 return true;

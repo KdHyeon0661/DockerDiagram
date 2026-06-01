@@ -119,6 +119,7 @@ namespace DockerDiagram.ViewModels
                 _rawImages = await ((IImageService)service).GetImagesAsync();
 
                 UpdateAvailableItems();
+                UpdateDiagramConnectionStates();
                 LastSyncTime = $"Last updated: {DateTime.Now:HH:mm:ss}";
             }
             catch (Exception ex)
@@ -181,6 +182,52 @@ namespace DockerDiagram.ViewModels
                 .Where(i => string.IsNullOrEmpty(ImageSearchText) || i.Repository.Contains(ImageSearchText, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             SyncCollection(LocalImages, filteredImages, i => i.Id);
+        }
+
+        public void UpdateDiagramConnectionStates()
+        {
+            if (_mainVm.Sheets == null) return;
+
+            var containerIds = _rawContainers
+                .Where(c => !string.IsNullOrWhiteSpace(c.Id))
+                .Select(c => c.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var volumeNames = _rawVolumes
+                .Where(v => !string.IsNullOrWhiteSpace(v.Name))
+                .Select(v => v.Name)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var networkIds = _rawNetworks
+                .Where(n => !string.IsNullOrWhiteSpace(n.Id))
+                .Select(n => n.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var networkNames = _rawNetworks
+                .Where(n => !string.IsNullOrWhiteSpace(n.Name))
+                .Select(n => n.Name)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var sheet in _mainVm.Sheets)
+            {
+                foreach (var node in sheet.Nodes)
+                {
+                    node.IsDockerConnected = node.Type switch
+                    {
+                        NodeType.Container => !string.IsNullOrWhiteSpace(node.ContainerId) && containerIds.Contains(node.ContainerId),
+                        NodeType.Volume => volumeNames.Contains(node.Name),
+                        NodeType.Internet => true,
+                        _ => false
+                    };
+                }
+
+                foreach (var group in sheet.Groups)
+                {
+                    group.IsDockerConnected = group.Type != GroupType.Network ||
+                                              (!string.IsNullOrWhiteSpace(group.Id) && networkIds.Contains(group.Id)) ||
+                                              networkNames.Contains(group.Title);
+                }
+            }
         }
 
         // --- 💡 여기서부터 생략되었던 핵심 삭제/통신 로직들입니다! ---

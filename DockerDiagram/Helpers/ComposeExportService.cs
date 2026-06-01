@@ -57,8 +57,8 @@ namespace DockerDiagram.Helpers
         /// </summary>
         private static string GenerateYaml(SheetViewModel sheet)
         {
-            // 1. YAML 변환용 최상위 객체 생성
-            var composeFile = new ComposeFileModel();
+            // 1. import 원본이 있으면 그 구조를 바탕으로 시작해, 아직 UI가 직접 편집하지 않는 Compose 필드를 보존합니다.
+            var composeRoot = ComposeYamlHelper.ToMutableRootMap(sheet.ComposeRawYaml);
 
             var nodeIdToServiceName = new Dictionary<string, string>();
             var usedServiceNames = new HashSet<string>();
@@ -67,7 +67,9 @@ namespace DockerDiagram.Helpers
             // 서비스 이름 확정 (중복 방지 매핑)
             foreach (var node in containerNodes)
             {
-                string baseName = SanitizeServiceName(node.Name);
+                string baseName = !string.IsNullOrWhiteSpace(node.ComposeServiceName)
+                    ? SanitizeServiceName(node.ComposeServiceName)
+                    : SanitizeServiceName(node.Name);
                 string uniqueName = EnsureUniqueName(baseName, usedServiceNames);
 
                 usedServiceNames.Add(uniqueName);
@@ -75,27 +77,39 @@ namespace DockerDiagram.Helpers
             }
 
             // 2. Services 생성
+            var services = new Dictionary<object, object>();
             foreach (var node in containerNodes)
             {
                 string serviceName = nodeIdToServiceName[node.Id];
-                var service = new ComposeService
-                {
-                    ContainerName = SanitizeContainerName(node.Name),
-                    Image = !string.IsNullOrWhiteSpace(node.ImageName) ? node.ImageName : "nginx:latest"
-                };
+                var service = ComposeYamlHelper.ToMutableServiceMap(node.ComposeRawServiceYaml);
 
-                if (!string.IsNullOrEmpty(node.RestartPolicy) && node.RestartPolicy != "no")
-                    service.Restart = node.RestartPolicy;
+                ComposeYamlHelper.SetValue(service, "container_name", SanitizeContainerName(node.Name));
 
-                if (node.PortBindings != null && node.PortBindings.Count > 0)
-                    service.Ports = new List<string>(node.PortBindings);
+                bool hasBuild = ComposeYamlHelper.HasKey(service, "build");
+                bool hasImage = ComposeYamlHelper.HasKey(service, "image");
+                bool imageLooksSynthetic = string.IsNullOrWhiteSpace(node.ImageName)
+                    || node.ImageName == "unknown-image"
+                    || node.ImageName.StartsWith("build:", StringComparison.OrdinalIgnoreCase);
 
-                if (node.EnvironmentVariables != null && node.EnvironmentVariables.Count > 0)
-                    service.Environment = new List<string>(node.EnvironmentVariables);
+                if (!imageLooksSynthetic)
+                    ComposeYamlHelper.SetValue(service, "image", node.ImageName);
+                else if (!hasBuild && !hasImage)
+                    ComposeYamlHelper.SetValue(service, "image", "nginx:latest");
+
+                if (!ComposeYamlHelper.HasKey(service, "restart") &&
+                    !string.IsNullOrEmpty(node.RestartPolicy) &&
+                    node.RestartPolicy != "no")
+                    ComposeYamlHelper.SetValue(service, "restart", node.RestartPolicy);
+
+                if (!ComposeYamlHelper.HasKey(service, "ports") && node.PortBindings != null && node.PortBindings.Count > 0)
+                    ComposeYamlHelper.SetValue(service, "ports", new List<string>(node.PortBindings));
+
+                if (!ComposeYamlHelper.HasKey(service, "environment") && node.EnvironmentVariables != null && node.EnvironmentVariables.Count > 0)
+                    ComposeYamlHelper.SetValue(service, "environment", new List<string>(node.EnvironmentVariables));
 
                 var connectedVolumes = GetConnectedVolumes(node, sheet);
-                if (connectedVolumes.Count > 0)
-                    service.Volumes = connectedVolumes;
+                if (!ComposeYamlHelper.HasKey(service, "volumes") && connectedVolumes.Count > 0)
+                    ComposeYamlHelper.SetValue(service, "volumes", connectedVolumes);
 
                 // 의존성(depends_on) 정보 세팅
                 var depConns = sheet.Connectors
@@ -103,66 +117,60 @@ namespace DockerDiagram.Helpers
                                 c.Target is NodeViewModel tNode && tNode.Type == NodeType.Container)
                     .ToList();
 
-                if (depConns.Count > 0)
+                if (!ComposeYamlHelper.HasKey(service, "depends_on") && depConns.Count > 0)
                 {
-                    service.DependsOn = new List<string>();
+                    var dependsOn = new List<string>();
                     foreach (var conn in depConns)
                     {
                         if (nodeIdToServiceName.TryGetValue(conn.Target.Id, out string? depServiceName))
-                            service.DependsOn.Add(depServiceName);
+                            dependsOn.Add(depServiceName);
                     }
+                    ComposeYamlHelper.SetValue(service, "depends_on", dependsOn);
                 }
 
                 // 네트워크 정보 조회 및 세팅
                 var connectedNets = GetConnectedNetworks(node, sheet);
-                if (connectedNets.Count > 0)
+                if (!ComposeYamlHelper.HasKey(service, "networks") && connectedNets.Count > 0)
                 {
-                    // 정적 IP가 하나라도 있으면 Dictionary 방식, 없으면 List 방식 사용
-                    bool hasStaticIp = connectedNets.Any(n => !string.IsNullOrEmpty(n.IpAddress) && IsValidIp(n.IpAddress));
-
-                    if (hasStaticIp)
-                    {
-                        var netDict = new Dictionary<string, ComposeServiceNetwork>();
-                        foreach (var net in connectedNets)
-                        {
-                            var netConfig = new ComposeServiceNetwork();
-                            if (!string.IsNullOrEmpty(net.IpAddress) && IsValidIp(net.IpAddress))
-                                netConfig.Ipv4Address = net.IpAddress;
-                            netDict[net.NetworkName!] = netConfig;
-                        }
-                        service.Networks = netDict;
-                    }
-                    else
-                    {
-                        service.Networks = connectedNets.Select(n => n.NetworkName!).ToList();
-                    }
+                    ComposeYamlHelper.SetValue(service, "networks", BuildServiceNetworks(connectedNets));
                 }
 
-                composeFile.Services[serviceName] = service;
+                services[serviceName] = service;
             }
 
-            // 3. Networks 생성
+            composeRoot["services"] = services;
+
+            // 3. Networks 생성. 원본 네트워크 설정(driver/options/ipam/labels 등)은 보존하고, 새 그룹만 추가합니다.
             var networkGroups = sheet.Groups.Where(g => g.Type == GroupType.Network).ToList();
             if (networkGroups.Any())
             {
-                composeFile.Networks = new Dictionary<string, ComposeNetwork>();
+                var networks = ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(composeRoot, "networks"))
+                    ?? new Dictionary<object, object>();
+
                 foreach (var netGroup in networkGroups)
                 {
-                    var netObj = new ComposeNetwork { Driver = "bridge" };
+                    if (ComposeYamlHelper.HasKey(networks, netGroup.Title)) continue;
+
+                    var netObj = new Dictionary<object, object> { ["driver"] = "bridge" };
 
                     string? generatedSubnet = GetSubnetIfRequired(netGroup.Title, containerNodes);
                     if (!string.IsNullOrEmpty(generatedSubnet))
                     {
-                        netObj.Ipam = new ComposeIpam
+                        netObj["ipam"] = new Dictionary<object, object>
                         {
-                            Config = new List<ComposeIpamConfig> { new ComposeIpamConfig { Subnet = generatedSubnet } }
+                            ["config"] = new List<object>
+                            {
+                                new Dictionary<object, object> { ["subnet"] = generatedSubnet }
+                            }
                         };
                     }
-                    composeFile.Networks[netGroup.Title] = netObj;
+                    networks[netGroup.Title] = netObj;
                 }
+
+                composeRoot["networks"] = networks;
             }
 
-            // 4. Volumes 생성
+            // 4. Volumes 생성. 원본 볼륨 설정(driver/driver_opts/external/labels 등)은 보존합니다.
             var volumes = sheet.Nodes.Where(n => n.Type == NodeType.Volume).ToList();
             var namedVolumes = volumes.Where(vol =>
                 !(vol.Name.StartsWith("/") || vol.Name.StartsWith("./") || vol.Name.StartsWith("../") ||
@@ -170,20 +178,23 @@ namespace DockerDiagram.Helpers
 
             if (namedVolumes.Any())
             {
-                composeFile.Volumes = new Dictionary<string, object>();
+                var volumeMap = ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(composeRoot, "volumes"))
+                    ?? new Dictionary<object, object>();
+
                 foreach (var vol in namedVolumes)
                 {
-                    composeFile.Volumes[vol.Name] = new object(); // 빈 객체 {} 생성
+                    if (!ComposeYamlHelper.HasKey(volumeMap, vol.Name))
+                        volumeMap[vol.Name] = new Dictionary<object, object>(); // 빈 객체 {} 생성
                 }
+                composeRoot["volumes"] = volumeMap;
             }
 
             // 5. YamlDotNet을 이용해 C# 객체를 YAML 문자열로 직렬화(Serialize)
             var serializer = new SerializerBuilder()
-                .WithNamingConvention(UnderscoredNamingConvention.Instance) // ContainerName -> container_name 자동 변환
                 .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull | DefaultValuesHandling.OmitEmptyCollections) // 비어있는 리스트나 null은 출력 안함
                 .Build();
 
-            return serializer.Serialize(composeFile);
+            return serializer.Serialize(composeRoot);
         }
 
         // --- 헬퍼 메서드들 ---
@@ -249,6 +260,24 @@ namespace DockerDiagram.Helpers
                 list.Add(volumeMapping);
             }
             return list;
+        }
+
+        private static object BuildServiceNetworks(List<NetworkInfo> connectedNets)
+        {
+            bool hasStaticIp = connectedNets.Any(n => !string.IsNullOrEmpty(n.IpAddress) && IsValidIp(n.IpAddress));
+            if (!hasStaticIp)
+                return connectedNets.Select(n => n.NetworkName!).ToList();
+
+            var netDict = new Dictionary<object, object>();
+            foreach (var net in connectedNets)
+            {
+                var netConfig = new Dictionary<object, object>();
+                if (!string.IsNullOrEmpty(net.IpAddress) && IsValidIp(net.IpAddress))
+                    netConfig["ipv4_address"] = net.IpAddress;
+
+                netDict[net.NetworkName!] = netConfig;
+            }
+            return netDict;
         }
 
         private class NetworkInfo { public string? NetworkName; public string? IpAddress; }

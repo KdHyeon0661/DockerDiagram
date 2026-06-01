@@ -45,6 +45,7 @@ namespace DockerDiagram.ViewModels
         private double _height = 80;
         private bool _isSelected;
         private bool _isCreating = false;
+        private bool _isDockerConnected = false;
         private bool _isRunning;
         private bool _isPaused;
 
@@ -223,6 +224,8 @@ namespace DockerDiagram.ViewModels
         public string ImageName { get; set; } = string.Empty;
         public string PortInfo { get; set; } = string.Empty;
         public string Id { get; set; } = Guid.NewGuid().ToString();
+        public string ComposeServiceName { get; set; } = string.Empty;
+        public string ComposeRawServiceYaml { get; set; } = string.Empty;
 
         /// <summary>
         /// 도커 엔진에서 발급한 실제 컨테이너(또는 볼륨)의 고유 해시 ID입니다.
@@ -256,9 +259,25 @@ namespace DockerDiagram.ViewModels
                 if (SetProperty(ref _isCreating, value))
                 {
                     StatusColor = value ? "#FFC107" : "#28a745";
+                    OnPropertyChanged(nameof(IsDockerDisconnected));
                 }
             }
         }
+
+        public bool IsDockerConnected
+        {
+            get => _isDockerConnected;
+            set
+            {
+                if (SetProperty(ref _isDockerConnected, value))
+                {
+                    OnPropertyChanged(nameof(IsDockerDisconnected));
+                    RaiseCommandStates();
+                }
+            }
+        }
+
+        public bool IsDockerDisconnected => Type != NodeType.Internet && !IsCreating && !IsDockerConnected;
 
         /// <summary>
         /// 실제 도커 컨테이너가 현재 실행 중(Running)인지 여부를 나타냅니다. 
@@ -412,15 +431,15 @@ namespace DockerDiagram.ViewModels
             BackupVolumeCommand = new AsyncRelayCommand(ExecuteBackupVolumeAsync, _ => Type == NodeType.Volume);
             RestoreVolumeCommand = new AsyncRelayCommand(ExecuteRestoreVolumeAsync, _ => Type == NodeType.Volume);
 
-            StartCommand = new AsyncRelayCommand(_ => ControlAction("start"), _ => Type == NodeType.Container && !IsRunning);
-            StopCommand = new AsyncRelayCommand(_ => ControlAction("stop"), _ => Type == NodeType.Container && IsRunning);
-            PauseCommand = new AsyncRelayCommand(_ => ControlAction("pause"), _ => Type == NodeType.Container && (IsRunning || IsPaused));
-            RestartCommand = new AsyncRelayCommand(_ => ControlAction("restart"), _ => Type == NodeType.Container);
+            StartCommand = new AsyncRelayCommand(_ => ControlAction("start"), _ => Type == NodeType.Container && IsDockerConnected && !IsRunning);
+            StopCommand = new AsyncRelayCommand(_ => ControlAction("stop"), _ => Type == NodeType.Container && IsDockerConnected && IsRunning);
+            PauseCommand = new AsyncRelayCommand(_ => ControlAction("pause"), _ => Type == NodeType.Container && IsDockerConnected && (IsRunning || IsPaused));
+            RestartCommand = new AsyncRelayCommand(_ => ControlAction("restart"), _ => Type == NodeType.Container && IsDockerConnected);
 
-            UpdateResourcesCommand = new AsyncRelayCommand(ExecuteUpdateResourcesAsync, _ => Type == NodeType.Container);
+            UpdateResourcesCommand = new AsyncRelayCommand(ExecuteUpdateResourcesAsync, _ => Type == NodeType.Container && IsDockerConnected);
 
-            TerminalCommand = new RelayCommand(_ => OpenTerminal(), _ => Type == NodeType.Container && IsRunning);
-            ExtractDockerfileCommand = new AsyncRelayCommand(_ => ExtractDockerfileAsync(), _ => Type == NodeType.Container);
+            TerminalCommand = new RelayCommand(_ => OpenTerminal(), _ => Type == NodeType.Container && IsDockerConnected && IsRunning);
+            ExtractDockerfileCommand = new AsyncRelayCommand(_ => ExtractDockerfileAsync(), _ => Type == NodeType.Container && IsDockerConnected);
 
             ToggleNetworkModeCommand = new RelayCommand(_ => {
                 NetworkDisplayMode = (NetworkDisplayMode + 1) % 3;
@@ -430,8 +449,8 @@ namespace DockerDiagram.ViewModels
                 VolumeDisplayMode = (VolumeDisplayMode + 1) % 2;
             });
 
-            OpenDetailWindowCommand = new AsyncRelayCommand(_ => OpenDetailWindowAsync(), _ => Type == NodeType.Container);
-            RefreshLogsCommand = new AsyncRelayCommand(_ => LoadLogsAsync(), _ => Type == NodeType.Container);
+            OpenDetailWindowCommand = new AsyncRelayCommand(_ => OpenDetailWindowAsync(), _ => Type == NodeType.Container && IsDockerConnected);
+            RefreshLogsCommand = new AsyncRelayCommand(_ => LoadLogsAsync(), _ => Type == NodeType.Container && IsDockerConnected);
 
             CopyLogsCommand = new RelayCommand(_ => {
                 if (!string.IsNullOrEmpty(ContainerLogs))
@@ -519,15 +538,24 @@ namespace DockerDiagram.ViewModels
         public async Task RefreshDetailsAsync()
         {
             if (string.IsNullOrEmpty(Name)) return;
-            if (Type == NodeType.Internet) return;
+            if (Type == NodeType.Internet)
+            {
+                IsDockerConnected = true;
+                return;
+            }
 
             try
             {
                 if (Type == NodeType.Container)
                 {
-                    if (string.IsNullOrEmpty(ContainerId)) return;
+                    if (string.IsNullOrEmpty(ContainerId))
+                    {
+                        IsDockerConnected = false;
+                        return;
+                    }
 
                     var info = await _containerService.InspectContainerAsync(ContainerId);
+                    IsDockerConnected = true;
 
                     // =====================================================================
                     // ★ 도커 엔진(Daemon) 기준 실제 스펙 및 현재 할당값 동기화 ★
@@ -750,6 +778,7 @@ namespace DockerDiagram.ViewModels
                 else if (Type == NodeType.Volume)
                 {
                     var vol = await _volumeService.InspectVolumeAsync(Name);
+                    IsDockerConnected = true;
 
                     DetailStatus = "Created";
                     Driver = vol.Driver;
@@ -780,10 +809,71 @@ namespace DockerDiagram.ViewModels
             {
                 System.Diagnostics.Debug.WriteLine($"Refresh Error: {ex.Message}");
                 DetailStatus = "Error";
+                IsDockerConnected = false;
                 IsRunning = false;
                 IsPaused = false;
                 CommandManager.InvalidateRequerySuggested();
             }
+        }
+
+        public async Task<bool> ReconnectDockerResourceAsync()
+        {
+            try
+            {
+                if (Type == NodeType.Internet)
+                {
+                    IsDockerConnected = true;
+                    return true;
+                }
+
+                if (Type == NodeType.Container)
+                {
+                    var containers = await _containerService.GetContainersAsync();
+                    var match = containers.FirstOrDefault(c => !string.IsNullOrWhiteSpace(ContainerId) && c.Id == ContainerId)
+                                ?? containers.FirstOrDefault(c => string.Equals(c.Name, Name, StringComparison.OrdinalIgnoreCase));
+
+                    if (match == null)
+                    {
+                        _dialogService.ShowInfo($"Docker에서 '{Name}' 컨테이너를 찾지 못했습니다.", "Reconnect");
+                        IsDockerConnected = false;
+                        return false;
+                    }
+
+                    ContainerId = match.Id;
+                    Name = match.Name;
+                    ImageName = match.Image;
+                    PortInfo = match.Ports;
+                    StatusColor = match.StateColor;
+                    IsDockerConnected = true;
+                    await RefreshDetailsAsync();
+                    return true;
+                }
+
+                if (Type == NodeType.Volume)
+                {
+                    var volumes = await _volumeService.GetVolumesAsync();
+                    var match = volumes.FirstOrDefault(v => string.Equals(v.Name, Name, StringComparison.OrdinalIgnoreCase));
+
+                    if (match == null)
+                    {
+                        _dialogService.ShowInfo($"Docker에서 '{Name}' 볼륨을 찾지 못했습니다.", "Reconnect");
+                        IsDockerConnected = false;
+                        return false;
+                    }
+
+                    Name = match.Name;
+                    IsDockerConnected = true;
+                    await RefreshDetailsAsync();
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                IsDockerConnected = false;
+                _dialogService.ShowError($"Reconnect 실패: {ex.Message}", "Reconnect");
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -947,6 +1037,13 @@ namespace DockerDiagram.ViewModels
             PauseCommand?.RaiseCanExecuteChanged();
             RestartCommand?.RaiseCanExecuteChanged();
             TerminalCommand?.RaiseCanExecuteChanged();
+            if (UpdateResourcesCommand is AsyncRelayCommand updateResourcesCommand)
+                updateResourcesCommand.RaiseCanExecuteChanged();
+            ExtractDockerfileCommand?.RaiseCanExecuteChanged();
+            if (OpenDetailWindowCommand is AsyncRelayCommand openDetailWindowCommand)
+                openDetailWindowCommand.RaiseCanExecuteChanged();
+            if (RefreshLogsCommand is AsyncRelayCommand refreshLogsCommand)
+                refreshLogsCommand.RaiseCanExecuteChanged();
         }
 
         private void Connectors_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)

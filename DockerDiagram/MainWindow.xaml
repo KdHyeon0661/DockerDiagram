@@ -467,6 +467,12 @@
                                             <Ellipse Style="{StaticResource ResizeHandleStyle}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,-6,0" Cursor="SizeWE" Tag="Right" MouseLeftButtonDown="Resize_MouseDown"/>
                                         </Grid>
 
+                                        <Grid Panel.ZIndex="95" IsHitTestVisible="False"
+                                              Visibility="{Binding IsDockerDisconnected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <TextBlock Text="X" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       FontSize="72" FontWeight="Black" Foreground="#D32F2F" Opacity="0.85"/>
+                                        </Grid>
+
                                         <Grid x:Name="CanvasGroupPortGrid" Opacity="1.0" Visibility="Hidden" Panel.ZIndex="100">
                                             <Grid.Resources>
                                                 <Style TargetType="Border" BasedOn="{StaticResource ArrowPortStyle}"/>
@@ -626,6 +632,12 @@
                                                     </Border>
                                                 </Grid>
                                             </Border>
+                                        </Grid>
+
+                                        <Grid Panel.ZIndex="95" IsHitTestVisible="False"
+                                              Visibility="{Binding IsDockerDisconnected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <TextBlock Text="X" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       FontSize="54" FontWeight="Black" Foreground="#D32F2F" Opacity="0.85"/>
                                         </Grid>
 
                                         <Grid x:Name="PortGrid" Opacity="1.0" Visibility="Hidden" Panel.ZIndex="100">
@@ -930,6 +942,17 @@
                                 </Button.ContentTemplate>
                             </Button>
                             <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
+                            <CheckBox IsChecked="{Binding History.IncludeDockerResourceHistory, Mode=TwoWay}"
+                                      Margin="12,7,8,7"
+                                      ToolTip="체크하면 컨테이너/볼륨/네트워크 생성과 삭제도 Undo/Redo 스택에 저장합니다.">
+                                <TextBlock Text="Undo Docker create/delete" FontSize="12" Foreground="#333"/>
+                            </CheckBox>
+                            <CheckBox IsChecked="{Binding History.IncludeVolumeBackupForUndo, Mode=TwoWay}"
+                                      Margin="12,0,8,7"
+                                      ToolTip="볼륨 삭제 전에 임시 tar 백업을 만들어 Undo 때 데이터를 복원합니다.">
+                                <TextBlock Text="Backup volumes before Undo" FontSize="12" Foreground="#333"/>
+                            </CheckBox>
+                            <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
                             <Button Command="{Binding Toolbox.SystemPruneCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="사용 안 하는 컨테이너/이미지/볼륨/네트워크 일괄 삭제">
                                 <Button.ContentTemplate>
                                     <DataTemplate>
@@ -989,6 +1012,22 @@
                     </Border>
                 </Popup>
             </StackPanel>
+
+            <Border HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,10,0,0"
+                    Background="#F8FFFFFF" BorderBrush="#CCCCCC" BorderThickness="1" CornerRadius="4" Padding="6,3">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Command="{Binding History.UndoCommand}" Width="30" Height="24" Margin="0,0,6,0"
+                            Background="Transparent" BorderBrush="#DDDDDD" ToolTip="Undo">
+                        <TextBlock Text="↶" FontSize="16" Foreground="#333" HorizontalAlignment="Center"/>
+                    </Button>
+                    <TextBlock Text="{Binding History.StatusText}" MinWidth="190" FontSize="11" Foreground="#555"
+                               VerticalAlignment="Center" TextAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <Button Command="{Binding History.RedoCommand}" Width="30" Height="24" Margin="6,0,0,0"
+                            Background="Transparent" BorderBrush="#DDDDDD" ToolTip="Redo">
+                        <TextBlock Text="↷" FontSize="16" Foreground="#333" HorizontalAlignment="Center"/>
+                    </Button>
+                </StackPanel>
+            </Border>
         </Grid>
 
         <Border Grid.Column="1" Grid.Row="0" Grid.RowSpan="2" Width="300" HorizontalAlignment="Right" Background="White" 
@@ -1025,7 +1064,15 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <ContentControl Content="{Binding Inspector.SelectedElement}" Grid.Row="1">
+                <Border Grid.Row="0" Background="#FFF1F0" BorderBrush="#D32F2F" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,10"
+                        Visibility="{Binding Inspector.IsSelectedDockerDisconnected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <StackPanel>
+                        <TextBlock Text="Docker connection lost" FontWeight="Bold" Foreground="#B71C1C"/>
+                        <TextBlock Text="Reconnect or delete this diagram item." FontSize="11" Foreground="#7F1D1D" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <ContentControl Content="{Binding Inspector.SelectedElement}" Grid.Row="1" IsEnabled="{Binding Inspector.IsSelectedDockerConnected}">
                     <ContentControl.Resources>
                         <DataTemplate DataType="{x:Type vm:ConnectorViewModel}">
                             <Grid Margin="5">
@@ -1644,7 +1691,10 @@
                     </ContentControl.Resources>
                 </ContentControl>
 
-                <UniformGrid Grid.Row="2" Rows="1" Columns="2" VerticalAlignment="Bottom" Height="35" Margin="0,10,0,0">
+                <UniformGrid Grid.Row="2" Rows="1" Columns="3" VerticalAlignment="Bottom" Height="35" Margin="0,10,0,0">
+                    <Button Content="Reconnect" Background="#007ACC" Foreground="White" BorderThickness="0" Margin="0,0,5,0"
+                            Command="{Binding Inspector.ReconnectCommand}"
+                            Visibility="{Binding Inspector.IsSelectedDockerDisconnected, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                     <Button Content="Delete" Background="#dc3545" Foreground="White" BorderThickness="0" Margin="0,0,5,0" Command="{Binding Inspector.DeleteCommand}"/>
                     <Button Content="Close" Margin="5,0,0,0" Command="{Binding Inspector.ClosePanelCommand}"/>
                 </UniformGrid>
@@ -1666,11 +1716,14 @@
                         <Button x:Name="BtnScrollRight" Click="ScrollRight_Click" ToolTip="Scroll Right" Style="{StaticResource NavButtonStyle}">
                             <Path Data="{StaticResource NextIcon}" Fill="#555" Width="10" Height="10" Stretch="Uniform"/>
                         </Button>
-                        <Button Command="{Binding SheetManager.AddSheetCommand}" ToolTip="Add New Sheet" Style="{StaticResource NavButtonStyle}">
+                        <Button Click="AddContextButton_Click" ToolTip="Add connection or sheet" Style="{StaticResource NavButtonStyle}">
                             <Path Data="{StaticResource PlusIcon}" Fill="#555" Width="12" Height="12" Stretch="Uniform"/>
                         </Button>
                         <Button Click="SheetMenuButton_Click" ToolTip="Sheet List" Style="{StaticResource NavButtonStyle}">
                             <Path Data="{StaticResource MenuIcon}" Fill="#555" Width="12" Height="12" Stretch="Uniform"/>
+                        </Button>
+                        <Button Click="ConnectionManagerButton_Click" ToolTip="Connection Manager" Style="{StaticResource NavButtonStyle}">
+                            <Path Data="{StaticResource GearIcon}" Fill="#555" Width="12" Height="12" Stretch="Uniform"/>
                         </Button>
                         <Popup x:Name="SheetMenuPopup" StaysOpen="False" Placement="Top">
                             <Border Background="White" BorderBrush="#999" BorderThickness="1" MaxHeight="300" MinWidth="150">
@@ -1687,7 +1740,69 @@
                 <ScrollViewer x:Name="TabScrollViewer" Grid.Column="1" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" BorderThickness="0" Padding="0" 
                               ScrollChanged="TabScrollViewer_ScrollChanged"
                               SizeChanged="TabScrollViewer_SizeChanged">
-                    <ListBox x:Name="SheetListBox" ItemsSource="{Binding SheetManager.Sheets}" SelectedItem="{Binding SheetManager.ActiveSheet}"
+                    <Grid>
+                        <ListBox x:Name="WorkspaceListBox"
+                         ItemsSource="{Binding SheetManager.Workspaces}"
+                         SelectedItem="{Binding SheetManager.ActiveWorkspace, Mode=TwoWay}"
+                         Visibility="{Binding SheetManager.IsWorkspaceLayer, Converter={StaticResource BooleanToVisibilityConverter}}"
+                         PreviewMouseLeftButtonUp="WorkspaceListBox_MouseLeftButtonUp"
+                         Background="Transparent" BorderThickness="0"
+                         ScrollViewer.CanContentScroll="False">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal"/>
+                                </ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="Padding" Value="0"/>
+                                    <Setter Property="Margin" Value="0"/>
+                                    <Setter Property="BorderThickness" Value="0"/>
+                                    <Setter Property="Background" Value="Transparent"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ListBoxItem">
+                                                <Border x:Name="WorkspaceTabBorder" Background="Transparent" BorderBrush="#ccc" BorderThickness="0,0,1,0" Padding="15,5" MinWidth="120" Cursor="Hand">
+                                                    <Border.ContextMenu>
+                                                        <ContextMenu>
+                                                            <MenuItem Header="이름 바꾸기" Click="RenameWorkspace_Click"/>
+                                                            <MenuItem Header="삭제" Click="DeleteWorkspace_Click" Foreground="#dc3545"/>
+                                                        </ContextMenu>
+                                                    </Border.ContextMenu>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding KindLabel}" FontSize="10" FontWeight="Bold" Foreground="#777" Margin="0,0,7,0"/>
+                                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" Foreground="#333" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsSelected" Value="True">
+                                                        <Setter TargetName="WorkspaceTabBorder" Property="Background" Value="White"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="WorkspaceTabBorder" Property="Background" Value="#F2F2F2"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.Template>
+                                <ControlTemplate TargetType="ListBox">
+                                    <ItemsPresenter />
+                                </ControlTemplate>
+                            </ListBox.Template>
+                        </ListBox>
+
+                        <StackPanel x:Name="SheetLayerPanel" Orientation="Horizontal" Visibility="{Binding SheetManager.IsSheetLayer, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Button Click="WorkspaceCrumb_Click" Background="White" BorderBrush="#ccc" BorderThickness="0,0,1,0" Padding="15,5" MinWidth="120" Cursor="Hand">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding SheetManager.ActiveWorkspace.KindLabel}" FontSize="10" FontWeight="Bold" Foreground="#777" Margin="0,0,7,0"/>
+                                    <TextBlock Text="{Binding SheetManager.ActiveWorkspace.DisplayName}" FontWeight="SemiBold" Foreground="#333" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </Button>
+
+                            <ListBox x:Name="SheetListBox" ItemsSource="{Binding SheetManager.Sheets}" SelectedItem="{Binding SheetManager.ActiveSheet}"
                              Background="Transparent" BorderThickness="0"
                              ScrollViewer.CanContentScroll="False"
                              PreviewMouseLeftButtonDown="SheetTab_PreviewMouseLeftButtonDown"
@@ -1745,7 +1860,9 @@
                                 <ItemsPresenter />
                             </ControlTemplate>
                         </ListBox.Template>
-                    </ListBox>
+                            </ListBox>
+                        </StackPanel>
+                    </Grid>
                 </ScrollViewer>
             </Grid>
         </Border>
@@ -1753,7 +1870,7 @@
         <Grid x:Name="RenameOverlay" Visibility="Collapsed" Background="#80000000" Grid.RowSpan="2" Grid.ColumnSpan="2" Panel.ZIndex="200">
             <Border Background="White" Width="300" Height="150" CornerRadius="5" VerticalAlignment="Center" HorizontalAlignment="Center">
                 <StackPanel Margin="20">
-                    <TextBlock Text="Rename Sheet" FontWeight="Bold" FontSize="16" Margin="0,0,0,15"/>
+                    <TextBlock x:Name="txtRenameTitle" Text="Rename Sheet" FontWeight="Bold" FontSize="16" Margin="0,0,0,15"/>
                     <TextBox x:Name="txtRename" Padding="5" Margin="0,0,0,15"/>
                     <UniformGrid Rows="1" Columns="2">
                         <Button Content="OK" Background="#007ACC" Foreground="White" Padding="5" Margin="0,0,5,0" Click="RenameOK_Click"/>

@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
@@ -10,16 +11,63 @@ using DockerDiagram.Models;
 namespace DockerDiagram.ViewModels
 {
     /// <summary>
-    /// 멀티 탭(Sheet) 관리, 파일 입출력(Save/Load), 그리고 캔버스의 변경 상태(IsModified) 감시를 전담하는 Sub-ViewModel입니다.
+    /// 접속 대상(Local/SSH)별 상위 탭과, 각 접속 대상 안의 맵/시트 탭을 함께 관리합니다.
+    /// 기존 화면의 ActiveSheet 중심 바인딩은 유지해 캔버스 로직과의 결합을 최소화합니다.
     /// </summary>
     public class SheetManagerViewModel : ViewModelBase
     {
         private readonly MainViewModel _mainVm;
         private readonly IDockerService _defaultDockerService;
         private readonly IDialogService _dialogService;
+        private readonly ObservableCollection<SheetViewModel> _emptySheets = new();
 
         // --- 1. 상태 및 데이터 ---
-        public ObservableCollection<SheetViewModel> Sheets { get; } = new();
+        public ObservableCollection<ConnectionWorkspaceViewModel> Workspaces { get; } = new();
+
+        private ConnectionWorkspaceViewModel? _activeWorkspace;
+        private bool _isWorkspaceLayer = true;
+
+        public bool IsWorkspaceLayer
+        {
+            get => _isWorkspaceLayer;
+            set
+            {
+                if (SetProperty(ref _isWorkspaceLayer, value))
+                {
+                    OnPropertyChanged(nameof(IsSheetLayer));
+                }
+            }
+        }
+
+        public bool IsSheetLayer => !IsWorkspaceLayer;
+
+        public ConnectionWorkspaceViewModel? ActiveWorkspace
+        {
+            get => _activeWorkspace;
+            set
+            {
+                if (SetProperty(ref _activeWorkspace, value))
+                {
+                    OnPropertyChanged(nameof(Sheets));
+                    ActiveSheet = _activeWorkspace?.ActiveSheet ?? _activeWorkspace?.Sheets.FirstOrDefault();
+                    _mainVm.Explorer?.UpdateAvailableItems();
+                }
+            }
+        }
+
+        public void EnterWorkspace(ConnectionWorkspaceViewModel workspace)
+        {
+            ActiveWorkspace = workspace;
+            IsWorkspaceLayer = false;
+        }
+
+        public void ShowWorkspaceLayer()
+        {
+            IsWorkspaceLayer = true;
+        }
+
+        public ObservableCollection<SheetViewModel> Sheets => ActiveWorkspace?.Sheets ?? _emptySheets;
+        public IEnumerable<SheetViewModel> AllSheets => Workspaces.SelectMany(w => w.Sheets);
 
         private SheetViewModel? _activeSheet;
         public SheetViewModel? ActiveSheet
@@ -27,12 +75,26 @@ namespace DockerDiagram.ViewModels
             get => _activeSheet;
             set
             {
+                if (value != null)
+                {
+                    var owner = FindWorkspaceContaining(value);
+                    if (owner != null && owner != ActiveWorkspace)
+                    {
+                        ActiveWorkspace = owner;
+                    }
+                }
+
                 if (_activeSheet != null) UnsubscribeSheetEvents(_activeSheet);
 
                 _activeSheet = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(MapWidth));
                 OnPropertyChanged(nameof(MapHeight));
+
+                if (_activeSheet != null && ActiveWorkspace != null && ActiveWorkspace.Sheets.Contains(_activeSheet))
+                {
+                    ActiveWorkspace.ActiveSheet = _activeSheet;
+                }
 
                 if (_mainVm.Inspector != null) _mainVm.Inspector.ClearSelection();
 
@@ -157,8 +219,7 @@ namespace DockerDiagram.ViewModels
 
         public async Task RestoreLiveStateAsync()
         {
-            if (Sheets == null) return;
-            foreach (var sheet in Sheets)
+            foreach (var sheet in AllSheets)
             {
                 foreach (var node in sheet.Nodes)
                 {
@@ -183,22 +244,92 @@ namespace DockerDiagram.ViewModels
         // --- 4. 탭(Sheet) 관리 로직 ---
         public void AddSheet()
         {
-            var defaultProfile = new ConnectionProfile { Name = "Local PC", Type = EndpointType.Local };
-            var newSheet = new SheetViewModel($"Sheet {Sheets.Count + 1}", defaultProfile, _defaultDockerService, _dialogService);
-            Sheets.Add(newSheet);
-            ActiveSheet = newSheet;
+            var workspace = ActiveWorkspace ?? EnsureLocalWorkspace();
+            AddSheetToWorkspace(workspace, $"Sheet {workspace.Sheets.Count + 1}", activate: true);
+        }
+
+        public ConnectionWorkspaceViewModel AddWorkspace(ConnectionProfile profile, IDockerService dockerService, bool activate = true, bool createInitialSheet = true)
+        {
+            var existing = FindWorkspaceByProfile(profile);
+            if (existing != null)
+            {
+                if (dockerService != existing.DockerService && dockerService != _defaultDockerService)
+                {
+                    App.ActiveDockerServices.Remove(dockerService);
+                    dockerService.Dispose();
+                }
+
+                if (activate) ActiveWorkspace = existing;
+                return existing;
+            }
+
+            var workspace = new ConnectionWorkspaceViewModel(profile, dockerService);
+            Workspaces.Add(workspace);
+
+            if (createInitialSheet)
+            {
+                AddSheetToWorkspace(workspace, "Sheet 1", activate: false);
+            }
+
+            if (activate)
+            {
+                ActiveWorkspace = workspace;
+            }
+
+            return workspace;
+        }
+
+        public void AddExistingSheet(SheetViewModel sheet, bool activate = true)
+        {
+            var workspace = FindWorkspaceByProfile(sheet.Profile);
+            if (workspace == null)
+            {
+                workspace = new ConnectionWorkspaceViewModel(sheet.Profile, sheet.DockerService);
+                Workspaces.Add(workspace);
+            }
+
+            workspace.Sheets.Add(sheet);
+            workspace.ActiveSheet ??= sheet;
+
+            if (activate)
+            {
+                ActiveWorkspace = workspace;
+                ActiveSheet = sheet;
+            }
+
+            OnPropertyChanged(nameof(Sheets));
+        }
+
+        private SheetViewModel AddSheetToWorkspace(ConnectionWorkspaceViewModel workspace, string title, bool activate)
+        {
+            var newSheet = new SheetViewModel(title, workspace.Profile, workspace.DockerService, _dialogService);
+            workspace.Sheets.Add(newSheet);
+            workspace.ActiveSheet = newSheet;
+
+            if (activate)
+            {
+                ActiveWorkspace = workspace;
+                ActiveSheet = newSheet;
+            }
+
+            OnPropertyChanged(nameof(Sheets));
+            return newSheet;
         }
 
         public void DeleteSheet(SheetViewModel sheet)
         {
-            if (Sheets.Count <= 1) return;
+            var workspace = FindWorkspaceContaining(sheet);
+            if (workspace == null || workspace.Sheets.Count <= 1) return;
+
             if (ActiveSheet == sheet)
             {
-                int index = Sheets.IndexOf(sheet);
+                int index = workspace.Sheets.IndexOf(sheet);
                 int nextIndex = index > 0 ? index - 1 : index + 1;
-                ActiveSheet = Sheets[nextIndex];
+                ActiveSheet = workspace.Sheets[nextIndex];
             }
-            Sheets.Remove(sheet);
+
+            workspace.Sheets.Remove(sheet);
+            OnPropertyChanged(nameof(Sheets));
         }
 
         private void NavigateSheet(int direction)
@@ -213,7 +344,7 @@ namespace DockerDiagram.ViewModels
         {
             if (_dialogService.ShowConfirm("모든 시트를 삭제하시겠습니까?", "Delete All Sheet"))
             {
-                Sheets.Clear();
+                ClearAllWorkspaces();
                 AddSheet();
             }
         }
@@ -277,6 +408,100 @@ namespace DockerDiagram.ViewModels
         public void RenameSheet(SheetViewModel sheet, string newName)
         {
             if (sheet != null && !string.IsNullOrWhiteSpace(newName)) sheet.Title = newName;
+        }
+
+        public void RenameWorkspace(ConnectionWorkspaceViewModel workspace, string newName)
+        {
+            if (workspace == null || string.IsNullOrWhiteSpace(newName)) return;
+
+            string trimmed = newName.Trim();
+            workspace.DisplayName = trimmed;
+            workspace.Profile.Name = trimmed;
+            foreach (var sheet in workspace.Sheets)
+            {
+                sheet.Profile.Name = trimmed;
+            }
+            MarkAsModified();
+        }
+
+        public bool RemoveWorkspace(ConnectionWorkspaceViewModel workspace)
+        {
+            if (workspace == null || workspace.Profile.Type == EndpointType.Local || Workspaces.Count <= 1)
+                return false;
+
+            foreach (var sheet in workspace.Sheets.ToList())
+            {
+                UnsubscribeSheetEvents(sheet);
+            }
+
+            if (workspace.Profile.Type == EndpointType.SshRemote && !string.IsNullOrWhiteSpace(workspace.Profile.HostIp))
+            {
+                SshTunnelManager.ReleaseTunnel(
+                    workspace.Profile.HostIp,
+                    workspace.Profile.SshPort,
+                    workspace.Profile.SshUsername ?? "root"
+                );
+            }
+
+            if (workspace.DockerService != _defaultDockerService)
+            {
+                App.ActiveDockerServices.Remove(workspace.DockerService);
+                workspace.DockerService.Dispose();
+            }
+
+            bool wasActive = ActiveWorkspace == workspace;
+            Workspaces.Remove(workspace);
+
+            if (wasActive)
+            {
+                ActiveWorkspace = Workspaces.FirstOrDefault();
+                ActiveSheet = ActiveWorkspace?.ActiveSheet ?? ActiveWorkspace?.Sheets.FirstOrDefault();
+            }
+
+            OnPropertyChanged(nameof(Sheets));
+            MarkAsModified();
+            return true;
+        }
+
+        public void ClearAllWorkspaces()
+        {
+            foreach (var sheet in AllSheets.ToList())
+            {
+                UnsubscribeSheetEvents(sheet);
+            }
+
+            Workspaces.Clear();
+            _activeWorkspace = null;
+            ActiveSheet = null;
+            OnPropertyChanged(nameof(ActiveWorkspace));
+            OnPropertyChanged(nameof(Sheets));
+        }
+
+        private ConnectionWorkspaceViewModel EnsureLocalWorkspace()
+        {
+            var localProfile = new ConnectionProfile { Name = "Local PC", Type = EndpointType.Local };
+            return AddWorkspace(localProfile, _defaultDockerService, activate: true, createInitialSheet: false);
+        }
+
+        private ConnectionWorkspaceViewModel? FindWorkspaceContaining(SheetViewModel sheet)
+        {
+            return Workspaces.FirstOrDefault(w => w.Sheets.Contains(sheet));
+        }
+
+        private ConnectionWorkspaceViewModel? FindWorkspaceByProfile(ConnectionProfile profile)
+        {
+            return Workspaces.FirstOrDefault(w => IsSameProfile(w.Profile, profile));
+        }
+
+        private static bool IsSameProfile(ConnectionProfile left, ConnectionProfile right)
+        {
+            if (left.Type != right.Type) return false;
+            if (left.Type == EndpointType.Local) return true;
+
+            return string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(left.HostIp, right.HostIp, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(left.SshUsername, right.SshUsername, StringComparison.OrdinalIgnoreCase)
+                && left.SshPort == right.SshPort;
         }
 
         private void Node_OnModified(object? sender, EventArgs e) => MarkAsModified();

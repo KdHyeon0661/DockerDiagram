@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -19,6 +20,7 @@ namespace DockerDiagram.ViewModels
         // 커맨드
         public ICommand ClosePanelCommand { get; }
         public ICommand DeleteCommand { get; }
+        public AsyncRelayCommand ReconnectCommand { get; }
 
         public InspectorViewModel(MainViewModel mainVm, IDialogService dialogService)
         {
@@ -27,6 +29,7 @@ namespace DockerDiagram.ViewModels
 
             ClosePanelCommand = new RelayCommand(_ => ClearSelection());
             DeleteCommand = new AsyncRelayCommand(_ => DeleteSelectedAsync());
+            ReconnectCommand = new AsyncRelayCommand(_ => ReconnectSelectedAsync(), _ => IsSelectedDockerDisconnected);
         }
 
         // 캔버스 위에서 현재 선택된 요소(노드, 선, 그룹 등)
@@ -38,9 +41,16 @@ namespace DockerDiagram.ViewModels
             {
                 if (_selectedElement == value) return;
 
+                if (_selectedElement is INotifyPropertyChanged oldNotify)
+                    oldNotify.PropertyChanged -= SelectedElement_PropertyChanged;
+
                 _selectedElement = value;
+                if (_selectedElement is INotifyPropertyChanged newNotify)
+                    newNotify.PropertyChanged += SelectedElement_PropertyChanged;
+
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(IsDetailPanelOpen));
+                RaiseSelectionStateChanged();
 
                 // 1. 활성 시트 내의 시각적 선택 상태(IsSelected) 동기화
                 if (_mainVm.ActiveSheet != null)
@@ -53,15 +63,57 @@ namespace DockerDiagram.ViewModels
                 // 2. 노드가 선택되었다면, 상세 정보(Inspect)를 비동기로 갱신.
                 if (_selectedElement is NodeViewModel nodeVm)
                 {
-                    _ = nodeVm.RefreshDetailsAsync();
+                    if (nodeVm.IsDockerConnected)
+                        _ = nodeVm.RefreshDetailsAsync();
                 }
             }
         }
 
         // 상세 정보 사이드 패널의 열림/닫힘 상태
         public bool IsDetailPanelOpen => _selectedElement != null;
+        public bool IsSelectedDockerDisconnected => SelectedElement switch
+        {
+            NodeViewModel node => node.IsDockerDisconnected,
+            GroupViewModel group => group.IsDockerDisconnected,
+            _ => false
+        };
+        public bool IsSelectedDockerConnected => !IsSelectedDockerDisconnected;
 
         public void ClearSelection() => SelectedElement = null;
+
+        private void SelectedElement_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(NodeViewModel.IsDockerConnected) ||
+                e.PropertyName == nameof(NodeViewModel.IsDockerDisconnected) ||
+                e.PropertyName == nameof(GroupViewModel.IsDockerConnected) ||
+                e.PropertyName == nameof(GroupViewModel.IsDockerDisconnected))
+            {
+                RaiseSelectionStateChanged();
+            }
+        }
+
+        private void RaiseSelectionStateChanged()
+        {
+            OnPropertyChanged(nameof(IsSelectedDockerDisconnected));
+            OnPropertyChanged(nameof(IsSelectedDockerConnected));
+            ReconnectCommand?.RaiseCanExecuteChanged();
+        }
+
+        private async Task ReconnectSelectedAsync()
+        {
+            bool reconnected = SelectedElement switch
+            {
+                NodeViewModel node => await node.ReconnectDockerResourceAsync(),
+                GroupViewModel group => await group.ReconnectDockerResourceAsync(),
+                _ => false
+            };
+
+            if (reconnected)
+            {
+                _mainVm.Explorer.UpdateAvailableItems();
+                RaiseSelectionStateChanged();
+            }
+        }
 
         /// <summary>
         /// 선택된 요소(선, 컨테이너, 볼륨, 네트워크 그룹 등)를 삭제합니다.
@@ -84,7 +136,7 @@ namespace DockerDiagram.ViewModels
             {
                 if (conn.RelationType == RelationType.Dependency)
                 {
-                    sheet.Connectors.Remove(conn);
+                    await _mainVm.History.ExecuteAndRecordAsync(_mainVm.CreateConnectorDeleteCommand(sheet, conn));
                 }
                 else if (conn.RelationType == RelationType.VolumeMount)
                 {
@@ -106,12 +158,12 @@ namespace DockerDiagram.ViewModels
                         }
                         else
                         {
-                            sheet.Connectors.Remove(conn);
+                            await _mainVm.History.ExecuteAndRecordAsync(_mainVm.CreateConnectorDeleteCommand(sheet, conn));
                         }
                     }
                     else
                     {
-                        sheet.Connectors.Remove(conn);
+                        await _mainVm.History.ExecuteAndRecordAsync(_mainVm.CreateConnectorDeleteCommand(sheet, conn));
                     }
                 }
                 _mainVm.IsModified = true;
@@ -124,8 +176,21 @@ namespace DockerDiagram.ViewModels
             {
                 if (node.Type == NodeType.Internet)
                 {
-                    await sheet.RemoveNodeAsync(node);
-                    _mainVm.IsModified = true;
+                    await _mainVm.History.ExecuteAndRecordAsync(_mainVm.CreateNodeDeleteCommand(sheet, node, deleteDocker: false));
+                    SelectedElement = null;
+                    return;
+                }
+
+                if (node.IsDockerDisconnected)
+                {
+                    if (!_dialogService.ShowConfirm(
+                            $"'{node.Name}'은(는) 현재 Docker와 연결되어 있지 않습니다.\n다이어그램에서만 삭제하시겠습니까?",
+                            "끊긴 항목 삭제"))
+                    {
+                        return;
+                    }
+
+                    await _mainVm.History.ExecuteAndRecordAsync(_mainVm.CreateNodeDeleteCommand(sheet, node, deleteDocker: false));
                     SelectedElement = null;
                     return;
                 }
@@ -139,31 +204,8 @@ namespace DockerDiagram.ViewModels
 
                 if (result == System.Windows.MessageBoxResult.Cancel) return;
 
-                if (result == System.Windows.MessageBoxResult.Yes)
-                {
-                    if (!string.IsNullOrEmpty(node.ContainerId) || node.Type == NodeType.Volume)
-                    {
-                        try
-                        {
-                            if (node.Type == NodeType.Container)
-                            {
-                                await containerService.RemoveContainerAsync(node.ContainerId);
-                            }
-                            else if (node.Type == NodeType.Volume)
-                            {
-                                await volumeService.RemoveVolumeAsync(node.Name);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _dialogService.ShowError($"Docker 리소스 삭제 실패: {ex.Message}\n\n목록에서 제거되지 않습니다.", "삭제 실패");
-                            return;
-                        }
-                    }
-                }
-
-                await sheet.RemoveNodeAsync(node);
-                _mainVm.IsModified = true;
+                await _mainVm.History.ExecuteAndRecordAsync(
+                    _mainVm.CreateNodeDeleteCommand(sheet, node, deleteDocker: result == System.Windows.MessageBoxResult.Yes));
             }
 
             // =========================================================
@@ -171,38 +213,45 @@ namespace DockerDiagram.ViewModels
             // =========================================================
             else if (SelectedElement is GroupViewModel group)
             {
-                if (group.Type == GroupType.Network)
+                if (group.IsDockerDisconnected)
                 {
-                    try
+                    if (!_dialogService.ShowConfirm(
+                            $"'{group.Title}' 네트워크는 현재 Docker와 연결되어 있지 않습니다.\n다이어그램에서만 삭제하시겠습니까?",
+                            "끊긴 항목 삭제"))
                     {
-                        await networkService.RemoveNetworkAsync(group.Title);
-                    }
-                    catch (Exception ex)
-                    {
-                        _dialogService.ShowError($"네트워크 삭제 실패: {ex.Message}", "삭제 실패");
                         return;
                     }
+
+                    await _mainVm.History.ExecuteAndRecordAsync(_mainVm.CreateGroupDeleteCommand(sheet, group, deleteDocker: false));
+                    SelectedElement = null;
+                    return;
                 }
 
-                if (group.ContainedNodes != null)
-                {
-                    foreach (var childNode in group.ContainedNodes.ToList())
-                    {
-                        childNode.X += group.X;
-                        childNode.Y += group.Y;
-                        sheet.Nodes.Add(childNode);
-                    }
-                }
-
-                var relatedConnectors = sheet.Connectors
-                    .Where(c => c.Source == (IConnectableItem)group || c.Target == (IConnectableItem)group).ToList();
-                foreach (var c in relatedConnectors) sheet.Connectors.Remove(c);
-
-                sheet.Groups.Remove(group);
-                _mainVm.IsModified = true;
+                await _mainVm.History.ExecuteAndRecordAsync(
+                    _mainVm.CreateGroupDeleteCommand(sheet, group, deleteDocker: group.Type == GroupType.Network));
             }
 
             SelectedElement = null;
+        }
+
+        private static void RemoveGroupFromSheetOnly(SheetViewModel sheet, GroupViewModel group)
+        {
+            if (group.ContainedNodes != null)
+            {
+                foreach (var childNode in group.ContainedNodes.ToList())
+                {
+                    childNode.X += group.X;
+                    childNode.Y += group.Y;
+                    if (!sheet.Nodes.Contains(childNode))
+                        sheet.Nodes.Add(childNode);
+                }
+            }
+
+            var relatedConnectors = sheet.Connectors
+                .Where(c => c.Source == (IConnectableItem)group || c.Target == (IConnectableItem)group).ToList();
+            foreach (var c in relatedConnectors) sheet.Connectors.Remove(c);
+
+            sheet.Groups.Remove(group);
         }
 
         private async Task<bool> UnmountVolumeFromContainerAsync(NodeViewModel containerNode, NodeViewModel volumeNode, IContainerService containerService)

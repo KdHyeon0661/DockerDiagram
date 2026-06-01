@@ -32,6 +32,7 @@ namespace DockerDiagram
         private bool _isNodeDragging = false;
         private Point _nodeClickOffset; // 마우스 커서와 노드 좌상단 간의 거리 보정값
         private FrameworkElement? _draggedNodeElement = null;
+        private Rect _nodeDragStartRect;
 
         // 컨테이너 포트 간 선(Connector)을 직접 그을 때 사용하는 상태 변수들
         private bool _isConnecting = false;
@@ -57,6 +58,7 @@ namespace DockerDiagram
         private bool _isSheetDragging = false;
         private bool _isClickedOnTab = false;
         private SheetViewModel? _renamingSheet;
+        private ConnectionWorkspaceViewModel? _renamingWorkspace;
 
         // 탭 스크롤 좌우 이동 거리 상수
         private const double SCROLL_OFFSET = 400.0;
@@ -70,6 +72,7 @@ namespace DockerDiagram
         private bool _isGroupMoving = false;
         private GroupViewModel? _movingGroup = null;
         private Point _groupClickOffset;
+        private Rect _groupMoveStartRect;
 
         // --- 3. 재연결(Reconnection) 관련 변수 ---
         // 이미 그어진 선(Connector)의 끝점을 잡고 다른 곳으로 연결을 옮길 때 사용하는 상태 변수들
@@ -250,6 +253,45 @@ namespace DockerDiagram
         {
             double newOffset = Math.Min(TabScrollViewer.ScrollableWidth, TabScrollViewer.HorizontalOffset + SCROLL_OFFSET);
             TabScrollViewer.ScrollToHorizontalOffset(newOffset);
+        }
+
+        private void AddContextButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (ViewModel.SheetManager.IsWorkspaceLayer)
+            {
+                BtnSettings_Click(sender, e);
+            }
+            else
+            {
+                ViewModel.SheetManager.AddSheet();
+            }
+        }
+
+        private void WorkspaceListBox_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            var hit = VisualTreeHelper.HitTest(WorkspaceListBox, e.GetPosition(WorkspaceListBox))?.VisualHit;
+            var item = FindParent<ListBoxItem>(hit, _ => true);
+            if (item?.DataContext is ConnectionWorkspaceViewModel workspace)
+            {
+                ViewModel.SheetManager.EnterWorkspace(workspace);
+                TabScrollViewer.ScrollToHorizontalOffset(0);
+                e.Handled = true;
+            }
+        }
+
+        private void WorkspaceCrumb_Click(object sender, RoutedEventArgs e)
+        {
+            ViewModel.SheetManager.ShowWorkspaceLayer();
+            TabScrollViewer.ScrollToHorizontalOffset(0);
+        }
+
+        private void ConnectionManagerButton_Click(object sender, RoutedEventArgs e)
+        {
+            var window = new Views.ConnectionManagerWindow(ViewModel, _dialogService)
+            {
+                Owner = this
+            };
+            window.ShowDialog();
         }
 
         private void TabScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e) => UpdateScrollButtonsState();
@@ -791,6 +833,11 @@ namespace DockerDiagram
                 // 2. 그룹 이동 종료
                 if (_isGroupMoving)
                 {
+                    if (_movingGroup != null && DataContext is MainViewModel vm)
+                    {
+                        var after = new Rect(_movingGroup.X, _movingGroup.Y, _movingGroup.Width, _movingGroup.Height);
+                        vm.RecordGroupRectChange(_movingGroup, _groupMoveStartRect, after, $"Move group {_movingGroup.Title}");
+                    }
                     _isGroupMoving = false;
                     Mouse.Capture(null);
                     _movingGroup = null;
@@ -819,6 +866,11 @@ namespace DockerDiagram
                                     await group.RemoveNodeAsync(nodeVm);
                                 }
                             }
+                        }
+                        if (DataContext is MainViewModel historyVm)
+                        {
+                            var after = new Rect(nodeVm.X, nodeVm.Y, nodeVm.Width, nodeVm.Height);
+                            historyVm.RecordNodeRectChange(nodeVm, _nodeDragStartRect, after, $"Move node {nodeVm.Name}");
                         }
                         _draggedNodeElement.ReleaseMouseCapture();
                     }
@@ -863,6 +915,14 @@ namespace DockerDiagram
                     {
                         var vm = DataContext as MainViewModel;
                         vm?.ActiveSheet?.UpdateGroupLayering();
+                        var after = new Rect(_resizingGroup.X, _resizingGroup.Y, _resizingGroup.Width, _resizingGroup.Height);
+                        vm?.RecordGroupRectChange(_resizingGroup, _resizeStartGroupRect, after, $"Resize group {_resizingGroup.Title}");
+                    }
+                    else if (_resizingNode != null)
+                    {
+                        var vm = DataContext as MainViewModel;
+                        var after = new Rect(_resizingNode.X, _resizingNode.Y, _resizingNode.Width, _resizingNode.Height);
+                        vm?.RecordNodeRectChange(_resizingNode, _resizeStartNodeRect, after, $"Resize node {_resizingNode.Name}");
                     }
 
                     _resizingNode = null;
@@ -921,6 +981,7 @@ namespace DockerDiagram
                 _isGroupMoving = true;
                 Point mouseWorld = GetWorldPosition(e);
                 _groupClickOffset = new Point(mouseWorld.X - _movingGroup.X, mouseWorld.Y - _movingGroup.Y);
+                _groupMoveStartRect = new Rect(_movingGroup.X, _movingGroup.Y, _movingGroup.Width, _movingGroup.Height);
                 border.CaptureMouse();
                 e.Handled = true;
             }
@@ -1035,7 +1096,26 @@ namespace DockerDiagram
             if (border?.DataContext is SheetViewModel sheet)
             {
                 _renamingSheet = sheet;
+                _renamingWorkspace = null;
+                txtRenameTitle.Text = "Rename Sheet";
                 txtRename.Text = sheet.Title;
+                RenameOverlay.Visibility = Visibility.Visible;
+                txtRename.Focus();
+                txtRename.SelectAll();
+            }
+        }
+
+        private void RenameWorkspace_Click(object sender, RoutedEventArgs e)
+        {
+            var menuItem = sender as MenuItem;
+            var contextMenu = menuItem?.Parent as ContextMenu;
+            var border = contextMenu?.PlacementTarget as FrameworkElement;
+            if (border?.DataContext is ConnectionWorkspaceViewModel workspace)
+            {
+                _renamingWorkspace = workspace;
+                _renamingSheet = null;
+                txtRenameTitle.Text = "Rename Connection";
+                txtRename.Text = workspace.DisplayName;
                 RenameOverlay.Visibility = Visibility.Visible;
                 txtRename.Focus();
                 txtRename.SelectAll();
@@ -1047,13 +1127,21 @@ namespace DockerDiagram
         /// </summary>
         private void RenameOK_Click(object sender, RoutedEventArgs e)
         {
-            if (_renamingSheet != null && !string.IsNullOrWhiteSpace(txtRename.Text))
+            if (!string.IsNullOrWhiteSpace(txtRename.Text))
             {
-                // 🔥 [수정] SheetManager 부서에게 이름 변경을 지시합니다.
-                (DataContext as MainViewModel)?.SheetManager.RenameSheet(_renamingSheet, txtRename.Text.Trim());
+                var sheetManager = (DataContext as MainViewModel)?.SheetManager;
+                if (_renamingSheet != null)
+                {
+                    sheetManager?.RenameSheet(_renamingSheet, txtRename.Text.Trim());
+                }
+                else if (_renamingWorkspace != null)
+                {
+                    sheetManager?.RenameWorkspace(_renamingWorkspace, txtRename.Text.Trim());
+                }
             }
             RenameOverlay.Visibility = Visibility.Collapsed;
             _renamingSheet = null;
+            _renamingWorkspace = null;
         }
 
         /// <summary>
@@ -1063,6 +1151,7 @@ namespace DockerDiagram
         {
             RenameOverlay.Visibility = Visibility.Collapsed;
             _renamingSheet = null;
+            _renamingWorkspace = null;
         }
 
         /// <summary>
@@ -1077,6 +1166,25 @@ namespace DockerDiagram
             {
                 // 🔥 [수정] SheetManager 부서에게 삭제를 지시합니다.
                 (DataContext as MainViewModel)?.SheetManager.DeleteSheet(sheet);
+            }
+        }
+
+        private void DeleteWorkspace_Click(object sender, RoutedEventArgs e)
+        {
+            var menuItem = sender as MenuItem;
+            var contextMenu = menuItem?.Parent as ContextMenu;
+            var border = contextMenu?.PlacementTarget as FrameworkElement;
+            if (border?.DataContext is not ConnectionWorkspaceViewModel workspace) return;
+
+            if (workspace.Profile.Type == EndpointType.Local)
+            {
+                _dialogService.ShowMessage("Local PC 연결은 삭제할 수 없습니다.");
+                return;
+            }
+
+            if (_dialogService.ShowConfirm($"'{workspace.DisplayName}' 연결을 삭제하시겠습니까?\n이 연결 안의 시트도 목록에서 제거됩니다.", "Connection Delete"))
+            {
+                (DataContext as MainViewModel)?.SheetManager.RemoveWorkspace(workspace);
             }
         }
 
@@ -1297,7 +1405,7 @@ namespace DockerDiagram
                         else if (type == NodeType.Internet)
                         {
                             // ★ [수정됨] CreateInternetAt 대신 통합된 CreateNodeAt 사용!
-                            vm.ActiveSheet.CreateNodeAt(new DockerInternet { Name = "Internet" }, defaultX, defaultY);
+                            await vm.CreateNodeAtAsync(new DockerInternet { Name = "Internet" }, defaultX, defaultY);
                         }
                     }
                 }
@@ -1392,7 +1500,7 @@ namespace DockerDiagram
                     }
                     else if (d is DockerInternet internet)
                     {
-                        vm.ActiveSheet.CreateNodeAt(new DockerInternet { Name = "Internet" }, snapX, snapY);
+                        await vm.CreateNodeAtAsync(new DockerInternet { Name = "Internet" }, snapX, snapY);
                     }
                 }
                 else // 기존 아이템 (이미 도커에 존재하는 객체를 화면에만 꺼내는 경우)
@@ -1580,7 +1688,11 @@ namespace DockerDiagram
                 _isNodeDragging = true;
                 _draggedNodeElement = b;
                 Point mouseWorld = GetWorldPosition(e);
-                if (nodeVm != null) _nodeClickOffset = new Point(mouseWorld.X - nodeVm.X, mouseWorld.Y - nodeVm.Y);
+                if (nodeVm != null)
+                {
+                    _nodeClickOffset = new Point(mouseWorld.X - nodeVm.X, mouseWorld.Y - nodeVm.Y);
+                    _nodeDragStartRect = new Rect(nodeVm.X, nodeVm.Y, nodeVm.Width, nodeVm.Height);
+                }
                 b.CaptureMouse();
                 e.Handled = true;
             }

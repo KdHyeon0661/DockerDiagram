@@ -31,11 +31,14 @@ namespace DockerDiagram.ViewModels
         public ToolboxViewModel Toolbox { get; }
         public ResourceExplorerViewModel Explorer { get; }
         public InspectorViewModel Inspector { get; }
+        public UndoRedoManagerViewModel History { get; }
 
         // =========================================================
         // 🔗 [안전장치 래퍼] 기존 UI 바인딩이 깨지지 않도록 연결
         // =========================================================
+        public ObservableCollection<ConnectionWorkspaceViewModel> Workspaces => SheetManager.Workspaces;
         public ObservableCollection<SheetViewModel> Sheets => SheetManager.Sheets;
+        public IEnumerable<SheetViewModel> AllSheets => SheetManager.AllSheets;
         public SheetViewModel? ActiveSheet
         {
             get => SheetManager.ActiveSheet;
@@ -64,6 +67,7 @@ namespace DockerDiagram.ViewModels
         // 도커 통신 동기화 타이머 및 상태
         private DispatcherTimer _autoSyncTimer;
         private bool _isSyncing = false;
+        private readonly Dictionary<string, string> _volumeUndoBackups = new();
 
         // =========================================================
         // 🚀 생성자 (앱 시작 시 초기화)
@@ -72,6 +76,7 @@ namespace DockerDiagram.ViewModels
         {
             _defaultDockerService = dockerService ?? throw new ArgumentNullException(nameof(dockerService));
             _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
+            History = new UndoRedoManagerViewModel(_dialogService);
 
             // 1. 실무 전담 부서(Sub-ViewModel) 고용 및 할당
             SheetManager = new SheetManagerViewModel(this, _defaultDockerService, _dialogService);
@@ -171,6 +176,7 @@ namespace DockerDiagram.ViewModels
                 }
 
                 ActiveSheet.Connectors.Add(newConnector);
+                RecordConnectorAdd(ActiveSheet, newConnector);
             }
 
             IsModified = true;
@@ -195,6 +201,7 @@ namespace DockerDiagram.ViewModels
         public async Task CreateNodeAtAsync(object item, double x, double y)
         {
             if (ActiveSheet == null) return;
+            var historyBefore = CaptureDiagramState(ActiveSheet);
 
             // [CASE 1] 컨테이너 (DockerContainer)
             if (item is DockerContainer container)
@@ -221,7 +228,10 @@ namespace DockerDiagram.ViewModels
 
                                 if (existingGroup == null)
                                 {
-                                    existingGroup = new GroupViewModel(x - 30, y - 40, 220, 150, _networkService, _dialogService, netName, GroupType.Network);
+                                    existingGroup = new GroupViewModel(x - 30, y - 40, 220, 150, _networkService, _dialogService, netName, GroupType.Network)
+                                    {
+                                        IsDockerConnected = true
+                                    };
                                     ActiveSheet.AddGroup(existingGroup);
                                 }
 
@@ -301,15 +311,23 @@ namespace DockerDiagram.ViewModels
             // [CASE 4] 네트워크 그룹 (DockerGroup)
             else if (item is DockerNetworkGroup network)
             {
-                var groupVm = new GroupViewModel(x, y, 220, 150, _networkService, _dialogService, network.Name, GroupType.Network);
+                var groupVm = new GroupViewModel(x, y, 220, 150, _networkService, _dialogService, network.Name, GroupType.Network)
+                {
+                    Id = network.Id,
+                    Driver = network.Driver,
+                    IsDockerConnected = true
+                };
                 ActiveSheet.AddGroup(groupVm);
                 IsModified = true;
             }
+
+            RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, "Add diagram item", affectsDocker: false);
         }
 
         public async Task CreateNewContainerNodeAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, double x, double y, string networkName = "bridge", string command = "", bool tty = false, string? regUser = null, string? regPass = null, string? regServer = null)
         {
             if (ActiveSheet == null) return;
+            var historyBefore = CaptureDiagramState(ActiveSheet);
 
             bool isNameUsed = ActiveSheet.Nodes.Any(n => n.Type == NodeType.Container && n.Name == name);
             if (isNameUsed)
@@ -360,11 +378,17 @@ namespace DockerDiagram.ViewModels
                     targetGroup = new GroupViewModel(x, y, 220, 150, _networkService, _dialogService, networkName, GroupType.Network);
                     ActiveSheet.AddGroup(targetGroup);
 
-                    try { await _networkService.CreateNetworkAsync(networkName, "bridge"); }
+                    try
+                    {
+                        targetGroup.Id = await _networkService.CreateNetworkAsync(networkName, "bridge");
+                        targetGroup.IsDockerConnected = true;
+                    }
                     catch (Exception ex)
                     {
                         if (!ex.Message.Contains("already exists") && !ex.Message.Contains("409"))
                             Debug.WriteLine($"[DockerDiscovery] 네트워크 '{networkName}' 자동 생성 실패: {ex.Message}");
+                        else
+                            targetGroup.IsDockerConnected = true;
                     }
                 }
 
@@ -416,6 +440,7 @@ namespace DockerDiagram.ViewModels
                 node.RestartPolicy = restartPolicy;
                 node.IsCreating = false;
                 node.StatusColor = "#28a745";
+                node.IsDockerConnected = true;
 
                 if (targetGroup != null)
                 {
@@ -451,7 +476,8 @@ namespace DockerDiagram.ViewModels
                             ImageName = "local",
                             X = x + 250,
                             Y = y + (volIndex * 100),
-                            StatusColor = "#E67E22"
+                            StatusColor = "#E67E22",
+                            IsDockerConnected = true
                         };
                         ActiveSheet.Nodes.Add(targetVolNode);
                     }
@@ -471,6 +497,7 @@ namespace DockerDiagram.ViewModels
                     volIndex++;
                 }
                 Explorer.UpdateAvailableItems();
+                RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Create container {name}", History.IncludeDockerResourceHistory);
             }
             catch (Exception ex)
             {
@@ -482,6 +509,7 @@ namespace DockerDiagram.ViewModels
         public async Task CreateNewVolumeNodeAsync(string name, string driver, double x, double y)
         {
             if (ActiveSheet == null) return;
+            var historyBefore = CaptureDiagramState(ActiveSheet);
 
             var node = new NodeViewModel(_containerService, _volumeService, _dialogService)
             {
@@ -503,6 +531,8 @@ namespace DockerDiagram.ViewModels
                 node.ContainerId = "";
                 node.IsCreating = false;
                 node.StatusColor = "#E67E22";
+                node.IsDockerConnected = true;
+                RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Create volume {name}", History.IncludeDockerResourceHistory);
             }
             catch (Exception ex)
             {
@@ -514,6 +544,7 @@ namespace DockerDiagram.ViewModels
         public async Task CreateNewNetworkGroupAsync(string name, string driver, double x, double y, double w, double h)
         {
             if (string.IsNullOrWhiteSpace(name) || ActiveSheet == null) return;
+            var historyBefore = CaptureDiagramState(ActiveSheet);
 
             try
             {
@@ -523,6 +554,7 @@ namespace DockerDiagram.ViewModels
                 {
                     Id = networkId,
                     Driver = driver,
+                    IsDockerConnected = true,
                     ParentSheet = this.ActiveSheet
                 };
 
@@ -533,6 +565,7 @@ namespace DockerDiagram.ViewModels
 
                 Inspector.SelectedElement = newNetworkGroup;
                 IsModified = true;
+                RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Create network {name}", History.IncludeDockerResourceHistory);
             }
             catch (Exception ex)
             {
@@ -543,6 +576,7 @@ namespace DockerDiagram.ViewModels
         public async Task ProcessCliCommandAsync(string cliCommand, double x, double y)
         {
             if (ActiveSheet == null) return;
+            var historyBefore = CaptureDiagramState(ActiveSheet);
 
             var regex = new System.Text.RegularExpressions.Regex(@"[\""].+?[\""]|['].+?[']|[^ ]+");
             var tokens = regex.Matches(cliCommand).Cast<System.Text.RegularExpressions.Match>().Select(m => m.Value.Trim('\"', '\'')).ToList();
@@ -574,7 +608,10 @@ namespace DockerDiagram.ViewModels
                 targetGroup = ActiveSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == networkName);
                 if (targetGroup == null)
                 {
-                    targetGroup = new GroupViewModel(x, y, 220, 150, _networkService, _dialogService, networkName, GroupType.Network);
+                    targetGroup = new GroupViewModel(x, y, 220, 150, _networkService, _dialogService, networkName, GroupType.Network)
+                    {
+                        IsDockerConnected = true
+                    };
                     ActiveSheet.AddGroup(targetGroup);
                 }
                 x = targetGroup.X + 20;
@@ -626,6 +663,7 @@ namespace DockerDiagram.ViewModels
                     dummyNode.Name = name;
                     dummyNode.IsCreating = false;
                     dummyNode.StatusColor = "#28a745";
+                    dummyNode.IsDockerConnected = true;
 
                     await dummyNode.RefreshDetailsAsync();
 
@@ -655,7 +693,8 @@ namespace DockerDiagram.ViewModels
                                             ImageName = "local",
                                             X = dummyNode.X + 250,
                                             Y = dummyNode.Y + (volIndex * 100),
-                                            StatusColor = "#E67E22"
+                                            StatusColor = "#E67E22",
+                                            IsDockerConnected = true
                                         };
                                         ActiveSheet.Nodes.Add(targetVolNode);
                                     }
@@ -690,6 +729,7 @@ namespace DockerDiagram.ViewModels
                     }
 
                     Explorer.UpdateAvailableItems();
+                    RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Create container {name}", History.IncludeDockerResourceHistory);
                 }
                 else
                 {
@@ -858,6 +898,409 @@ namespace DockerDiagram.ViewModels
                     try { Directory.Delete(buildContextPath, true); } catch { }
                 }
             }
+        }
+
+        // =========================================================
+        // ↩️ Undo / Redo 히스토리 헬퍼
+        // =========================================================
+        private record DiagramState(HashSet<string> NodeIds, HashSet<string> GroupIds, HashSet<ConnectorViewModel> Connectors);
+
+        private DiagramState CaptureDiagramState(SheetViewModel sheet)
+        {
+            return new DiagramState(
+                sheet.Nodes.Select(n => n.Id).ToHashSet(),
+                sheet.Groups.Select(g => g.Id).ToHashSet(),
+                sheet.Connectors.ToHashSet());
+        }
+
+        private void RecordAdditionsFromSnapshot(SheetViewModel sheet, DiagramState before, string description, bool affectsDocker)
+        {
+            if (History.IsReplaying) return;
+
+            var addedNodes = sheet.Nodes.Where(n => !before.NodeIds.Contains(n.Id)).ToList();
+            var addedGroups = sheet.Groups.Where(g => !before.GroupIds.Contains(g.Id)).ToList();
+            var addedConnectors = sheet.Connectors.Where(c => !before.Connectors.Contains(c)).ToList();
+
+            if (addedNodes.Count == 0 && addedGroups.Count == 0 && addedConnectors.Count == 0) return;
+
+            History.RecordExecuted(new DelegateHistoryCommand(
+                description,
+                affectsDocker,
+                undo: async () =>
+                {
+                    if (affectsDocker) await DeleteDockerObjectsAsync(addedNodes, addedGroups);
+                    await RemoveDiagramBatchAsync(sheet, addedNodes, addedGroups, addedConnectors);
+                    IsModified = true;
+                },
+                redo: async () =>
+                {
+                    if (affectsDocker) await RecreateDockerObjectsAsync(addedNodes, addedGroups);
+                    await RestoreDiagramBatchAsync(sheet, addedNodes, addedGroups, addedConnectors);
+                    IsModified = true;
+                }));
+        }
+
+        private void RecordConnectorAdd(SheetViewModel sheet, ConnectorViewModel connector)
+        {
+            if (History.IsReplaying) return;
+
+            History.RecordExecuted(new DelegateHistoryCommand(
+                "Add connector",
+                affectsDocker: false,
+                undo: () =>
+                {
+                    sheet.Connectors.Remove(connector);
+                    IsModified = true;
+                    return Task.CompletedTask;
+                },
+                redo: () =>
+                {
+                    if (!sheet.Connectors.Contains(connector)) sheet.Connectors.Add(connector);
+                    IsModified = true;
+                    return Task.CompletedTask;
+                }));
+        }
+
+        public void RecordNodeRectChange(NodeViewModel node, Rect before, Rect after, string description)
+        {
+            if (History.IsReplaying || RectEquals(before, after)) return;
+            History.RecordExecuted(new DelegateHistoryCommand(
+                description,
+                affectsDocker: false,
+                undo: async () => { ApplyNodeRect(node, before); await RefreshGroupContainmentForNodeAsync(node); IsModified = true; },
+                redo: async () => { ApplyNodeRect(node, after); await RefreshGroupContainmentForNodeAsync(node); IsModified = true; },
+                mergeKey: $"{node.Id}:{description}"));
+        }
+
+        public void RecordGroupRectChange(GroupViewModel group, Rect before, Rect after, string description)
+        {
+            if (History.IsReplaying || RectEquals(before, after)) return;
+            History.RecordExecuted(new DelegateHistoryCommand(
+                description,
+                affectsDocker: false,
+                undo: () => { ApplyGroupRect(group, before); IsModified = true; return Task.CompletedTask; },
+                redo: () => { ApplyGroupRect(group, after); IsModified = true; return Task.CompletedTask; },
+                mergeKey: $"{group.Id}:{description}"));
+        }
+
+        public IHistoryCommand CreateConnectorDeleteCommand(SheetViewModel sheet, ConnectorViewModel connector)
+        {
+            return new DelegateHistoryCommand(
+                "Delete connector",
+                affectsDocker: false,
+                undo: () =>
+                {
+                    if (!sheet.Connectors.Contains(connector)) sheet.Connectors.Add(connector);
+                    IsModified = true;
+                    return Task.CompletedTask;
+                },
+                redo: () =>
+                {
+                    sheet.Connectors.Remove(connector);
+                    IsModified = true;
+                    return Task.CompletedTask;
+                });
+        }
+
+        public IHistoryCommand CreateNodeDeleteCommand(SheetViewModel sheet, NodeViewModel node, bool deleteDocker)
+        {
+            var relatedConnectors = sheet.Connectors.Where(c => c.Source == node || c.Target == node).ToList();
+            var containingGroups = sheet.Groups.Where(g => g.ContainedNodes.Contains(node)).ToList();
+            bool affectsDocker = deleteDocker && node.Type != NodeType.Internet;
+
+            return new DelegateHistoryCommand(
+                affectsDocker ? $"Delete Docker {node.Type}: {node.Name}" : $"Delete diagram node: {node.Name}",
+                affectsDocker,
+                undo: async () =>
+                {
+                    if (affectsDocker) await RecreateDockerObjectsAsync(new[] { node }, Array.Empty<GroupViewModel>());
+                    await RestoreNodeDiagramAsync(sheet, node, relatedConnectors, containingGroups);
+                    IsModified = true;
+                },
+                redo: async () =>
+                {
+                    if (affectsDocker) await DeleteDockerObjectsAsync(new[] { node }, Array.Empty<GroupViewModel>());
+                    await RemoveNodeFromDiagramOnlyAsync(sheet, node, relatedConnectors, containingGroups);
+                    IsModified = true;
+                });
+        }
+
+        public IHistoryCommand CreateGroupDeleteCommand(SheetViewModel sheet, GroupViewModel group, bool deleteDocker)
+        {
+            var relatedConnectors = sheet.Connectors
+                .Where(c => c.Source == (IConnectableItem)group || c.Target == (IConnectableItem)group)
+                .ToList();
+            var containedNodes = group.ContainedNodes.ToList();
+            bool affectsDocker = deleteDocker && group.Type == GroupType.Network;
+
+            return new DelegateHistoryCommand(
+                affectsDocker ? $"Delete Docker network: {group.Title}" : $"Delete diagram group: {group.Title}",
+                affectsDocker,
+                undo: async () =>
+                {
+                    if (affectsDocker) await RecreateDockerObjectsAsync(Array.Empty<NodeViewModel>(), new[] { group });
+                    await RestoreGroupDiagramAsync(sheet, group, relatedConnectors, containedNodes);
+                    IsModified = true;
+                },
+                redo: async () =>
+                {
+                    if (affectsDocker) await DeleteDockerObjectsAsync(Array.Empty<NodeViewModel>(), new[] { group });
+                    await RemoveGroupFromDiagramOnlyAsync(sheet, group, relatedConnectors);
+                    IsModified = true;
+                });
+        }
+
+        private static async Task RemoveDiagramBatchAsync(SheetViewModel sheet, List<NodeViewModel> nodes, List<GroupViewModel> groups, List<ConnectorViewModel> connectors)
+        {
+            foreach (var connector in connectors.ToList())
+                sheet.Connectors.Remove(connector);
+
+            foreach (var group in groups.ToList())
+                await RemoveGroupFromDiagramOnlyAsync(sheet, group, sheet.Connectors.Where(c => c.Source == (IConnectableItem)group || c.Target == (IConnectableItem)group).ToList());
+
+            foreach (var node in nodes.ToList())
+                await RemoveNodeFromDiagramOnlyAsync(sheet, node, sheet.Connectors.Where(c => c.Source == node || c.Target == node).ToList(), sheet.Groups.Where(g => g.ContainedNodes.Contains(node)).ToList());
+        }
+
+        private static async Task RestoreDiagramBatchAsync(SheetViewModel sheet, List<NodeViewModel> nodes, List<GroupViewModel> groups, List<ConnectorViewModel> connectors)
+        {
+            foreach (var node in nodes)
+                if (!sheet.Nodes.Contains(node)) sheet.Nodes.Add(node);
+
+            foreach (var group in groups)
+                if (!sheet.Groups.Contains(group)) sheet.AddGroup(group);
+
+            foreach (var group in groups)
+                foreach (var node in nodes.Where(n => IsNodeInsideGroup(n, group)))
+                    await group.AddNodeAsync(node, isRestoring: true);
+
+            foreach (var connector in connectors)
+                if (!sheet.Connectors.Contains(connector)) sheet.Connectors.Add(connector);
+
+            sheet.UpdateGroupLayering();
+        }
+
+        private static async Task RemoveNodeFromDiagramOnlyAsync(SheetViewModel sheet, NodeViewModel node, List<ConnectorViewModel> connectors, List<GroupViewModel> containingGroups)
+        {
+            foreach (var connector in connectors.ToList())
+                sheet.Connectors.Remove(connector);
+
+            foreach (var group in containingGroups.ToList())
+                await group.RemoveNodeAsync(node, isRestoring: true);
+
+            sheet.Nodes.Remove(node);
+        }
+
+        private static async Task RestoreNodeDiagramAsync(SheetViewModel sheet, NodeViewModel node, List<ConnectorViewModel> connectors, List<GroupViewModel> containingGroups)
+        {
+            if (!sheet.Nodes.Contains(node)) sheet.Nodes.Add(node);
+
+            foreach (var group in containingGroups)
+                if (sheet.Groups.Contains(group)) await group.AddNodeAsync(node, isRestoring: true);
+
+            foreach (var connector in connectors)
+                if (!sheet.Connectors.Contains(connector)) sheet.Connectors.Add(connector);
+        }
+
+        private static Task RemoveGroupFromDiagramOnlyAsync(SheetViewModel sheet, GroupViewModel group, List<ConnectorViewModel> connectors)
+        {
+            foreach (var connector in connectors.ToList())
+                sheet.Connectors.Remove(connector);
+
+            group.ContainedNodes.Clear();
+            sheet.Groups.Remove(group);
+            sheet.UpdateGroupLayering();
+            return Task.CompletedTask;
+        }
+
+        private static async Task RestoreGroupDiagramAsync(SheetViewModel sheet, GroupViewModel group, List<ConnectorViewModel> connectors, List<NodeViewModel> containedNodes)
+        {
+            if (!sheet.Groups.Contains(group)) sheet.AddGroup(group);
+
+            foreach (var node in containedNodes)
+                if (sheet.Nodes.Contains(node)) await group.AddNodeAsync(node, isRestoring: true);
+
+            foreach (var connector in connectors)
+                if (!sheet.Connectors.Contains(connector)) sheet.Connectors.Add(connector);
+
+            sheet.UpdateGroupLayering();
+        }
+
+        private async Task DeleteDockerObjectsAsync(IEnumerable<NodeViewModel> nodes, IEnumerable<GroupViewModel> groups)
+        {
+            foreach (var node in nodes)
+            {
+                try
+                {
+                    if (node.Type == NodeType.Container && !string.IsNullOrWhiteSpace(node.ContainerId))
+                    {
+                        await _containerService.RemoveContainerAsync(node.ContainerId);
+                        node.IsDockerConnected = false;
+                    }
+                    else if (node.Type == NodeType.Volume)
+                    {
+                        if (History.IncludeVolumeBackupForUndo)
+                        {
+                            await BackupVolumeForUndoAsync(node);
+                        }
+
+                        await _volumeService.RemoveVolumeAsync(node.Name);
+                        node.IsDockerConnected = false;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[History] Docker delete skipped: {ex.Message}");
+                }
+            }
+
+            foreach (var group in groups.Where(g => g.Type == GroupType.Network))
+            {
+                try
+                {
+                    await _networkService.RemoveNetworkAsync(!string.IsNullOrWhiteSpace(group.Id) ? group.Id : group.Title);
+                    group.IsDockerConnected = false;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[History] Docker network delete skipped: {ex.Message}");
+                }
+            }
+
+            await Explorer.SyncWithDockerEngineAsync();
+        }
+
+        private async Task RecreateDockerObjectsAsync(IEnumerable<NodeViewModel> nodes, IEnumerable<GroupViewModel> groups)
+        {
+            foreach (var group in groups.Where(g => g.Type == GroupType.Network))
+            {
+                try
+                {
+                    group.Id = await _networkService.CreateNetworkAsync(group.Title, string.IsNullOrWhiteSpace(group.Driver) ? "bridge" : group.Driver);
+                    group.IsDockerConnected = true;
+                }
+                catch (Exception ex)
+                {
+                    if (!ex.Message.Contains("already exists") && !ex.Message.Contains("409")) throw;
+                    group.IsDockerConnected = true;
+                }
+            }
+
+            foreach (var node in nodes)
+            {
+                if (node.Type == NodeType.Volume)
+                {
+                    try
+                    {
+                        await _volumeService.CreateVolumeAsync(node.Name, string.IsNullOrWhiteSpace(node.Driver) || node.Driver == "-" ? "local" : node.Driver);
+                        node.IsDockerConnected = true;
+                        await RestoreVolumeFromUndoBackupAsync(node);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!ex.Message.Contains("already exists") && !ex.Message.Contains("409")) throw;
+                        node.IsDockerConnected = true;
+                        await RestoreVolumeFromUndoBackupAsync(node);
+                    }
+                }
+                else if (node.Type == NodeType.Container)
+                {
+                    var (image, tag) = SplitImageTag(node.ImageName);
+                    string newId = await _containerService.CreateAndStartContainerAsync(
+                        node.Name,
+                        image,
+                        tag,
+                        node.PortBindings?.ToList() ?? new List<string>(),
+                        node.EnvironmentVariables?.ToList() ?? new List<string>(),
+                        new List<string>(),
+                        string.IsNullOrWhiteSpace(node.RestartPolicy) ? "no" : node.RestartPolicy,
+                        0,
+                        0);
+
+                    node.ContainerId = newId;
+                    node.IsDockerConnected = true;
+                    await node.RefreshDetailsAsync();
+                }
+            }
+
+            await Explorer.SyncWithDockerEngineAsync();
+        }
+
+        private async Task BackupVolumeForUndoAsync(NodeViewModel node)
+        {
+            if (node.Type != NodeType.Volume) return;
+
+            if (_volumeUndoBackups.TryGetValue(node.Id, out var previousPath))
+                VolumeUndoBackupStore.DeleteFile(previousPath);
+
+            string backupPath = VolumeUndoBackupStore.CreateBackupPath(node.Name);
+            await _volumeService.BackupVolumeAsync(node.Name, backupPath);
+            _volumeUndoBackups[node.Id] = backupPath;
+            node.DetailStatus = "Ghost backup";
+            node.IsDockerConnected = false;
+        }
+
+        private async Task RestoreVolumeFromUndoBackupAsync(NodeViewModel node)
+        {
+            if (node.Type != NodeType.Volume) return;
+            if (!_volumeUndoBackups.TryGetValue(node.Id, out var backupPath)) return;
+            if (!File.Exists(backupPath)) return;
+
+            await _volumeService.RestoreVolumeAsync(node.Name, backupPath);
+            node.IsDockerConnected = true;
+            await node.RefreshDetailsAsync();
+        }
+
+        private async Task RefreshGroupContainmentForNodeAsync(NodeViewModel node)
+        {
+            if (ActiveSheet == null) return;
+            var targetGroups = ActiveSheet.FindGroupsAt(node.X, node.Y, node.Width, node.Height);
+            foreach (var group in ActiveSheet.Groups)
+            {
+                if (targetGroups.Contains(group)) await group.AddNodeAsync(node, isRestoring: true);
+                else await group.RemoveNodeAsync(node, isRestoring: true);
+            }
+        }
+
+        private static void ApplyNodeRect(NodeViewModel node, Rect rect)
+        {
+            node.X = rect.X;
+            node.Y = rect.Y;
+            node.Width = rect.Width;
+            node.Height = rect.Height;
+        }
+
+        private static void ApplyGroupRect(GroupViewModel group, Rect rect)
+        {
+            group.X = rect.X;
+            group.Y = rect.Y;
+            group.Width = rect.Width;
+            group.Height = rect.Height;
+        }
+
+        private static bool RectEquals(Rect a, Rect b)
+        {
+            return Math.Abs(a.X - b.X) < 0.1 &&
+                   Math.Abs(a.Y - b.Y) < 0.1 &&
+                   Math.Abs(a.Width - b.Width) < 0.1 &&
+                   Math.Abs(a.Height - b.Height) < 0.1;
+        }
+
+        private static bool IsNodeInsideGroup(NodeViewModel node, GroupViewModel group)
+        {
+            var centerX = node.X + node.Width / 2;
+            var centerY = node.Y + node.Height / 2;
+            return centerX >= group.X && centerX <= group.X + group.Width &&
+                   centerY >= group.Y && centerY <= group.Y + group.Height;
+        }
+
+        private static (string Image, string Tag) SplitImageTag(string imageName)
+        {
+            if (string.IsNullOrWhiteSpace(imageName)) return ("ubuntu", "latest");
+            int lastColon = imageName.LastIndexOf(':');
+            if (lastColon > 0 && lastColon < imageName.Length - 1)
+                return (imageName[..lastColon], imageName[(lastColon + 1)..]);
+            return (imageName, "latest");
         }
 
         // =========================================================
