@@ -65,18 +65,23 @@
                                     </Style>
                                 </DataGridTextColumn.ElementStyle>
                             </DataGridTextColumn>
-                            <DataGridTemplateColumn Header="관리" Width="100">
+                            <DataGridTemplateColumn Header="관리" Width="260">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Button Content="🗑️ 삭제" Background="#dc3545" Foreground="White" BorderThickness="0"
-                                                Command="{Binding DataContext.DeleteImageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                CommandParameter="{Binding}" Cursor="Hand" Margin="5,4" Padding="0" Height="26">
-                                            <Button.Resources>
-                                                <Style TargetType="Border">
-                                                    <Setter Property="CornerRadius" Value="4"/>
-                                                </Style>
-                                            </Button.Resources>
-                                        </Button>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                            <Button Content="Tag" Background="#6c757d" Foreground="White" BorderThickness="0"
+                                                    Command="{Binding DataContext.TagImageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" Cursor="Hand" Margin="3,4" Padding="8,0" Height="26"/>
+                                            <Button Content="Push" Background="#007ACC" Foreground="White" BorderThickness="0"
+                                                    Command="{Binding DataContext.PushImageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" Cursor="Hand" Margin="3,4" Padding="8,0" Height="26"/>
+                                            <Button Content="Save" Background="#28a745" Foreground="White" BorderThickness="0"
+                                                    Command="{Binding DataContext.SaveImageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" Cursor="Hand" Margin="3,4" Padding="8,0" Height="26"/>
+                                            <Button Content="Delete" Background="#dc3545" Foreground="White" BorderThickness="0"
+                                                    Command="{Binding DataContext.DeleteImageCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" Cursor="Hand" Margin="3,4" Padding="8,0" Height="26"/>
+                                        </StackPanel>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>

@@ -27,7 +27,11 @@ namespace DockerDiagram.Helpers
         Task PauseContainerAsync(string id);
         Task UnpauseContainerAsync(string id);
         Task RestartContainerAsync(string id);
+        Task KillContainerAsync(string id, string signal = "SIGKILL");
+        Task RenameContainerAsync(string id, string newName);
         Task RemoveContainerAsync(string id);
+        Task<string> CommitContainerAsync(string containerId, string repository, string tag, string comment, string author, bool pause);
+        Task ExportContainerAsync(string containerId, string tarFilePath);
 
         Task<string> CreateAndStartContainerAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, string command = "", bool tty = false);
         Task UpdateContainerResourcesAsync(string containerId, double cpuCount, long memoryMb);
@@ -36,6 +40,7 @@ namespace DockerDiagram.Helpers
         Task CopyToContainerAsync(string containerId, string hostPath, string containerPath);
         void OpenTerminal(string containerId);
         Task ExecuteCommandAsync(string containerId, string command);
+        Task<ExecCommandResult> ExecuteCommandWithOutputAsync(string containerId, string command);
         Task<ContainerStats> GetContainerStatsAsync(string containerId);
         Task<string> GetContainerLogsAsync(string containerId, int tailCount = 500);
         Task<SystemInfoResponse> GetSystemInfoAsync();
@@ -75,6 +80,7 @@ namespace DockerDiagram.Helpers
     public interface ISystemService
     {
         Task<bool> PingAsync();
+        Task MonitorDockerEventsAsync(IProgress<Message> progress, CancellationToken cancellationToken);
     }
 
     /// <summary>
@@ -85,6 +91,11 @@ namespace DockerDiagram.Helpers
         Task<List<DockerImage>> GetImagesAsync();
         Task PullImageAsync(string image, string tag, string? username = null, string? password = null, string? serverAddress = null);
         Task DeleteImageAsync(string imageId, bool force = false);
+        Task ImportImageFromTarAsync(string tarFilePath, string repository, string tag, string message);
+        Task TagImageAsync(string sourceImage, string repository, string tag, bool force = true);
+        Task PushImageAsync(string repository, string tag, string? username = null, string? password = null, string? serverAddress = null);
+        Task SaveImageAsync(string image, string tarFilePath);
+        Task LoadImageFromTarAsync(string tarFilePath);
         Task<List<ImageSearchResponse>> SearchImagesAsync(string term, int limit = 20);
         Task PullImageWithProgressAsync(string image, string tag, IProgress<JSONMessage> progress, string? username = null, string? password = null, string? serverAddress = null);
     }

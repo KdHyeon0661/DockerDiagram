@@ -107,6 +107,7 @@ namespace DockerDiagram
 
             // 2. 데이터 컨텍스트 설정
             this.DataContext = viewModel;
+            this.Closed += Window_Closed;
 
             // 3. 타이머 초기화 (기존 로직 그대로 유지)
             _dockerMonitorTimer = new DispatcherTimer();
@@ -149,6 +150,14 @@ namespace DockerDiagram
                         e.Cancel = true;
                     }
                 }
+            }
+        }
+
+        private void Window_Closed(object? sender, EventArgs e)
+        {
+            if (DataContext is IDisposable disposable)
+            {
+                disposable.Dispose();
             }
         }
 
@@ -351,7 +360,411 @@ namespace DockerDiagram
         private void OptionButton_Click(object sender, RoutedEventArgs e)
         {
             MapSizePanel.Visibility = Visibility.Collapsed;
+            SelectedOptionPopup.IsOpen = false;
             OptionPopup.IsOpen = true;
+        }
+
+        private void SelectedOptionButton_Click(object sender, RoutedEventArgs e)
+        {
+            MapSizePanel.Visibility = Visibility.Collapsed;
+            OptionPopup.IsOpen = false;
+            SelectedOptionPopup.IsOpen = true;
+        }
+
+        private async void ViewRawInspect_Click(object sender, RoutedEventArgs e)
+        {
+            SelectedOptionPopup.IsOpen = false;
+
+            if (DataContext is not MainViewModel vm || vm.ActiveSheet == null)
+            {
+                _dialogService.ShowInfo("활성화된 시트가 없습니다.", "Raw Inspect");
+                return;
+            }
+
+            var selected = vm.Inspector.SelectedElement;
+            if (selected == null)
+            {
+                _dialogService.ShowInfo("먼저 컨테이너, 볼륨, 네트워크 중 하나를 선택해 주세요.", "Raw Inspect");
+                return;
+            }
+
+            try
+            {
+                var result = await LoadRawInspectAsync(vm.ActiveSheet.DockerService, selected);
+                if (result == null) return;
+
+                var json = System.Text.Json.JsonSerializer.Serialize(result.Value.Payload, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles
+                });
+
+                var window = new Views.RawInspectWindow(result.Value.Title, json)
+                {
+                    Owner = this
+                };
+                window.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"Inspect 실패: {ex.Message}", "Raw Inspect");
+            }
+        }
+
+        private async Task<(string Title, object Payload)?> LoadRawInspectAsync(IDockerService dockerService, object selected)
+        {
+            if (selected is NodeViewModel node)
+            {
+                if (node.IsDockerDisconnected)
+                {
+                    _dialogService.ShowInfo("Docker에서 끊긴 리소스는 inspect를 볼 수 없습니다. 먼저 Reconnect를 실행해 주세요.", "Raw Inspect");
+                    return null;
+                }
+
+                if (node.Type == NodeType.Container)
+                {
+                    if (string.IsNullOrWhiteSpace(node.ContainerId))
+                    {
+                        _dialogService.ShowInfo("컨테이너 ID가 없어 inspect를 실행할 수 없습니다.", "Raw Inspect");
+                        return null;
+                    }
+
+                    var payload = await dockerService.InspectContainerAsync(node.ContainerId);
+                    return ($"Container inspect - {node.Name}", payload);
+                }
+
+                if (node.Type == NodeType.Volume)
+                {
+                    if (string.IsNullOrWhiteSpace(node.Name))
+                    {
+                        _dialogService.ShowInfo("볼륨 이름이 없어 inspect를 실행할 수 없습니다.", "Raw Inspect");
+                        return null;
+                    }
+
+                    var payload = await dockerService.InspectVolumeAsync(node.Name);
+                    return ($"Volume inspect - {node.Name}", payload);
+                }
+
+                _dialogService.ShowInfo("Internet 노드는 Docker inspect 대상이 아닙니다.", "Raw Inspect");
+                return null;
+            }
+
+            if (selected is GroupViewModel group)
+            {
+                if (group.Type != GroupType.Network)
+                {
+                    _dialogService.ShowInfo("일반 그룹은 Docker inspect 대상이 아닙니다. 네트워크 그룹을 선택해 주세요.", "Raw Inspect");
+                    return null;
+                }
+
+                if (group.IsDockerDisconnected)
+                {
+                    _dialogService.ShowInfo("Docker에서 끊긴 네트워크는 inspect를 볼 수 없습니다. 먼저 Reconnect를 실행해 주세요.", "Raw Inspect");
+                    return null;
+                }
+
+                var networkKey = IsGuidLike(group.Id) ? group.Title : group.Id;
+                if (string.IsNullOrWhiteSpace(networkKey))
+                {
+                    _dialogService.ShowInfo("네트워크 이름 또는 ID가 없어 inspect를 실행할 수 없습니다.", "Raw Inspect");
+                    return null;
+                }
+
+                var payload = await dockerService.InspectNetworkAsync(networkKey);
+                return ($"Network inspect - {group.Title}", payload);
+            }
+
+            _dialogService.ShowInfo("선택한 항목은 Docker inspect 대상이 아닙니다.", "Raw Inspect");
+            return null;
+        }
+
+        private static bool IsGuidLike(string value) => Guid.TryParse(value, out _);
+
+        private async void RenameContainer_Click(object sender, RoutedEventArgs e)
+        {
+            SelectedOptionPopup.IsOpen = false;
+
+            if (DataContext is not MainViewModel vm || vm.ActiveSheet == null)
+            {
+                _dialogService.ShowInfo("활성화된 시트가 없습니다.", "Rename Container");
+                return;
+            }
+
+            var node = await GetSelectedContainerForActionAsync("Rename Container", requireRunning: false);
+            if (node == null) return;
+
+            var window = new Views.ContainerRenameWindow(node.Name)
+            {
+                Owner = this
+            };
+
+            if (window.ShowDialog() != true) return;
+
+            var newName = window.NewName;
+            if (string.Equals(node.Name, newName, StringComparison.Ordinal)) return;
+
+            try
+            {
+                await vm.ActiveSheet.DockerService.RenameContainerAsync(node.ContainerId, newName);
+                node.Name = newName;
+                await node.RefreshDetailsAsync();
+                await vm.Explorer.SyncWithDockerEngineAsync();
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"컨테이너 이름 변경 실패: {ex.Message}", "Rename Container");
+            }
+        }
+
+        private async void ExecCommand_Click(object sender, RoutedEventArgs e)
+        {
+            SelectedOptionPopup.IsOpen = false;
+
+            if (DataContext is not MainViewModel vm || vm.ActiveSheet == null)
+            {
+                _dialogService.ShowInfo("활성화된 시트가 없습니다.", "Exec Command");
+                return;
+            }
+
+            var node = await GetSelectedContainerForActionAsync("Exec Command", requireRunning: true);
+            if (node == null) return;
+
+            var window = new Views.ContainerExecWindow(vm.ActiveSheet.DockerService, node)
+            {
+                Owner = this
+            };
+            window.ShowDialog();
+        }
+
+        private async void KillContainer_Click(object sender, RoutedEventArgs e)
+        {
+            SelectedOptionPopup.IsOpen = false;
+
+            if (DataContext is not MainViewModel vm || vm.ActiveSheet == null)
+            {
+                _dialogService.ShowInfo("활성화된 시트가 없습니다.", "Kill Container");
+                return;
+            }
+
+            var node = await GetSelectedContainerForActionAsync("Kill Container", requireRunning: true);
+            if (node == null) return;
+
+            bool confirmed = _dialogService.ShowConfirm(
+                $"'{node.Name}' 컨테이너에 SIGKILL을 보내 강제 종료할까요?",
+                "Kill Container");
+
+            if (!confirmed) return;
+
+            try
+            {
+                await vm.ActiveSheet.DockerService.KillContainerAsync(node.ContainerId);
+                await node.RefreshDetailsAsync();
+                await vm.Explorer.SyncWithDockerEngineAsync();
+                _dialogService.ShowInfo("컨테이너를 강제 종료했습니다.", "Kill Container");
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"컨테이너 강제 종료 실패: {ex.Message}", "Kill Container");
+            }
+        }
+
+        private async void CommitContainer_Click(object sender, RoutedEventArgs e)
+        {
+            SelectedOptionPopup.IsOpen = false;
+
+            if (DataContext is not MainViewModel vm || vm.ActiveSheet == null)
+            {
+                _dialogService.ShowInfo("활성화된 시트가 없습니다.", "Commit Container");
+                return;
+            }
+
+            var node = await GetSelectedContainerForActionAsync("Commit Container", requireRunning: false);
+            if (node == null) return;
+
+            var window = new Views.ContainerCommitWindow(node.Name)
+            {
+                Owner = this
+            };
+
+            if (window.ShowDialog() != true) return;
+
+            try
+            {
+                Mouse.OverrideCursor = Cursors.Wait;
+                var imageId = await vm.ActiveSheet.DockerService.CommitContainerAsync(
+                    node.ContainerId,
+                    window.Repository,
+                    window.ImageTag,
+                    window.Message,
+                    window.Author,
+                    window.Pause);
+
+                await vm.Explorer.SyncWithDockerEngineAsync();
+                _dialogService.ShowInfo($"이미지를 생성했습니다.\n{window.Repository}:{window.ImageTag}\n{imageId}", "Commit Container");
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"컨테이너 커밋 실패: {ex.Message}", "Commit Container");
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+        }
+
+        private async void ExportContainer_Click(object sender, RoutedEventArgs e)
+        {
+            SelectedOptionPopup.IsOpen = false;
+
+            if (DataContext is not MainViewModel vm || vm.ActiveSheet == null)
+            {
+                _dialogService.ShowInfo("활성화된 시트가 없습니다.", "Export Container");
+                return;
+            }
+
+            var node = await GetSelectedContainerForActionAsync("Export Container", requireRunning: false);
+            if (node == null) return;
+
+            var dialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Export Container Filesystem",
+                Filter = "Tar file (*.tar)|*.tar|All files (*.*)|*.*",
+                DefaultExt = ".tar",
+                FileName = $"{MakeSafeFileName(node.Name)}.tar"
+            };
+
+            if (dialog.ShowDialog(this) != true) return;
+
+            try
+            {
+                Mouse.OverrideCursor = Cursors.Wait;
+                await vm.ActiveSheet.DockerService.ExportContainerAsync(node.ContainerId, dialog.FileName);
+                _dialogService.ShowInfo($"컨테이너 파일시스템을 내보냈습니다.\n{dialog.FileName}", "Export Container");
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"컨테이너 export 실패: {ex.Message}", "Export Container");
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+        }
+
+        private async void ImportImageFromTar_Click(object sender, RoutedEventArgs e)
+        {
+            OptionPopup.IsOpen = false;
+
+            if (DataContext is not MainViewModel vm || vm.ActiveSheet == null)
+            {
+                _dialogService.ShowInfo("활성화된 시트가 없습니다.", "Import Image");
+                return;
+            }
+
+            var window = new Views.ImageImportWindow
+            {
+                Owner = this
+            };
+
+            if (window.ShowDialog() != true) return;
+
+            try
+            {
+                Mouse.OverrideCursor = Cursors.Wait;
+                await vm.ActiveSheet.DockerService.ImportImageFromTarAsync(window.TarPath, window.Repository, window.ImageTag, window.Message);
+                await vm.Explorer.SyncWithDockerEngineAsync();
+                _dialogService.ShowInfo($"이미지를 import했습니다.\n{window.Repository}:{window.ImageTag}", "Import Image");
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"이미지 import 실패: {ex.Message}", "Import Image");
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+        }
+
+        private async void LoadImageFromTar_Click(object sender, RoutedEventArgs e)
+        {
+            OptionPopup.IsOpen = false;
+
+            if (DataContext is not MainViewModel vm || vm.ActiveSheet == null)
+            {
+                _dialogService.ShowInfo("활성화된 시트가 없습니다.", "Load Image");
+                return;
+            }
+
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Load Docker Image Tar",
+                Filter = "Tar file (*.tar)|*.tar|All files (*.*)|*.*"
+            };
+
+            if (dialog.ShowDialog(this) != true) return;
+
+            try
+            {
+                Mouse.OverrideCursor = Cursors.Wait;
+                await vm.ActiveSheet.DockerService.LoadImageFromTarAsync(dialog.FileName);
+                await vm.Explorer.SyncWithDockerEngineAsync();
+                _dialogService.ShowInfo($"이미지를 load했습니다.\n{dialog.FileName}", "Load Image");
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"이미지 load 실패: {ex.Message}", "Load Image");
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+        }
+
+        private async Task<NodeViewModel?> GetSelectedContainerForActionAsync(string title, bool requireRunning)
+        {
+            if (DataContext is not MainViewModel vm || vm.ActiveSheet == null)
+            {
+                _dialogService.ShowInfo("활성화된 시트가 없습니다.", title);
+                return null;
+            }
+
+            if (vm.Inspector.SelectedElement is not NodeViewModel node || node.Type != NodeType.Container)
+            {
+                _dialogService.ShowInfo("먼저 컨테이너를 선택해 주세요.", title);
+                return null;
+            }
+
+            if (node.IsDockerDisconnected || string.IsNullOrWhiteSpace(node.ContainerId))
+            {
+                _dialogService.ShowInfo("Docker에서 끊긴 컨테이너입니다. 먼저 Reconnect를 실행해 주세요.", title);
+                return null;
+            }
+
+            await node.RefreshDetailsAsync();
+
+            if (node.IsDockerDisconnected)
+            {
+                _dialogService.ShowInfo("Docker에서 컨테이너를 찾지 못했습니다. 먼저 Reconnect를 실행해 주세요.", title);
+                return null;
+            }
+
+            if (requireRunning && !node.IsRunning)
+            {
+                _dialogService.ShowInfo("실행 중인 컨테이너에서만 사용할 수 있습니다.", title);
+                return null;
+            }
+
+            return node;
+        }
+
+        private static string MakeSafeFileName(string value)
+        {
+            foreach (var invalidChar in System.IO.Path.GetInvalidFileNameChars())
+            {
+                value = value.Replace(invalidChar, '_');
+            }
+
+            return string.IsNullOrWhiteSpace(value) ? "container" : value;
         }
 
         /// <summary>
@@ -1887,7 +2300,7 @@ namespace DockerDiagram
             // 2. 새 창 띄우기 (데이터 공유)
             var imgWindow = new Views.ImageManagerWindow
             {
-                DataContext = this.DataContext,
+                DataContext = ViewModel.Explorer,
                 Owner = this
             };
             imgWindow.ShowDialog();

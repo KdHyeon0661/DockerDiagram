@@ -1,0 +1,55 @@
+<Window x:Class="DockerDiagram.Views.ImageImportWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Import Image from Tar"
+        Width="520"
+        Height="280"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="#F5F6F8"
+        FontFamily="Segoe UI">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="Import Image from Tar" FontSize="18" FontWeight="SemiBold" Foreground="#222"/>
+            <TextBlock Text="Use a root filesystem tar such as one created by docker export." FontSize="12" Foreground="#777" Margin="0,3,0,0"/>
+        </StackPanel>
+
+        <Grid Grid.Row="1" Margin="0,16,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="92"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Text="Tar file" VerticalAlignment="Center" Foreground="#555"/>
+            <TextBox x:Name="TarPathBox" Grid.Column="1" Height="30" Padding="6" VerticalContentAlignment="Center" BorderBrush="#C8CDD3"/>
+            <Button Grid.Column="2" Content="Browse..." Click="BrowseButton_Click" Width="82" Height="30" Margin="8,0,0,0"/>
+
+            <TextBlock Grid.Row="1" Text="Repository" VerticalAlignment="Center" Foreground="#555" Margin="0,10,0,0"/>
+            <TextBox x:Name="RepositoryBox" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Height="30" Padding="6" VerticalContentAlignment="Center" BorderBrush="#C8CDD3" Margin="0,10,0,0"/>
+
+            <TextBlock Grid.Row="2" Text="Tag" VerticalAlignment="Center" Foreground="#555" Margin="0,10,0,0"/>
+            <TextBox x:Name="ImageTagBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Height="30" Padding="6" VerticalContentAlignment="Center" BorderBrush="#C8CDD3" Margin="0,10,0,0"/>
+
+            <TextBlock Grid.Row="3" Text="Message" VerticalAlignment="Center" Foreground="#555" Margin="0,10,0,0"/>
+            <TextBox x:Name="ImportMessageBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Height="30" Padding="6" VerticalContentAlignment="Center" BorderBrush="#C8CDD3" Margin="0,10,0,0"/>
+        </Grid>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Import" Click="ImportButton_Click" Width="82" Height="30" Margin="0,0,8,0" Background="#007ACC" Foreground="White" BorderThickness="0"/>
+            <Button Content="Cancel" Click="CancelButton_Click" Width="82" Height="30"/>
+        </StackPanel>
+    </Grid>
+</Window>

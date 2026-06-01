@@ -72,6 +72,31 @@ namespace DockerDiagram.Helpers
             }
         }
 
+        /// <summary>
+        /// docker events 스트림을 열고 컨테이너/볼륨/네트워크/이미지 변경 이벤트를 전달합니다.
+        /// </summary>
+        public async Task MonitorDockerEventsAsync(IProgress<Message> progress, CancellationToken cancellationToken)
+        {
+            var filters = new Dictionary<string, IDictionary<string, bool>>
+            {
+                ["type"] = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["container"] = true,
+                    ["volume"] = true,
+                    ["network"] = true,
+                    ["image"] = true
+                }
+            };
+
+            var parameters = new ContainerEventsParameters
+            {
+                Since = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
+                Filters = filters
+            };
+
+            await _client.System.MonitorEventsAsync(parameters, progress, cancellationToken);
+        }
+
         // =========================================================
         // 2. IContainerService 구현
         // =========================================================
@@ -267,6 +292,18 @@ namespace DockerDiagram.Helpers
             => await _client.Containers.StopContainerAsync(id, new ContainerStopParameters { WaitBeforeKillSeconds = 5 });
 
         /// <summary>
+        /// 지정된 컨테이너에 signal을 보내 즉시 종료합니다.
+        /// </summary>
+        public async Task KillContainerAsync(string id, string signal = "SIGKILL")
+            => await _client.Containers.KillContainerAsync(id, new ContainerKillParameters { Signal = signal });
+
+        /// <summary>
+        /// 지정된 컨테이너의 Docker 이름을 변경합니다.
+        /// </summary>
+        public async Task RenameContainerAsync(string id, string newName)
+            => await _client.Containers.RenameContainerAsync(id, new ContainerRenameParameters { NewName = newName }, CancellationToken.None);
+
+        /// <summary>
         /// 지정된 컨테이너의 실행을 일시 정지(Pause)합니다.
         /// </summary>
         public async Task PauseContainerAsync(string id)
@@ -290,6 +327,34 @@ namespace DockerDiagram.Helpers
         public async Task RemoveContainerAsync(string id)
         {
             await _client.Containers.RemoveContainerAsync(id, new ContainerRemoveParameters { Force = true, RemoveVolumes = false });
+        }
+
+        /// <summary>
+        /// 컨테이너의 현재 파일시스템 상태를 새 이미지로 커밋합니다.
+        /// </summary>
+        public async Task<string> CommitContainerAsync(string containerId, string repository, string tag, string comment, string author, bool pause)
+        {
+            var response = await _client.Images.CommitContainerChangesAsync(new CommitContainerChangesParameters
+            {
+                ContainerID = containerId,
+                RepositoryName = repository,
+                Tag = tag,
+                Comment = comment,
+                Author = author,
+                Pause = pause
+            }, CancellationToken.None);
+
+            return response.ID;
+        }
+
+        /// <summary>
+        /// 컨테이너 파일시스템을 tar 아카이브로 내보냅니다.
+        /// </summary>
+        public async Task ExportContainerAsync(string containerId, string tarFilePath)
+        {
+            await using var source = await _client.Containers.ExportContainerAsync(containerId, CancellationToken.None);
+            await using var target = File.Create(tarFilePath);
+            await source.CopyToAsync(target);
         }
 
         /// <summary>
@@ -486,6 +551,86 @@ namespace DockerDiagram.Helpers
         }
 
         /// <summary>
+        /// docker export 등으로 만든 root filesystem tar를 새 이미지로 import합니다.
+        /// </summary>
+        public async Task ImportImageFromTarAsync(string tarFilePath, string repository, string tag, string message)
+        {
+            await using var tarStream = File.OpenRead(tarFilePath);
+            await _client.Images.CreateImageAsync(
+                new ImagesCreateParameters
+                {
+                    FromSrc = "-",
+                    Repo = repository,
+                    Tag = tag,
+                    Message = message
+                },
+                tarStream,
+                null,
+                new Progress<JSONMessage>(m => Debug.WriteLine(m.Status ?? m.ErrorMessage ?? m.ProgressMessage)),
+                CancellationToken.None);
+        }
+
+        /// <summary>
+        /// 기존 이미지에 새 repository:tag 별칭을 붙입니다.
+        /// </summary>
+        public async Task TagImageAsync(string sourceImage, string repository, string tag, bool force = true)
+        {
+            await _client.Images.TagImageAsync(sourceImage, new ImageTagParameters
+            {
+                RepositoryName = repository,
+                Tag = tag,
+                Force = force
+            }, CancellationToken.None);
+        }
+
+        /// <summary>
+        /// 지정한 repository:tag 이미지를 레지스트리에 push합니다.
+        /// </summary>
+        public async Task PushImageAsync(string repository, string tag, string? username = null, string? password = null, string? serverAddress = null)
+        {
+            AuthConfig? authConfig = null;
+            if (!string.IsNullOrWhiteSpace(username) && !string.IsNullOrWhiteSpace(password))
+            {
+                authConfig = new AuthConfig
+                {
+                    Username = username,
+                    Password = password,
+                    ServerAddress = serverAddress
+                };
+            }
+
+            await _client.Images.PushImageAsync(
+                repository,
+                new ImagePushParameters { Tag = tag },
+                authConfig,
+                new Progress<JSONMessage>(m => Debug.WriteLine(m.Status ?? m.ErrorMessage ?? m.ProgressMessage)),
+                CancellationToken.None);
+        }
+
+        /// <summary>
+        /// docker save와 동일하게 이미지 tar 아카이브를 파일로 저장합니다.
+        /// </summary>
+        public async Task SaveImageAsync(string image, string tarFilePath)
+        {
+            await using var source = await _client.Images.SaveImageAsync(image, CancellationToken.None);
+            await using var target = File.Create(tarFilePath);
+            await source.CopyToAsync(target);
+        }
+
+        /// <summary>
+        /// docker load와 동일하게 docker save tar 아카이브를 로드합니다.
+        /// </summary>
+        public async Task LoadImageFromTarAsync(string tarFilePath)
+        {
+            await using var source = File.OpenRead(tarFilePath);
+            await _client.Images.LoadImageAsync(
+                new ImageLoadParameters { Quiet = false },
+                source,
+                new Progress<JSONMessage>(m => Debug.WriteLine(m.Status ?? m.ErrorMessage ?? m.ProgressMessage)),
+                CancellationToken.None);
+        }
+
+        /// <summary>
         /// 지정된 이름의 도커 볼륨을 영구적으로 삭제합니다.
         /// </summary>
         public async Task RemoveVolumeAsync(string name)
@@ -527,45 +672,17 @@ namespace DockerDiagram.Helpers
         {
             try
             {
-                var inspect = await _client.Containers.InspectContainerAsync(containerId);
-                string[] cmdShell = inspect.Platform.Contains("windows", StringComparison.OrdinalIgnoreCase)
-                    ? new[] { "cmd", "/c", command }
-                    : new[] { "/bin/sh", "-c", command };
+                var result = await ExecuteCommandWithOutputAsync(containerId, command);
 
-                var execParams = new ContainerExecCreateParameters
+                if (!string.IsNullOrWhiteSpace(result.Stdout))
+                    Debug.WriteLine($"[DockerDiscovery] Exec Output:\n{result.Stdout}");
+
+                if (!string.IsNullOrWhiteSpace(result.Stderr))
+                    Debug.WriteLine($"[DockerDiscovery] Exec Error:\n{result.Stderr}");
+
+                if (result.ExitCode != 0)
                 {
-                    Cmd = cmdShell,
-                    AttachStdout = true,
-                    AttachStderr = true,
-                    Tty = false
-                };
-
-                var execCreateResp = await _client.Exec.ExecCreateContainerAsync(containerId, execParams);
-
-                using (var stream = await _client.Exec.StartAndAttachContainerExecAsync(execCreateResp.ID, false))
-                {
-                    using var stdoutMs = new MemoryStream();
-                    using var stderrMs = new MemoryStream();
-
-                    await stream.CopyOutputToAsync(default, stdoutMs, stderrMs, CancellationToken.None);
-
-                    stdoutMs.Position = 0;
-                    stderrMs.Position = 0;
-
-                    string output = Encoding.UTF8.GetString(stdoutMs.ToArray());
-                    string error = Encoding.UTF8.GetString(stderrMs.ToArray());
-
-                    if (!string.IsNullOrWhiteSpace(output))
-                        Debug.WriteLine($"[DockerDiscovery] Exec Output:\n{output}");
-
-                    if (!string.IsNullOrWhiteSpace(error))
-                        Debug.WriteLine($"[DockerDiscovery] Exec Error:\n{error}");
-                }
-
-                var finalStatus = await _client.Exec.InspectContainerExecAsync(execCreateResp.ID);
-                if (finalStatus.ExitCode != 0)
-                {
-                    Debug.WriteLine($"[DockerDiscovery] Exec Failed (Code: {finalStatus.ExitCode})");
+                    Debug.WriteLine($"[DockerDiscovery] Exec Failed (Code: {result.ExitCode})");
                 }
                 else
                 {
@@ -576,6 +693,46 @@ namespace DockerDiagram.Helpers
             {
                 Debug.WriteLine($"[DockerDiscovery] ExecuteCommandAsync Error: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// 실행 중인 컨테이너 내부에서 명령어를 실행하고 stdout/stderr/exit code를 호출자에게 반환합니다.
+        /// </summary>
+        public async Task<ExecCommandResult> ExecuteCommandWithOutputAsync(string containerId, string command)
+        {
+            var inspect = await _client.Containers.InspectContainerAsync(containerId);
+            string platform = inspect.Platform ?? string.Empty;
+            string[] cmdShell = platform.Contains("windows", StringComparison.OrdinalIgnoreCase)
+                ? new[] { "cmd", "/c", command }
+                : new[] { "/bin/sh", "-c", command };
+
+            var execParams = new ContainerExecCreateParameters
+            {
+                Cmd = cmdShell,
+                AttachStdout = true,
+                AttachStderr = true,
+                Tty = false
+            };
+
+            var execCreateResp = await _client.Exec.ExecCreateContainerAsync(containerId, execParams);
+
+            using var stream = await _client.Exec.StartAndAttachContainerExecAsync(execCreateResp.ID, false);
+            using var stdoutMs = new MemoryStream();
+            using var stderrMs = new MemoryStream();
+
+            await stream.CopyOutputToAsync(default, stdoutMs, stderrMs, CancellationToken.None);
+
+            stdoutMs.Position = 0;
+            stderrMs.Position = 0;
+
+            var finalStatus = await _client.Exec.InspectContainerExecAsync(execCreateResp.ID);
+
+            return new ExecCommandResult
+            {
+                ExitCode = finalStatus.ExitCode,
+                Stdout = Encoding.UTF8.GetString(stdoutMs.ToArray()),
+                Stderr = Encoding.UTF8.GetString(stderrMs.ToArray())
+            };
         }
 
         /// <summary>

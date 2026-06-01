@@ -4,9 +4,11 @@ using DockerDiagram.Models;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
@@ -19,7 +21,7 @@ namespace DockerDiagram.ViewModels
     /// 무거운 비즈니스 로직은 4개의 전담 부서(Sub-ViewModel)로 위임하고,
     /// 본체는 부서 간의 연결과 도커 노드/선 생성 등의 핵심 트랜잭션만 담당합니다.
     /// </summary>
-    public class MainViewModel : ViewModelBase
+    public class MainViewModel : ViewModelBase, IDisposable
     {
         private readonly IDockerService _defaultDockerService;
         private readonly IDialogService _dialogService;
@@ -66,7 +68,12 @@ namespace DockerDiagram.ViewModels
 
         // 도커 통신 동기화 타이머 및 상태
         private DispatcherTimer _autoSyncTimer;
+        private DispatcherTimer _dockerEventSyncTimer;
         private bool _isSyncing = false;
+        private CancellationTokenSource? _dockerEventsCts;
+        private IDockerService? _dockerEventsService;
+        private Task? _dockerEventsTask;
+        private bool _disposed;
         private readonly Dictionary<string, string> _volumeUndoBackups = new();
 
         // =========================================================
@@ -83,25 +90,37 @@ namespace DockerDiagram.ViewModels
             Toolbox = new ToolboxViewModel(this, _defaultDockerService, _dialogService);
             Explorer = new ResourceExplorerViewModel(this, _defaultDockerService, _dialogService);
             Inspector = new InspectorViewModel(this, _dialogService);
+            SheetManager.PropertyChanged += SheetManager_PropertyChanged;
 
             // 2. 초기 탭 생성 및 자동 로드 지시
             SheetManager.AddSheet();
             _ = SheetManager.LoadLastFileIfExistsAsync();
 
-            // 3. 자동 동기화 타이머 세팅 (1초 간격)
+            // 3. docker events를 기본 동기화 신호로 쓰고, 타이머는 놓친 이벤트를 보완하는 안전망으로 둡니다.
             _autoSyncTimer = new DispatcherTimer();
-            _autoSyncTimer.Interval = TimeSpan.FromSeconds(1);
+            _autoSyncTimer.Interval = TimeSpan.FromSeconds(10);
             _autoSyncTimer.Tick += AutoSync_Tick;
             _autoSyncTimer.Start();
 
+            _dockerEventSyncTimer = new DispatcherTimer();
+            _dockerEventSyncTimer.Interval = TimeSpan.FromMilliseconds(600);
+            _dockerEventSyncTimer.Tick += DockerEventSyncTimer_Tick;
+
             // 첫 동기화 실행
             _ = Explorer.SyncWithDockerEngineAsync();
+            RestartDockerEventMonitor();
         }
 
         // =========================================================
         // ⏱️ 도커 엔진 상태 동기화
         // =========================================================
         private async void AutoSync_Tick(object? sender, EventArgs e)
+        {
+            await SyncWithGuardAsync();
+            RestartDockerEventMonitor();
+        }
+
+        private async Task SyncWithGuardAsync()
         {
             if (_isSyncing) return;
             try
@@ -115,11 +134,138 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        private void SheetManager_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(SheetManager.ActiveSheet))
+            {
+                RestartDockerEventMonitor();
+            }
+        }
+
+        private async void DockerEventSyncTimer_Tick(object? sender, EventArgs e)
+        {
+            _dockerEventSyncTimer.Stop();
+            await SyncWithGuardAsync();
+        }
+
+        private void RestartDockerEventMonitor()
+        {
+            if (_disposed) return;
+
+            var service = ActiveSheet?.DockerService ?? _defaultDockerService;
+            if (ReferenceEquals(service, _dockerEventsService) &&
+                _dockerEventsCts != null &&
+                !_dockerEventsCts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            StopDockerEventMonitor();
+
+            _dockerEventsService = service;
+            _dockerEventsCts = new CancellationTokenSource();
+            var token = _dockerEventsCts.Token;
+
+            _dockerEventsTask = Task.Run(() => MonitorDockerEventsLoopAsync(service, token), token);
+        }
+
+        private async Task MonitorDockerEventsLoopAsync(IDockerService service, CancellationToken cancellationToken)
+        {
+            var progress = new Progress<Message>(message => OnDockerEventReceived(message, cancellationToken));
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await service.MonitorDockerEventsAsync(progress, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[DockerEvents] Stream disconnected: {ex.Message}");
+                    await Application.Current.Dispatcher.InvokeAsync(() =>
+                    {
+                        if (!_disposed) Explorer.LastSyncTime = "Docker events reconnecting...";
+                    });
+
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void OnDockerEventReceived(Message message, CancellationToken cancellationToken)
+        {
+            if (cancellationToken.IsCancellationRequested || _disposed) return;
+            if (!IsDiagramRelevantDockerEvent(message)) return;
+
+            Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_disposed || cancellationToken.IsCancellationRequested) return;
+
+                var action = string.IsNullOrWhiteSpace(message.Action) ? "changed" : message.Action;
+                var type = string.IsNullOrWhiteSpace(message.Type) ? "docker" : message.Type;
+                Explorer.LastSyncTime = $"Docker event: {type}/{action}";
+
+                _dockerEventSyncTimer.Stop();
+                _dockerEventSyncTimer.Start();
+            }));
+        }
+
+        private static bool IsDiagramRelevantDockerEvent(Message message)
+        {
+            if (message == null) return false;
+
+            var type = message.Type ?? string.Empty;
+            return type.Equals("container", StringComparison.OrdinalIgnoreCase) ||
+                   type.Equals("volume", StringComparison.OrdinalIgnoreCase) ||
+                   type.Equals("network", StringComparison.OrdinalIgnoreCase) ||
+                   type.Equals("image", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void StopDockerEventMonitor()
+        {
+            _dockerEventSyncTimer?.Stop();
+
+            if (_dockerEventsCts != null)
+            {
+                _dockerEventsCts.Cancel();
+                _dockerEventsCts.Dispose();
+                _dockerEventsCts = null;
+            }
+
+            _dockerEventsService = null;
+            _dockerEventsTask = null;
+        }
+
         public async Task OnDockerStartedAsync()
         {
             Debug.WriteLine("[MainViewModel] Docker started signal received. Refreshing...");
             await Explorer.SyncWithDockerEngineAsync();
             await SheetManager.RestoreLiveStateAsync();
+            RestartDockerEventMonitor();
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            SheetManager.PropertyChanged -= SheetManager_PropertyChanged;
+            _autoSyncTimer.Stop();
+            _autoSyncTimer.Tick -= AutoSync_Tick;
+            _dockerEventSyncTimer.Stop();
+            _dockerEventSyncTimer.Tick -= DockerEventSyncTimer_Tick;
+            StopDockerEventMonitor();
         }
 
         // =========================================================

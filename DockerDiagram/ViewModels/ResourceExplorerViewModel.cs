@@ -9,6 +9,7 @@ using System.Windows.Input;
 using Docker.DotNet.Models;
 using DockerDiagram.Helpers;
 using DockerDiagram.Models;
+using DockerDiagram.Views;
 
 namespace DockerDiagram.ViewModels
 {
@@ -72,6 +73,9 @@ namespace DockerDiagram.ViewModels
         public ICommand DeleteVolumeItemCommand { get; }
         public ICommand DeleteNetworkItemCommand { get; }
         public ICommand DeleteImageCommand { get; }
+        public ICommand TagImageCommand { get; }
+        public ICommand PushImageCommand { get; }
+        public ICommand SaveImageCommand { get; }
         public ICommand SearchHubCommand { get; }
         public ICommand PullImageCommand { get; }
 
@@ -85,6 +89,9 @@ namespace DockerDiagram.ViewModels
             DeleteVolumeItemCommand = new AsyncRelayCommand(DeleteVolumeItemAsync);
             DeleteNetworkItemCommand = new AsyncRelayCommand(DeleteNetworkItemAsync);
             DeleteImageCommand = new AsyncRelayCommand(DeleteImageAsync);
+            TagImageCommand = new AsyncRelayCommand(TagImageAsync);
+            PushImageCommand = new AsyncRelayCommand(PushImageAsync);
+            SaveImageCommand = new AsyncRelayCommand(SaveImageAsync);
             SearchHubCommand = new AsyncRelayCommand(ExecuteSearchHubAsync);
             PullImageCommand = new AsyncRelayCommand(ExecutePullImageAsync);
 
@@ -311,6 +318,96 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        private async Task TagImageAsync(object? parameter)
+        {
+            if (parameter is not DockerImage img) return;
+
+            var sourceImage = GetImageReference(img);
+            var window = new ImageTagWindow(sourceImage, img.Repository, img.Tag);
+            if (window.ShowDialog() != true) return;
+
+            try
+            {
+                var service = (IImageService)(_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService);
+                await service.TagImageAsync(sourceImage, window.Repository, window.ImageTag, window.Force);
+                await SyncWithDockerEngineAsync();
+                _dialogService.ShowInfo($"이미지 태그를 추가했습니다.\n{window.Repository}:{window.ImageTag}", "Tag Image");
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"이미지 태그 실패: {ex.Message}", "Tag Image");
+            }
+        }
+
+        private async Task PushImageAsync(object? parameter)
+        {
+            if (parameter is not DockerImage img) return;
+            if (img.Repository == "<none>" || img.Tag == "<none>")
+            {
+                _dialogService.ShowInfo("Push 전에 먼저 이미지에 repository와 tag를 붙여 주세요.", "Push Image");
+                return;
+            }
+
+            var window = new ImagePushWindow(img.Repository, img.Tag);
+            if (window.ShowDialog() != true) return;
+
+            if (!_dialogService.ShowConfirm($"[{window.Repository}:{window.ImageTag}] 이미지를 push할까요?", "Push Image")) return;
+
+            try
+            {
+                IsPulling = true;
+                PullProgressValue = 0;
+                PullProgressMessage = "Push 준비 중...";
+
+                var service = (IImageService)(_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService);
+                await service.PushImageAsync(
+                    window.Repository,
+                    window.ImageTag,
+                    window.Username,
+                    window.Password,
+                    window.ServerAddress);
+
+                PullProgressValue = 100;
+                PullProgressMessage = "Push 완료";
+                _dialogService.ShowInfo("이미지 push가 완료되었습니다.", "Push Image");
+            }
+            catch (Exception ex)
+            {
+                PullProgressMessage = "Push 실패";
+                _dialogService.ShowError($"이미지 push 실패: {ex.Message}", "Push Image");
+            }
+            finally
+            {
+                IsPulling = false;
+            }
+        }
+
+        private async Task SaveImageAsync(object? parameter)
+        {
+            if (parameter is not DockerImage img) return;
+
+            var imageRef = GetImageReference(img);
+            var defaultFileName = MakeSafeFileName(imageRef.Replace(':', '_')) + ".tar";
+            var path = _dialogService.ShowSaveFileDialog(
+                "Tar file (*.tar)|*.tar|All files (*.*)|*.*",
+                ".tar",
+                defaultFileName,
+                "Save Docker Image");
+
+            if (string.IsNullOrWhiteSpace(path)) return;
+
+            try
+            {
+                var service = (IImageService)(_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService);
+                await service.SaveImageAsync(imageRef, path);
+                _dialogService.ShowInfo($"이미지를 저장했습니다.\n{path}", "Save Image");
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"이미지 save 실패: {ex.Message}", "Save Image");
+            }
+        }
+
         private async Task ExecuteSearchHubAsync(object? parameter)
         {
             if (string.IsNullOrWhiteSpace(HubSearchTerm)) return;
@@ -370,6 +467,29 @@ namespace DockerDiagram.ViewModels
             if (!_usageStats.ContainsKey(imageName)) _usageStats[imageName] = 0;
             _usageStats[imageName]++;
             RefreshTemplates();
+        }
+
+        private static string GetImageReference(DockerImage image)
+        {
+            if (!string.IsNullOrWhiteSpace(image.Repository) &&
+                !string.IsNullOrWhiteSpace(image.Tag) &&
+                image.Repository != "<none>" &&
+                image.Tag != "<none>")
+            {
+                return $"{image.Repository}:{image.Tag}";
+            }
+
+            return image.Id;
+        }
+
+        private static string MakeSafeFileName(string value)
+        {
+            foreach (var invalidChar in System.IO.Path.GetInvalidFileNameChars())
+            {
+                value = value.Replace(invalidChar, '_');
+            }
+
+            return string.IsNullOrWhiteSpace(value) ? "image" : value;
         }
 
         private void RefreshTemplates()
