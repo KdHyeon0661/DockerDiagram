@@ -66,9 +66,11 @@ namespace DockerDiagram.Helpers
                         char[] buffer = new char[1024];
                         StringBuilder sb = new StringBuilder();
 
-                        while (!process.StandardError.EndOfStream)
+                        while (true)
                         {
                             int bytesRead = await process.StandardError.ReadAsync(buffer, 0, buffer.Length);
+                            if (bytesRead == 0) break;
+
                             if (bytesRead > 0)
                             {
                                 string text = new string(buffer, 0, bytesRead);

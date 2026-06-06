@@ -474,6 +474,9 @@ namespace DockerDiagram.ViewModels
         {
             if (ActiveSheet == null) return;
             var historyBefore = CaptureDiagramState(ActiveSheet);
+            var safePorts = ports ?? new List<string>();
+            var safeEnvs = envs ?? new List<string>();
+            var safeVolumes = volumes ?? new List<string>();
 
             bool isNameUsed = ActiveSheet.Nodes.Any(n => n.Type == NodeType.Container && n.Name == name);
             if (isNameUsed)
@@ -482,9 +485,9 @@ namespace DockerDiagram.ViewModels
                 return;
             }
 
-            if (ports != null && ports.Count > 0)
+            if (safePorts.Count > 0)
             {
-                var newHostPorts = ports.Select(p => p.Split(':')[0]).ToList();
+                var newHostPorts = safePorts.Select(p => p.Split(':')[0]).ToList();
                 var existingContainers = ActiveSheet.Nodes.Where(n => n.Type == NodeType.Container && n.PortBindings != null);
 
                 foreach (var existingNode in existingContainers)
@@ -500,7 +503,7 @@ namespace DockerDiagram.ViewModels
             }
 
             var namedVolumesToDraw = new List<string>();
-            foreach (var vol in volumes)
+            foreach (var vol in safeVolumes)
             {
                 bool isBindMount = System.Text.RegularExpressions.Regex.IsMatch(vol, @"^([a-zA-Z]:[\\/]|/|\.|~)");
                 if (!isBindMount) namedVolumesToDraw.Add(vol);
@@ -576,13 +579,13 @@ namespace DockerDiagram.ViewModels
                 }
 
                 string containerId = await _containerService.CreateAndStartContainerAsync(
-                    name, image, tag, ports, envs, volumes, restartPolicy, memoryMb, cpuCount, command, tty);
+                    name, image, tag, safePorts, safeEnvs, safeVolumes, restartPolicy, memoryMb, cpuCount, command, tty);
 
                 node.Name = name;
                 node.ContainerId = containerId;
-                node.PortInfo = string.Join(", ", ports);
-                node.PortBindings = ports;
-                node.EnvironmentVariables = envs;
+                node.PortInfo = string.Join(", ", safePorts);
+                node.PortBindings = safePorts;
+                node.EnvironmentVariables = safeEnvs;
                 node.RestartPolicy = restartPolicy;
                 node.IsCreating = false;
                 node.StatusColor = "#28a745";
@@ -794,10 +797,8 @@ namespace DockerDiagram.ViewModels
                         RedirectStandardOutput = true,
                         RedirectStandardError = true
                     };
-                    using (var process = Process.Start(startInfo))
-                    {
-                        process.WaitForExit();
-                    }
+                    using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("cmd.exe 프로세스를 시작할 수 없습니다.");
+                    process.WaitForExit();
                 });
 
                 var allContainers = await _containerService.GetContainersAsync();
@@ -901,7 +902,8 @@ namespace DockerDiagram.ViewModels
             if (!string.IsNullOrEmpty(uploadedFilePath) && System.IO.File.Exists(uploadedFilePath))
             {
                 dockerfilePath = uploadedFilePath;
-                buildContextPath = Path.GetDirectoryName(uploadedFilePath);
+                buildContextPath = Path.GetDirectoryName(uploadedFilePath)
+                    ?? throw new InvalidOperationException("Dockerfile 경로의 상위 폴더를 확인할 수 없습니다.");
             }
             else
             {
@@ -937,11 +939,9 @@ namespace DockerDiagram.ViewModels
                         RedirectStandardOutput = true,
                         RedirectStandardError = true
                     };
-                    using (var process = Process.Start(startInfo))
-                    {
-                        process.WaitForExit();
-                        buildSuccess = process.ExitCode == 0;
-                    }
+                    using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("docker build 프로세스를 시작할 수 없습니다.");
+                    process.WaitForExit();
+                    buildSuccess = process.ExitCode == 0;
                 });
 
                 ActiveSheet.Nodes.Remove(dummyNode);
@@ -986,7 +986,8 @@ namespace DockerDiagram.ViewModels
                 if (!string.IsNullOrEmpty(uploadedFilePath) && File.Exists(uploadedFilePath))
                 {
                     dockerfilePath = uploadedFilePath;
-                    buildContextPath = Path.GetDirectoryName(uploadedFilePath);
+                    buildContextPath = Path.GetDirectoryName(uploadedFilePath)
+                        ?? throw new InvalidOperationException("Dockerfile 경로의 상위 폴더를 확인할 수 없습니다.");
                 }
                 else
                 {
@@ -1012,14 +1013,9 @@ namespace DockerDiagram.ViewModels
                         RedirectStandardError = true
                     };
 
-                    using (var process = Process.Start(startInfo))
-                    {
-                        if (process != null)
-                        {
-                            process.WaitForExit();
-                            buildSuccess = process.ExitCode == 0;
-                        }
-                    }
+                    using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("docker build 프로세스를 시작할 수 없습니다.");
+                    process.WaitForExit();
+                    buildSuccess = process.ExitCode == 0;
                 });
 
                 if (buildSuccess)

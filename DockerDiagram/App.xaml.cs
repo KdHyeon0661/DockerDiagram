@@ -10,7 +10,7 @@ namespace DockerDiagram
     [SupportedOSPlatform("windows")]
     public partial class App : Application
     {
-        public static List<IDockerService> ActiveDockerServices { get; } = new List<IDockerService>();
+        public static List<IDockerService> ActiveDockerServices { get; } = [];
 
         protected override void OnStartup(StartupEventArgs e)
         {

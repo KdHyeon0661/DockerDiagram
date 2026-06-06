@@ -231,7 +231,7 @@ namespace DockerDiagram.Helpers
         /// <summary>
         /// 주어진 문자열이 유효한 형태의 IPv4 주소인지 검사합니다.
         /// </summary>
-        private static bool IsValidIp(string ip) => !string.IsNullOrWhiteSpace(ip) && ip.Count(c => c == '.') == 3;
+        private static bool IsValidIp(string? ip) => !string.IsNullOrWhiteSpace(ip) && ip.Count(c => c == '.') == 3;
 
         /// <summary>
         /// 특정 컨테이너와 연결된 볼륨 목록을 찾고, .env 파일과 연동할 수 있는 환경변수 포맷의 문자열 리스트로 반환합니다.
@@ -312,7 +312,7 @@ namespace DockerDiagram.Helpers
             foreach (var container in containers)
             {
                 if (container.NetworkIpMap != null &&
-                    container.NetworkIpMap.TryGetValue(networkName, out string ip) &&
+                    container.NetworkIpMap.TryGetValue(networkName, out var ip) &&
                     IsValidIp(ip))
                 {
                     var parts = ip.Split('.');

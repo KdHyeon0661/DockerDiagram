@@ -1683,7 +1683,7 @@ namespace DockerDiagram
                     if (border == null) return;
 
                     // 드래그할 데이터 객체 준비
-                    DockerResource container = null;
+                    DockerResource? container = null;
 
                     // [CASE 1] 템플릿 목록에서 드래그 (DataContext가 TemplateItem인 경우)
                     if (border.DataContext is TemplateItem template)

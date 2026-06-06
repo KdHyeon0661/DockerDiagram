@@ -254,7 +254,7 @@ namespace DockerDiagram.Views
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {
                 string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
-                string envFile = files.FirstOrDefault(); // 무조건 1개만 추출
+                string? envFile = files.FirstOrDefault(); // 무조건 1개만 추출
 
                 if (!string.IsNullOrEmpty(envFile))
                 {

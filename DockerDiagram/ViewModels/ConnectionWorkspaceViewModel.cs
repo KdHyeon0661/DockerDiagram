@@ -7,21 +7,14 @@ namespace DockerDiagram.ViewModels
     /// <summary>
     /// 하나의 Docker 접속 대상(Local 또는 SSH)과 그 안에 속한 여러 맵/시트를 묶는 상위 탭 모델입니다.
     /// </summary>
-    public class ConnectionWorkspaceViewModel : ViewModelBase
+    public class ConnectionWorkspaceViewModel(ConnectionProfile profile, IDockerService dockerService) : ViewModelBase
     {
-        private string _displayName;
+        private string _displayName = string.IsNullOrWhiteSpace(profile.Name) ? "Docker" : profile.Name;
         private SheetViewModel? _activeSheet;
 
-        public ConnectionWorkspaceViewModel(ConnectionProfile profile, IDockerService dockerService)
-        {
-            Profile = profile;
-            DockerService = dockerService;
-            _displayName = string.IsNullOrWhiteSpace(profile.Name) ? "Docker" : profile.Name;
-        }
-
-        public ConnectionProfile Profile { get; }
-        public IDockerService DockerService { get; }
-        public ObservableCollection<SheetViewModel> Sheets { get; } = new();
+        public ConnectionProfile Profile { get; } = profile;
+        public IDockerService DockerService { get; } = dockerService;
+        public ObservableCollection<SheetViewModel> Sheets { get; } = [];
 
         public string DisplayName
         {
