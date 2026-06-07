@@ -36,6 +36,7 @@
     {
         Local,          // 내 PC의 로컬 도커 프로세스
         SshRemote,      // SSH 터널링을 통해 연결된 원격 서버의 도커
+        DockerContext,  // Docker CLI context의 Docker endpoint로 직접 연결
         Kubernetes      // (미래 확장용) 쿠버네티스 API 서버 연결
     }
 }

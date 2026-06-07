@@ -2,8 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Connection Manager"
-        Width="720"
-        Height="420"
+        Width="820"
+        Height="500"
         WindowStartupLocation="CenterOwner"
         Background="#F6F7F8">
     <Grid Margin="16">
@@ -15,40 +15,89 @@
 
         <TextBlock Text="Connection Manager" FontSize="18" FontWeight="SemiBold" Foreground="#333" Margin="0,0,0,12"/>
 
-        <Border Grid.Row="1" Background="White" BorderBrush="#D8DDE3" BorderThickness="1">
-            <DataGrid x:Name="ConnectionGrid"
-                      AutoGenerateColumns="False"
-                      CanUserAddRows="False"
-                      CanUserDeleteRows="False"
-                      IsReadOnly="True"
-                      SelectionMode="Single"
-                      HeadersVisibility="Column"
-                      BorderThickness="0"
-                      GridLinesVisibility="Horizontal"
-                      SelectionChanged="ConnectionGrid_SelectionChanged">
-                <DataGrid.Columns>
-                    <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" Width="180"/>
-                    <DataGridTextColumn Header="Type" Binding="{Binding KindLabel}" Width="80"/>
-                    <DataGridTextColumn Header="Host" Binding="{Binding HostSummary}" Width="*"/>
-                    <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="110"/>
-                    <DataGridTextColumn Header="Sheets" Binding="{Binding Sheets.Count}" Width="70"/>
-                </DataGrid.Columns>
-            </DataGrid>
-        </Border>
+        <TabControl Grid.Row="1">
+            <TabItem Header="App Connections">
+                <Grid Margin="0,10,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-        <Grid Grid.Row="2" Margin="0,12,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
+                    <Border Background="White" BorderBrush="#D8DDE3" BorderThickness="1">
+                        <DataGrid x:Name="ConnectionGrid"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  CanUserDeleteRows="False"
+                                  IsReadOnly="True"
+                                  SelectionMode="Single"
+                                  HeadersVisibility="Column"
+                                  BorderThickness="0"
+                                  GridLinesVisibility="Horizontal"
+                                  SelectionChanged="ConnectionGrid_SelectionChanged">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" Width="180"/>
+                                <DataGridTextColumn Header="Type" Binding="{Binding KindLabel}" Width="80"/>
+                                <DataGridTextColumn Header="Host" Binding="{Binding HostSummary}" Width="*"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="110"/>
+                                <DataGridTextColumn Header="Sheets" Binding="{Binding Sheets.Count}" Width="70"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
 
-            <StackPanel Orientation="Horizontal">
-                <TextBox x:Name="txtConnectionName" Width="220" Padding="6" VerticalContentAlignment="Center"/>
-                <Button Content="Rename" Width="88" Margin="8,0,0,0" Click="Rename_Click"/>
-                <Button Content="Remove" Width="88" Margin="8,0,0,0" Foreground="#dc3545" Click="Remove_Click"/>
-            </StackPanel>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,12,0,0">
+                        <TextBox x:Name="txtConnectionName" Width="220" Padding="6" VerticalContentAlignment="Center"/>
+                        <Button Content="Rename" Width="88" Margin="8,0,0,0" Click="Rename_Click"/>
+                        <Button Content="Remove" Width="88" Margin="8,0,0,0" Foreground="#dc3545" Click="Remove_Click"/>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
 
-            <Button Grid.Column="1" Content="Close" Width="88" Click="Close_Click"/>
-        </Grid>
+            <TabItem Header="Docker Contexts">
+                <Grid Margin="0,10,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Background="White" BorderBrush="#D8DDE3" BorderThickness="1">
+                        <DataGrid x:Name="DockerContextGrid"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  CanUserDeleteRows="False"
+                                  IsReadOnly="True"
+                                  SelectionMode="Single"
+                                  HeadersVisibility="Column"
+                                  BorderThickness="0"
+                                  GridLinesVisibility="Horizontal">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Current" Binding="{Binding CurrentText}" Width="70"/>
+                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="170"/>
+                                <DataGridTextColumn Header="Docker Endpoint" Binding="{Binding DockerEndpoint}" Width="*"/>
+                                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="180"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="120"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
+
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button Content="Refresh" Width="88" Click="RefreshContexts_Click"/>
+                        <Button Content="Use" Width="88" Margin="8,0,0,0" Click="UseContext_Click"/>
+                        <Button Content="Create" Width="88" Margin="8,0,0,0" Click="CreateContext_Click"/>
+                        <Button Content="Remove" Width="88" Margin="8,0,0,0" Foreground="#dc3545" Click="RemoveContext_Click"/>
+                        <Button Content="Open Workspace" Width="128" Margin="8,0,0,0" Background="#007ACC" Foreground="White" BorderThickness="0" Click="OpenContextWorkspace_Click"/>
+                    </StackPanel>
+
+                    <TextBlock x:Name="DockerContextStatusText"
+                               Grid.Row="2"
+                               Text="Docker CLI contexts are managed separately from app workspaces."
+                               Foreground="#777"
+                               FontSize="12"
+                               Margin="0,8,0,0"/>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <Button Grid.Row="2" Content="Close" Width="88" Height="30" HorizontalAlignment="Right" Margin="0,12,0,0" Click="Close_Click"/>
     </Grid>
 </Window>

@@ -1,6 +1,5 @@
 ﻿using DockerDiagram.Helpers;
 using DockerDiagram.Models;
-using DockerDiagram.Views;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -42,6 +41,19 @@ namespace DockerDiagram.ViewModels
         public string Name => Title; // 인터페이스의 Name을 Group의 Title로 연결
         public GroupType Type { get; }
         public string Driver { get; set; } = "bridge"; // 네트워크 드라이버 정보
+        public string Subnet { get; set; } = "";
+        public string Gateway { get; set; } = "";
+        public string IpRange { get; set; } = "";
+        public bool Internal { get; set; }
+        public bool Attachable { get; set; }
+        public bool EnableIPv6 { get; set; }
+        public bool External { get; set; }
+        public string ComposeNetworkName { get; set; } = "";
+        public string ComposeRawNetworkYaml { get; set; } = "";
+        public Dictionary<string, string> Labels { get; set; } = new();
+        public Dictionary<string, string> DriverOptions { get; set; } = new();
+        public Dictionary<string, string> AuxAddresses { get; set; } = new();
+        public string DockerNetworkName => string.IsNullOrWhiteSpace(ComposeNetworkName) ? Title : ComposeNetworkName;
         public int ZIndex { get => _zIndex; set => SetProperty(ref _zIndex, value); }
         public bool IsSelected { get => _isSelected; set => SetProperty(ref _isSelected, value); }
         public bool IsDockerConnected
@@ -57,6 +69,27 @@ namespace DockerDiagram.ViewModels
         }
 
         public bool IsDockerDisconnected => Type == GroupType.Network && !IsDockerConnected;
+
+        public NetworkCreateOptions ToNetworkCreateOptions()
+        {
+            return new NetworkCreateOptions
+            {
+                Name = Title,
+                Driver = string.IsNullOrWhiteSpace(Driver) ? "bridge" : Driver,
+                Subnet = Subnet,
+                Gateway = Gateway,
+                IpRange = IpRange,
+                Internal = Internal,
+                Attachable = Attachable,
+                EnableIPv6 = EnableIPv6,
+                External = External,
+                ComposeNetworkName = ComposeNetworkName,
+                ComposeRawNetworkYaml = ComposeRawNetworkYaml,
+                Labels = new Dictionary<string, string>(Labels),
+                DriverOptions = new Dictionary<string, string>(DriverOptions),
+                AuxAddresses = new Dictionary<string, string>(AuxAddresses)
+            };
+        }
         #endregion
 
         #region Layout Properties
@@ -209,6 +242,7 @@ namespace DockerDiagram.ViewModels
             {
                 var networks = await _networkService.GetNetworksAsync();
                 var match = networks.FirstOrDefault(n => !string.IsNullOrWhiteSpace(Id) && n.Id == Id)
+                            ?? networks.FirstOrDefault(n => string.Equals(n.Name, DockerNetworkName, StringComparison.OrdinalIgnoreCase))
                             ?? networks.FirstOrDefault(n => string.Equals(n.Name, Title, StringComparison.OrdinalIgnoreCase));
 
                 if (match == null)
@@ -219,7 +253,10 @@ namespace DockerDiagram.ViewModels
                 }
 
                 Id = match.Id;
-                Title = match.Name;
+                if (!External && string.IsNullOrWhiteSpace(ComposeNetworkName))
+                    Title = match.Name;
+                else
+                    ComposeNetworkName = match.Name;
                 Driver = match.Driver;
                 IsDockerConnected = true;
                 return true;
@@ -242,16 +279,24 @@ namespace DockerDiagram.ViewModels
         {
             if (!ContainedNodes.Contains(node))
             {
+                if (!isRestoring && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
+                {
+                    if (ParentSheet?.Profile.Type == EndpointType.Local && !DockerServiceHelper.IsDockerRunning()) return;
+
+                    if (!await node.ValidateNetworkOptionsBeforeConnectAsync(_networkService, this.Title, DockerNetworkName))
+                    {
+                        return;
+                    }
+                }
+
                 ContainedNodes.Add(node);
                 OnModified?.Invoke(this, EventArgs.Empty);
 
                 if (!isRestoring && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
                 {
-                    if (ParentSheet?.Profile.Type == EndpointType.Local && !DockerServiceHelper.IsDockerRunning()) return;
-
                     try
                     {
-                        await _networkService.ConnectNetworkAsync(this.Title, node.ContainerId);
+                        await _networkService.ConnectNetworkAsync(DockerNetworkName, node.ContainerId, node.GetNetworkOptions(this.Title));
                     }
                     catch (Exception ex)
                     {
@@ -289,7 +334,7 @@ namespace DockerDiagram.ViewModels
 
                     try
                     {
-                        await _networkService.DisconnectNetworkAsync(this.Title, node.ContainerId);
+                        await _networkService.DisconnectNetworkAsync(DockerNetworkName, node.ContainerId);
                     }
                     catch (Exception ex)
                     {
@@ -335,14 +380,8 @@ namespace DockerDiagram.ViewModels
         {
             if (ContainedNodes.Count == 0) return;
 
-            var dlg = new Views.ArrangeDialog(_dialogService);
-            if (App.Current.MainWindow != null)
-                dlg.Owner = App.Current.MainWindow;
-
-            if (dlg.ShowDialog() == true)
+            if (_dialogService.TryShowArrangeDialog(out int cols))
             {
-                int cols = dlg.Columns;
-
                 double padding = 20;
                 double headerHeight = 20;
                 double gap = 20;

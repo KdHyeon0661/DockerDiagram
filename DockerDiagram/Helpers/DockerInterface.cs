@@ -55,8 +55,10 @@ namespace DockerDiagram.Helpers
         Task<List<DockerVolume>> GetVolumesAsync();
         Task<VolumeResponse> InspectVolumeAsync(string name);
         Task CreateVolumeAsync(string name, string driver);
-        Task RemoveVolumeAsync(string name);
+        Task CreateVolumeAsync(VolumeCreateOptions options);
+        Task RemoveVolumeAsync(string name, bool force = false);
         Task<List<string>> GetContainersUsingVolumeAsync(string volumeName);
+        Task<List<VolumeUsageInfo>> GetVolumeUsageDetailsAsync(string volumeName);
         Task BackupVolumeAsync(string volumeName, string hostTarFilePath);
         Task RestoreVolumeAsync(string volumeName, string hostTarFilePath);
     }
@@ -69,8 +71,9 @@ namespace DockerDiagram.Helpers
         Task<List<DockerNetworkGroup>> GetNetworksAsync();
         Task<NetworkResponse> InspectNetworkAsync(string networkId);
         Task<string> CreateNetworkAsync(string name, string driver);
+        Task<string> CreateNetworkAsync(NetworkCreateOptions options);
         Task RemoveNetworkAsync(string id);
-        Task ConnectNetworkAsync(string networkId, string containerId, string? staticIp = null);
+        Task ConnectNetworkAsync(string networkId, string containerId, ContainerNetworkOptions? options = null);
         Task DisconnectNetworkAsync(string networkId, string containerId);
     }
 
@@ -81,6 +84,8 @@ namespace DockerDiagram.Helpers
     {
         Task<bool> PingAsync();
         Task MonitorDockerEventsAsync(IProgress<Message> progress, CancellationToken cancellationToken);
+        Task<SystemDiskUsage> GetSystemDiskUsageAsync();
+        Task<DockerPruneResult> PruneAsync(DockerPruneOptions options);
     }
 
     /// <summary>
@@ -96,6 +101,7 @@ namespace DockerDiagram.Helpers
         Task PushImageAsync(string repository, string tag, string? username = null, string? password = null, string? serverAddress = null);
         Task SaveImageAsync(string image, string tarFilePath);
         Task LoadImageFromTarAsync(string tarFilePath);
+        Task BuildImageAsync(string targetImageName, string buildContextPath, string dockerfilePath, IProgress<JSONMessage>? progress = null);
         Task<List<ImageSearchResponse>> SearchImagesAsync(string term, int limit = 20);
         Task PullImageWithProgressAsync(string image, string tag, IProgress<JSONMessage> progress, string? username = null, string? password = null, string? serverAddress = null);
     }

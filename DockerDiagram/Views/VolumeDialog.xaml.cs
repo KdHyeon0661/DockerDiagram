@@ -1,50 +1,106 @@
-﻿using DockerDiagram.Helpers; // IDialogService 사용을 위해 추가
+using DockerDiagram.Helpers;
+using DockerDiagram.Models;
+using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 
 namespace DockerDiagram.Views
 {
     /// <summary>
-    /// 다이어그램 캔버스에서 새로운 도커 볼륨(Volume)을 물리적으로 생성하기 위해
-    /// 사용자로부터 볼륨 이름과 드라이버(local 등)를 입력받는 UI 팝업 창(View) 클래스입니다.
+    /// 다이어그램 캔버스에서 새로운 도커 볼륨(Volume)을 생성하거나 외부 볼륨을 참조하기 위한 팝업 창입니다.
     /// </summary>
-    public partial class VolumeDialog : Window // 새 도커 볼륨 생성 대화상자
+    public partial class VolumeDialog : Window
     {
         private readonly IDialogService _dialogService;
 
-        /// <summary>
-        /// 사용자가 입력한 새로운 볼륨의 이름을 반환합니다.
-        /// </summary>
-        public string VolumeName => txtName.Text.Trim(); // 볼륨 이름
+        public string VolumeName => txtName.Text.Trim();
 
-        /// <summary>
-        /// 사용자가 입력한 볼륨 드라이버를 반환하며, 기본값은 "local"입니다.
-        /// </summary>
-        public string Driver => txtDriver.Text.Trim(); // 드라이버. 기본값은 "local"
+        public string Driver => txtDriver.Text.Trim();
 
-        /// <summary>
-        /// 대화상자를 초기화하고 다이얼로그 서비스를 주입받습니다.
-        /// 창이 열리면 즉시 볼륨 이름을 입력할 수 있도록 텍스트 박스에 포커스를 맞춥니다.
-        /// </summary>
-        public VolumeDialog(IDialogService dialogService)
+        public VolumeCreateOptions CreateOptions => new()
+        {
+            Name = VolumeName,
+            DockerVolumeName = txtDockerVolumeName.Text.Trim(),
+            Driver = string.IsNullOrWhiteSpace(Driver) ? "local" : Driver,
+            External = chkExternal.IsChecked == true,
+            Labels = ParseKeyValueLines(txtLabels.Text),
+            DriverOptions = ParseKeyValueLines(txtDriverOptions.Text)
+        };
+
+        public VolumeDialog(IDialogService dialogService, VolumeCreateOptions? initialOptions = null)
         {
             InitializeComponent();
-            _dialogService = dialogService; // 서비스 할당
+            _dialogService = dialogService;
+
+            if (initialOptions != null)
+            {
+                Title = "Edit Volume Options";
+                btnOk.Content = "Apply";
+                txtName.Text = initialOptions.Name;
+                txtDockerVolumeName.Text = initialOptions.DockerVolumeName;
+                txtDriver.Text = initialOptions.Driver;
+                chkExternal.IsChecked = initialOptions.External;
+                txtLabels.Text = FormatKeyValueLines(initialOptions.Labels);
+                txtDriverOptions.Text = FormatKeyValueLines(initialOptions.DriverOptions);
+            }
 
             txtName.Focus();
         }
 
-        /// <summary>
-        /// 'Create' 확인 버튼을 눌렀을 때 실행되며, 볼륨 이름이 정상적으로 입력되었는지 검증한 후 성공 결과를 반환하며 창을 닫습니다.
-        /// </summary>
-        // 확인 버튼
         private void BtnOk_Click(object sender, RoutedEventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(VolumeName)) // 볼륨 이름이 비어있는지 확인
+            if (string.IsNullOrWhiteSpace(VolumeName))
             {
                 _dialogService.ShowError("볼륨 명을 입력하세요.", "입력 오류");
                 return;
             }
+
+            if (!ValidateKeyValueLines(txtLabels.Text, "Labels")) return;
+            if (!ValidateKeyValueLines(txtDriverOptions.Text, "Driver Options")) return;
+
             DialogResult = true;
+        }
+
+        private bool ValidateKeyValueLines(string text, string title)
+        {
+            foreach (var line in GetMeaningfulLines(text))
+            {
+                int index = line.IndexOf('=');
+                if (index <= 0)
+                {
+                    _dialogService.ShowError($"{title} 항목은 key=value 형식이어야 합니다.\n문제 항목: {line}", "입력 오류");
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static Dictionary<string, string> ParseKeyValueLines(string text)
+        {
+            var result = new Dictionary<string, string>();
+            foreach (var line in GetMeaningfulLines(text))
+            {
+                int index = line.IndexOf('=');
+                if (index <= 0) continue;
+                result[line[..index].Trim()] = line[(index + 1)..].Trim();
+            }
+            return result;
+        }
+
+        private static string FormatKeyValueLines(Dictionary<string, string> values)
+        {
+            return values == null || values.Count == 0
+                ? string.Empty
+                : string.Join("\n", values.Select(kv => $"{kv.Key}={kv.Value}"));
+        }
+
+        private static IEnumerable<string> GetMeaningfulLines(string text)
+        {
+            return (text ?? string.Empty)
+                .Split(new[] { "\r\n", "\n" }, System.StringSplitOptions.None)
+                .Select(line => line.Trim())
+                .Where(line => !string.IsNullOrWhiteSpace(line));
         }
     }
 }

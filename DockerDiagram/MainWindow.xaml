@@ -6,7 +6,7 @@
         xmlns:vm="clr-namespace:DockerDiagram.ViewModels"
         xmlns:local="clr-namespace:DockerDiagram.Helpers"
         mc:Ignorable="d"
-        Title="Visual Docker Manager" Height="700" Width="1200"
+        Title="Visual Docker Manager" Height="850" Width="1450"
         WindowStartupLocation="CenterScreen"
         PreviewKeyDown="Window_PreviewKeyDown"
         Loaded="Window_Loaded"
@@ -1095,6 +1095,21 @@
                                 </Button.ContentTemplate>
                             </Button>
                             <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
+                            <Button Click="ShowDiskUsage_Click" Style="{StaticResource MenuItemStyle}" ToolTip="현재 Docker 엔진의 이미지, 컨테이너, 볼륨, 빌드 캐시 디스크 사용량을 봅니다.">
+                                <Button.ContentTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="25"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="DU" HorizontalAlignment="Center" FontSize="11" FontWeight="SemiBold" Foreground="#007ACC"/>
+                                            <TextBlock Grid.Column="1" Text="Disk Usage..."/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
+                            <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
                             <CheckBox IsChecked="{Binding History.IncludeDockerResourceHistory, Mode=TwoWay}"
                                       Margin="12,7,8,7"
                                       ToolTip="체크하면 컨테이너/볼륨/네트워크 생성과 삭제도 Undo/Redo 스택에 저장합니다.">
@@ -1183,10 +1198,10 @@
             </Border>
         </Grid>
 
-        <Border Grid.Column="1" Grid.Row="0" Grid.RowSpan="2" Width="300" HorizontalAlignment="Right" Background="White" 
+        <Border Grid.Column="1" Grid.Row="0" Grid.RowSpan="2" Width="420" HorizontalAlignment="Right" Background="White" 
                 BorderBrush="#ccc" BorderThickness="1,0,0,0" Panel.ZIndex="100">
             <Border.RenderTransform>
-                <TranslateTransform x:Name="PanelTransform" X="300"/>
+                <TranslateTransform x:Name="PanelTransform" X="420"/>
             </Border.RenderTransform>
             <Border.Style>
                 <Style TargetType="Border">
@@ -1202,7 +1217,7 @@
                             <DataTrigger.ExitActions>
                                 <BeginStoryboard>
                                     <Storyboard>
-                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" To="300" Duration="0:0:0.3" AccelerationRatio="0.9"/>
+                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" To="420" Duration="0:0:0.3" AccelerationRatio="0.9"/>
                                     </Storyboard>
                                 </BeginStoryboard>
                             </DataTrigger.ExitActions>
@@ -1471,6 +1486,19 @@
                                                 </Style>
                                             </MenuItem.Style>
                                         </MenuItem>
+
+                                        <MenuItem Header="⚙ 옵션 편집 / 재생성" Command="{Binding RecreateVolumeCommand}">
+                                            <MenuItem.Style>
+                                                <Style TargetType="MenuItem">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Type}" Value="Volume">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </MenuItem.Style>
+                                        </MenuItem>
                                     </ContextMenu>
                                 </Grid.ContextMenu>
                                 <Grid.RowDefinitions>
@@ -1704,6 +1732,80 @@
 
                                 <StackPanel Grid.Row="5" Margin="0,0,0,5">
 
+                                    <Border Background="#F9F9F9" BorderBrush="#DDD" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,10">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Type}" Value="Container">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <StackPanel>
+                                            <TextBlock Text="Network Options" FontWeight="Bold" FontSize="12" Foreground="#555" Margin="0,0,0,8"/>
+                                            <ItemsControl ItemsSource="{Binding NetworkDetailList}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border BorderBrush="#E1E1E1" BorderThickness="0,0,0,1" Padding="0,0,0,8" Margin="0,0,0,8">
+                                                            <StackPanel>
+                                                                <Grid Margin="0,0,0,5">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*"/>
+                                                                        <ColumnDefinition Width="Auto"/>
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <TextBlock Text="{Binding NetworkName}" FontSize="11" FontWeight="SemiBold" Foreground="#333" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                                                    <Button Grid.Column="1" Content="Apply" Command="{Binding ApplyCommand}" FontSize="10" Padding="8,2" Background="#007ACC" Foreground="White" BorderThickness="0"/>
+                                                                </Grid>
+                                                                <Grid Margin="0,0,0,4">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="70"/>
+                                                                        <ColumnDefinition Width="*"/>
+                                                                        <ColumnDefinition Width="70"/>
+                                                                        <ColumnDefinition Width="*"/>
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <TextBlock Text="Actual v4" FontSize="10" Foreground="#888" VerticalAlignment="Center"/>
+                                                                    <TextBlock Grid.Column="1" Text="{Binding IPv4}" FontSize="10" Foreground="#555" FontFamily="Consolas" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                                                    <TextBlock Grid.Column="2" Text="Actual v6" FontSize="10" Foreground="#888" VerticalAlignment="Center"/>
+                                                                    <TextBlock Grid.Column="3" Text="{Binding IPv6}" FontSize="10" Foreground="#555" FontFamily="Consolas" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                                                </Grid>
+                                                                <Grid Margin="0,0,0,4">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="70"/>
+                                                                        <ColumnDefinition Width="*"/>
+                                                                        <ColumnDefinition Width="70"/>
+                                                                        <ColumnDefinition Width="*"/>
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <TextBlock Text="Static v4" FontSize="10" Foreground="#888" VerticalAlignment="Center"/>
+                                                                    <TextBox Grid.Column="1" Text="{Binding StaticIPv4, UpdateSourceTrigger=PropertyChanged}" FontSize="10" Padding="3,1" FontFamily="Consolas" Margin="0,0,6,0"/>
+                                                                    <TextBlock Grid.Column="2" Text="Static v6" FontSize="10" Foreground="#888" VerticalAlignment="Center"/>
+                                                                    <TextBox Grid.Column="3" Text="{Binding StaticIPv6, UpdateSourceTrigger=PropertyChanged}" FontSize="10" Padding="3,1" FontFamily="Consolas"/>
+                                                                </Grid>
+                                                                <Grid Margin="0,0,0,4">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="70"/>
+                                                                        <ColumnDefinition Width="*"/>
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <TextBlock Text="Aliases" FontSize="10" Foreground="#888" VerticalAlignment="Center"/>
+                                                                    <TextBox Grid.Column="1" Text="{Binding AliasesText, UpdateSourceTrigger=PropertyChanged}" FontSize="10" Padding="3,1"/>
+                                                                </Grid>
+                                                                <Grid>
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="70"/>
+                                                                        <ColumnDefinition Width="*"/>
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <TextBlock Text="Endpoint" FontSize="10" Foreground="#888" VerticalAlignment="Center"/>
+                                                                    <TextBox Grid.Column="1" Text="{Binding DriverOptionsText, UpdateSourceTrigger=PropertyChanged}" FontSize="10" Padding="3,1"/>
+                                                                </Grid>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+
                                     <Button Command="{Binding OpenDetailWindowCommand}" Height="36" Background="#007ACC" Foreground="White" BorderThickness="0" Cursor="Hand">
                                         <Button.Style>
                                             <Style TargetType="Button">
@@ -1779,6 +1881,14 @@
                                                             <ColumnDefinition Width="80"/>
                                                             <ColumnDefinition Width="*"/>
                                                         </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="Docker Name" Foreground="#888"/>
+                                                        <TextBlock Grid.Column="1" Text="{Binding EffectiveVolumeName}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                                    </Grid>
+                                                    <Grid Margin="0,0,0,5">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="80"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                        </Grid.ColumnDefinitions>
                                                         <TextBlock Text="Driver" Foreground="#888"/>
                                                         <TextBlock Grid.Column="1" Text="{Binding Driver}" FontWeight="SemiBold"/>
                                                     </Grid>
@@ -1798,14 +1908,46 @@
                                                         <TextBlock Text="Mountpoint" Foreground="#888" VerticalAlignment="Top"/>
                                                         <TextBlock Grid.Column="1" Text="{Binding Mountpoint}" TextWrapping="Wrap" FontSize="11"/>
                                                     </Grid>
+                                                    <Grid Margin="0,0,0,5">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="80"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="Size" Foreground="#888"/>
+                                                        <TextBlock Grid.Column="1" Text="{Binding VolumeSizeText}"/>
+                                                    </Grid>
+                                                    <Grid Margin="0,0,0,5">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="80"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="Ref Count" Foreground="#888"/>
+                                                        <TextBlock Grid.Column="1" Text="{Binding VolumeRefCount}"/>
+                                                    </Grid>
+                                                    <Grid Margin="0,0,0,5">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="80"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="External" Foreground="#888"/>
+                                                        <TextBlock Grid.Column="1" Text="{Binding VolumeExternal}"/>
+                                                    </Grid>
                                                 </StackPanel>
+                                            </Border>
+                                            <TextBlock Text="Labels" FontWeight="Bold" FontSize="12" Margin="0,15,0,5" Foreground="#555"/>
+                                            <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Padding="8" MinHeight="52">
+                                                <TextBlock Text="{Binding VolumeLabelsText}" FontSize="11" TextWrapping="Wrap" FontFamily="Consolas"/>
+                                            </Border>
+                                            <TextBlock Text="Driver Options" FontWeight="Bold" FontSize="12" Margin="0,15,0,5" Foreground="#555"/>
+                                            <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Padding="8" MinHeight="52">
+                                                <TextBlock Text="{Binding VolumeDriverOptionsText}" FontSize="11" TextWrapping="Wrap" FontFamily="Consolas"/>
                                             </Border>
                                             <TextBlock Text="Used By Containers" FontWeight="Bold" FontSize="12" Margin="0,15,0,5" Foreground="#555"/>
                                             <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Height="160">
-                                                <ListBox ItemsSource="{Binding UsedByContainers}" Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Hidden" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                                <ListBox ItemsSource="{Binding VolumeUsageDetails}" Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                                     <ListBox.ItemTemplate>
                                                         <DataTemplate>
-                                                            <TextBlock Text="{Binding}" FontSize="11" Margin="3" Foreground="#007ACC" TextTrimming="CharacterEllipsis"/>
+                                                            <TextBlock Text="{Binding DisplayText}" FontSize="11" Margin="3" Foreground="#007ACC" TextWrapping="Wrap"/>
                                                         </DataTemplate>
                                                     </ListBox.ItemTemplate>
                                                 </ListBox>

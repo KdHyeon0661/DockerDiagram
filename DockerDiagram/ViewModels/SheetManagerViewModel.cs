@@ -497,6 +497,11 @@ namespace DockerDiagram.ViewModels
         {
             if (left.Type != right.Type) return false;
             if (left.Type == EndpointType.Local) return true;
+            if (left.Type == EndpointType.DockerContext)
+            {
+                return string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(left.DockerEndpoint, right.DockerEndpoint, StringComparison.OrdinalIgnoreCase);
+            }
 
             return string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(left.HostIp, right.HostIp, StringComparison.OrdinalIgnoreCase)

@@ -28,10 +28,21 @@ namespace DockerDiagram.ViewModels
             set => SetProperty(ref _activeSheet, value);
         }
 
-        public string KindLabel => Profile.Type == EndpointType.Local ? "LOCAL" : "SSH";
-        public string HostSummary => Profile.Type == EndpointType.Local
-            ? "Local Docker"
-            : $"{Profile.SshUsername}@{Profile.HostIp}:{Profile.SshPort}";
+        public string KindLabel => Profile.Type switch
+        {
+            EndpointType.Local => "LOCAL",
+            EndpointType.SshRemote => "SSH",
+            EndpointType.DockerContext => "CONTEXT",
+            _ => Profile.Type.ToString()
+        };
+
+        public string HostSummary => Profile.Type switch
+        {
+            EndpointType.Local => "Local Docker",
+            EndpointType.SshRemote => $"{Profile.SshUsername}@{Profile.HostIp}:{Profile.SshPort}",
+            EndpointType.DockerContext => Profile.DockerEndpoint ?? "Docker context",
+            _ => Profile.Type.ToString()
+        };
         public string StatusText { get; set; } = "Ready";
     }
 }

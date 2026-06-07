@@ -4,6 +4,8 @@ using DockerDiagram.Models;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO;
+using System.Net.Http;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -17,6 +19,10 @@ namespace DockerDiagram.Helpers
     public class DockerApiService : IDockerService
     {
         private readonly DockerClient _client;
+        private static readonly TimeSpan SystemDiskUsageCacheTtl = TimeSpan.FromSeconds(10);
+        private SystemDiskUsage? _systemDiskUsageCache;
+        private DateTimeOffset _systemDiskUsageCacheAt = DateTimeOffset.MinValue;
+        private readonly SemaphoreSlim _systemDiskUsageCacheLock = new(1, 1);
         private bool _disposedValue; // 중복 해제 방지 플래그
 
         public ConnectionProfile CurrentProfile { get; private set; }
@@ -42,6 +48,15 @@ namespace DockerDiagram.Helpers
             {
                 // 터널링 매니저가 미리 뚫어둔 내 PC의 특정 포트(예: 23750)로 접속!
                 dockerUri = new Uri($"tcp://127.0.0.1:{profile.LocalTunnelPort}");
+            }
+            else if (profile.Type == EndpointType.DockerContext)
+            {
+                if (string.IsNullOrWhiteSpace(profile.DockerEndpoint))
+                {
+                    throw new NotSupportedException("Docker context endpoint가 비어 있습니다.");
+                }
+
+                dockerUri = new Uri(profile.DockerEndpoint);
             }
             else
             {
@@ -95,6 +110,122 @@ namespace DockerDiagram.Helpers
             };
 
             await _client.System.MonitorEventsAsync(parameters, progress, cancellationToken);
+        }
+
+        /// <summary>
+        /// Docker Engine's system disk usage summary, equivalent to docker system df.
+        /// </summary>
+        public async Task<SystemDiskUsage> GetSystemDiskUsageAsync()
+        {
+            if (_systemDiskUsageCache != null &&
+                DateTimeOffset.UtcNow - _systemDiskUsageCacheAt < SystemDiskUsageCacheTtl)
+            {
+                return _systemDiskUsageCache;
+            }
+
+            await _systemDiskUsageCacheLock.WaitAsync();
+            try
+            {
+                if (_systemDiskUsageCache != null &&
+                    DateTimeOffset.UtcNow - _systemDiskUsageCacheAt < SystemDiskUsageCacheTtl)
+                {
+                    return _systemDiskUsageCache;
+                }
+
+                var requestMethod = typeof(DockerClient)
+                    .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .FirstOrDefault(m =>
+                        m.Name == "MakeRequestAsync" &&
+                        m.IsGenericMethodDefinition &&
+                        m.GetParameters().Length == 8)
+                    ?? throw new NotSupportedException("Docker.DotNet raw request API를 찾을 수 없습니다.");
+
+                var errorHandlerType = requestMethod.GetParameters()[0].ParameterType.GetGenericArguments()[0];
+                var errorHandlers = Array.CreateInstance(errorHandlerType, 0);
+
+                var task = requestMethod.MakeGenericMethod(typeof(SystemDiskUsage)).Invoke(_client, new object?[]
+                {
+                    errorHandlers,
+                    HttpMethod.Get,
+                    "system/df",
+                    null,
+                    null,
+                    null,
+                    TimeSpan.FromSeconds(CurrentProfile.Type == EndpointType.SshRemote ? 20 : 10),
+                    CancellationToken.None
+                }) as Task<SystemDiskUsage>;
+
+                if (task == null)
+                {
+                    throw new InvalidOperationException("Docker system df 요청을 시작할 수 없습니다.");
+                }
+
+                _systemDiskUsageCache = await task;
+                _systemDiskUsageCacheAt = DateTimeOffset.UtcNow;
+                return _systemDiskUsageCache;
+            }
+            finally
+            {
+                _systemDiskUsageCacheLock.Release();
+            }
+        }
+
+        public async Task<DockerPruneResult> PruneAsync(DockerPruneOptions options)
+        {
+            var path = options.Target switch
+            {
+                DockerPruneTarget.Container => "containers/prune",
+                DockerPruneTarget.Image => options.AllImages
+                    ? $"images/prune?filters={Uri.EscapeDataString("{\"dangling\":{\"false\":true}}")}"
+                    : "images/prune",
+                DockerPruneTarget.Volume => "volumes/prune",
+                DockerPruneTarget.Network => "networks/prune",
+                DockerPruneTarget.System => BuildSystemPrunePath(options),
+                _ => throw new NotSupportedException($"지원하지 않는 prune 대상입니다: {options.Target}")
+            };
+
+            return await MakeRawDockerRequestAsync<DockerPruneResult>(HttpMethod.Post, path);
+        }
+
+        private static string BuildSystemPrunePath(DockerPruneOptions options)
+        {
+            var query = new List<string>();
+            if (options.AllImages) query.Add("all=1");
+            if (options.IncludeVolumes) query.Add("volumes=1");
+            return query.Count == 0 ? "system/prune" : $"system/prune?{string.Join("&", query)}";
+        }
+
+        private async Task<T> MakeRawDockerRequestAsync<T>(HttpMethod method, string path)
+        {
+            var requestMethod = typeof(DockerClient)
+                .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .FirstOrDefault(m =>
+                    m.Name == "MakeRequestAsync" &&
+                    m.IsGenericMethodDefinition &&
+                    m.GetParameters().Length == 8)
+                ?? throw new NotSupportedException("Docker.DotNet raw request API를 찾을 수 없습니다.");
+
+            var errorHandlerType = requestMethod.GetParameters()[0].ParameterType.GetGenericArguments()[0];
+            var errorHandlers = Array.CreateInstance(errorHandlerType, 0);
+
+            var task = requestMethod.MakeGenericMethod(typeof(T)).Invoke(_client, new object?[]
+            {
+                errorHandlers,
+                method,
+                path,
+                null,
+                null,
+                null,
+                TimeSpan.FromSeconds(CurrentProfile.Type == EndpointType.SshRemote ? 20 : 10),
+                CancellationToken.None
+            }) as Task<T>;
+
+            if (task == null)
+            {
+                throw new InvalidOperationException($"Docker API 요청을 시작할 수 없습니다: {path}");
+            }
+
+            return await task;
         }
 
         // =========================================================
@@ -261,22 +392,51 @@ namespace DockerDiagram.Helpers
         /// </summary>
         public async Task<List<string>> GetContainersUsingVolumeAsync(string volumeName)
         {
-            var containers = await _client.Containers.ListContainersAsync(
-                new ContainersListParameters { All = true });
+            var usage = await GetVolumeUsageDetailsAsync(volumeName);
+            return usage.Select(u => u.ContainerName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
 
-            var result = new List<string>();
+        public async Task<List<VolumeUsageInfo>> GetVolumeUsageDetailsAsync(string volumeName)
+        {
+            var containers = await _client.Containers.ListContainersAsync(new ContainersListParameters { All = true });
+
+            var result = new List<VolumeUsageInfo>();
 
             foreach (var c in containers)
             {
                 if (c.Mounts == null) continue;
 
-                if (c.Mounts.Any(m => m.Name == volumeName || m.Source.EndsWith(volumeName)))
+                foreach (var mount in c.Mounts.Where(m => IsVolumeMountForName(m, volumeName)))
                 {
-                    string name = c.Names[0].TrimStart('/');
-                    result.Add(name);
+                    result.Add(new VolumeUsageInfo
+                    {
+                        ContainerId = c.ID,
+                        ContainerName = c.Names.FirstOrDefault()?.TrimStart('/') ?? c.ID,
+                        Destination = mount.Destination,
+                        ReadWrite = mount.RW,
+                        Mode = mount.Mode ?? string.Empty
+                    });
                 }
             }
             return result;
+        }
+
+        private static bool IsVolumeMountForName(MountPoint mount, string volumeName)
+        {
+            if (!string.Equals(mount.Type, "volume", StringComparison.OrdinalIgnoreCase)) return false;
+
+            if (!string.IsNullOrWhiteSpace(mount.Name))
+            {
+                return string.Equals(mount.Name, volumeName, StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (string.IsNullOrWhiteSpace(mount.Source)) return false;
+
+            var normalizedSource = mount.Source.Replace('\\', '/').TrimEnd('/');
+            var lastSeparator = normalizedSource.LastIndexOf('/');
+            var lastSegment = lastSeparator >= 0 ? normalizedSource[(lastSeparator + 1)..] : normalizedSource;
+
+            return string.Equals(lastSegment, volumeName, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -521,10 +681,17 @@ namespace DockerDiagram.Helpers
         /// </summary>
         public async Task CreateVolumeAsync(string name, string driver)
         {
+            await CreateVolumeAsync(VolumeCreateOptions.Basic(name, driver));
+        }
+
+        public async Task CreateVolumeAsync(VolumeCreateOptions options)
+        {
             await _client.Volumes.CreateAsync(new VolumesCreateParameters
             {
-                Name = name,
-                Driver = driver
+                Name = options.EffectiveDockerVolumeName,
+                Driver = string.IsNullOrWhiteSpace(options.Driver) ? "local" : options.Driver,
+                Labels = options.Labels.Count > 0 ? options.Labels : null,
+                DriverOpts = options.DriverOptions.Count > 0 ? options.DriverOptions : null
             });
         }
 
@@ -533,11 +700,36 @@ namespace DockerDiagram.Helpers
         /// </summary>
         public async Task<string> CreateNetworkAsync(string name, string driver)
         {
+            return await CreateNetworkAsync(NetworkCreateOptions.Basic(name, driver));
+        }
+
+        public async Task<string> CreateNetworkAsync(NetworkCreateOptions options)
+        {
             var response = await _client.Networks.CreateNetworkAsync(new NetworksCreateParameters
             {
-                Name = name,
-                Driver = driver,
-                CheckDuplicate = true
+                Name = options.Name,
+                Driver = options.Driver,
+                CheckDuplicate = true,
+                Internal = options.Internal,
+                Attachable = options.Attachable,
+                EnableIPv6 = options.EnableIPv6,
+                Labels = options.Labels.Count > 0 ? options.Labels : null,
+                Options = options.DriverOptions.Count > 0 ? options.DriverOptions : null,
+                IPAM = options.HasIpam
+                    ? new IPAM
+                    {
+                        Config = new List<IPAMConfig>
+                        {
+                            new IPAMConfig
+                            {
+                                Subnet = string.IsNullOrWhiteSpace(options.Subnet) ? null : options.Subnet,
+                        Gateway = string.IsNullOrWhiteSpace(options.Gateway) ? null : options.Gateway,
+                        IPRange = string.IsNullOrWhiteSpace(options.IpRange) ? null : options.IpRange,
+                        AuxAddress = options.AuxAddresses.Count > 0 ? options.AuxAddresses : null
+                    }
+                }
+            }
+                    : null
             });
             return response.ID;
         }
@@ -630,12 +822,79 @@ namespace DockerDiagram.Helpers
                 CancellationToken.None);
         }
 
+        public async Task BuildImageAsync(string targetImageName, string buildContextPath, string dockerfilePath, IProgress<JSONMessage>? progress = null)
+        {
+            if (string.IsNullOrWhiteSpace(targetImageName))
+                throw new ArgumentException("이미지 태그가 비어 있습니다.", nameof(targetImageName));
+            if (string.IsNullOrWhiteSpace(buildContextPath) || !Directory.Exists(buildContextPath))
+                throw new DirectoryNotFoundException($"빌드 컨텍스트 폴더를 찾을 수 없습니다: {buildContextPath}");
+            if (string.IsNullOrWhiteSpace(dockerfilePath) || !File.Exists(dockerfilePath))
+                throw new FileNotFoundException("Dockerfile을 찾을 수 없습니다.", dockerfilePath);
+
+            string fullContextPath = Path.GetFullPath(buildContextPath);
+            string fullDockerfilePath = Path.GetFullPath(dockerfilePath);
+            string dockerfileInContext = Path.GetRelativePath(fullContextPath, fullDockerfilePath).Replace('\\', '/');
+
+            if (dockerfileInContext.StartsWith("../", StringComparison.Ordinal) ||
+                Path.IsPathRooted(dockerfileInContext))
+            {
+                throw new InvalidOperationException("Dockerfile은 빌드 컨텍스트 폴더 안에 있어야 합니다.");
+            }
+
+            string tempTarFile = Path.Combine(Path.GetTempPath(), $"DockerDiagramBuildContext_{Guid.NewGuid():N}.tar");
+            var errors = new List<string>();
+
+            try
+            {
+                TarFile.CreateFromDirectory(fullContextPath, tempTarFile, includeBaseDirectory: false);
+
+                await using var tarStream = File.OpenRead(tempTarFile);
+                var buildProgress = new Progress<JSONMessage>(message =>
+                {
+                    string? output = message.ErrorMessage ?? message.Stream ?? message.Status ?? message.ProgressMessage;
+                    if (!string.IsNullOrWhiteSpace(output))
+                        Debug.WriteLine($"[DockerBuild] {output.TrimEnd()}");
+
+                    if (!string.IsNullOrWhiteSpace(message.ErrorMessage))
+                        errors.Add(message.ErrorMessage);
+
+                    progress?.Report(message);
+                });
+
+                await _client.Images.BuildImageFromDockerfileAsync(
+                    new ImageBuildParameters
+                    {
+                        Tags = new List<string> { targetImageName },
+                        Dockerfile = dockerfileInContext,
+                        Remove = true,
+                        ForceRemove = true
+                    },
+                    tarStream,
+                    null,
+                    null,
+                    buildProgress,
+                    CancellationToken.None);
+
+                if (errors.Count > 0)
+                {
+                    throw new InvalidOperationException(string.Join(Environment.NewLine, errors));
+                }
+            }
+            finally
+            {
+                if (File.Exists(tempTarFile))
+                {
+                    File.Delete(tempTarFile);
+                }
+            }
+        }
+
         /// <summary>
         /// 지정된 이름의 도커 볼륨을 영구적으로 삭제합니다.
         /// </summary>
-        public async Task RemoveVolumeAsync(string name)
+        public async Task RemoveVolumeAsync(string name, bool force = false)
         {
-            await _client.Volumes.RemoveAsync(name, false);
+            await _client.Volumes.RemoveAsync(name, force);
         }
 
         /// <summary>
@@ -738,7 +997,7 @@ namespace DockerDiagram.Helpers
         /// <summary>
         /// 특정 컨테이너를 지정된 가상 네트워크 망에 연결(편입)시킵니다. 필요시 정적 IP를 할당할 수 있습니다.
         /// </summary>
-        public async Task ConnectNetworkAsync(string networkId, string containerId, string? staticIp = null)
+        public async Task ConnectNetworkAsync(string networkId, string containerId, ContainerNetworkOptions? options = null)
         {
             try
             {
@@ -747,26 +1006,29 @@ namespace DockerDiagram.Helpers
                     Container = containerId
                 };
 
-                if (!string.IsNullOrWhiteSpace(staticIp))
+                if (options != null && options.HasAnyOption)
                 {
                     config.EndpointConfig = new EndpointSettings
                     {
                         IPAMConfig = new EndpointIPAMConfig
                         {
-                            IPv4Address = staticIp
-                        }
+                            IPv4Address = string.IsNullOrWhiteSpace(options.StaticIPv4) ? null : options.StaticIPv4,
+                            IPv6Address = string.IsNullOrWhiteSpace(options.StaticIPv6) ? null : options.StaticIPv6
+                        },
+                        Aliases = options.Aliases.Where(alias => !string.IsNullOrWhiteSpace(alias)).Select(alias => alias.Trim()).ToList(),
+                        DriverOpts = options.DriverOptions.Count > 0 ? options.DriverOptions : null
                     };
                 }
 
                 await _client.Networks.ConnectNetworkAsync(networkId, config);
 
-                Debug.WriteLine($"[DockerDiscovery] Network Connected: {networkId} -> {containerId} (IP: {staticIp ?? "Auto"})");
+                Debug.WriteLine($"[DockerDiscovery] Network Connected: {networkId} -> {containerId} (IPv4: {options?.StaticIPv4 ?? "Auto"}, IPv6: {options?.StaticIPv6 ?? "Auto"})");
             }
             catch (DockerApiException ex)
             {
                 if (ex.Message.Contains("already exists") || ex.Message.Contains("address already in use"))
                 {
-                    throw new Exception($"네트워크 연결 실패: 이미 연결되어 있거나 IP({staticIp})가 다른 컨테이너에서 사용 중입니다.");
+                    throw new Exception($"네트워크 연결 실패: 이미 연결되어 있거나 지정한 IP가 다른 컨테이너에서 사용 중입니다.");
                 }
                 throw;
             }
@@ -866,6 +1128,7 @@ namespace DockerDiagram.Helpers
                 {
                     // HttpClient 등 내부적으로 사용하던 IDisposable 객체들을 명시적으로 해제
                     _client?.Dispose();
+                    _systemDiskUsageCacheLock.Dispose();
                 }
                 _disposedValue = true;
             }

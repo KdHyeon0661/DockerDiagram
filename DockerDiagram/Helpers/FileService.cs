@@ -99,9 +99,16 @@ namespace DockerDiagram.Helpers
                             Height = nodeVm.Height,
                             PortBindings = nodeVm.PortBindings ?? new List<string>(),
                             EnvironmentVariables = nodeVm.EnvironmentVariables ?? new List<string>(),
+                            NetworkStaticIps = new Dictionary<string, string>(nodeVm.NetworkIpMap),
+                            NetworkOptions = nodeVm.NetworkOptionsMap.ToDictionary(kv => kv.Key, kv => kv.Value.Clone()),
+                            DockerVolumeName = nodeVm.DockerVolumeName,
+                            VolumeExternal = nodeVm.VolumeExternal,
+                            VolumeLabels = new Dictionary<string, string>(nodeVm.VolumeLabels),
+                            VolumeDriverOptions = new Dictionary<string, string>(nodeVm.VolumeDriverOptions),
                             RestartPolicy = nodeVm.RestartPolicy ?? "no",
                             ComposeServiceName = nodeVm.ComposeServiceName,
-                            ComposeRawServiceYaml = nodeVm.ComposeRawServiceYaml
+                            ComposeRawServiceYaml = nodeVm.ComposeRawServiceYaml,
+                            ComposeRawVolumeYaml = nodeVm.ComposeRawVolumeYaml
                         });
                     }
 
@@ -133,7 +140,20 @@ namespace DockerDiagram.Helpers
                             Y = group.Y,
                             Width = group.Width,
                             Height = group.Height,
-                            Type = group.Type
+                            Type = group.Type,
+                            Driver = group.Driver,
+                            Subnet = group.Subnet,
+                            Gateway = group.Gateway,
+                            IpRange = group.IpRange,
+                            Internal = group.Internal,
+                            Attachable = group.Attachable,
+                            EnableIPv6 = group.EnableIPv6,
+                            External = group.External,
+                            ComposeNetworkName = group.ComposeNetworkName,
+                            ComposeRawNetworkYaml = group.ComposeRawNetworkYaml,
+                            Labels = new Dictionary<string, string>(group.Labels),
+                            DriverOptions = new Dictionary<string, string>(group.DriverOptions),
+                            AuxAddresses = new Dictionary<string, string>(group.AuxAddresses)
                         };
                         gData.ContainedNodeIds = group.ContainedNodes.Select(n => n.Id).ToList();
                         sheetData.Groups.Add(gData);
@@ -291,9 +311,16 @@ namespace DockerDiagram.Helpers
                             Height = nodeData.Height,
                             PortBindings = nodeData.PortBindings ?? new List<string>(),
                             EnvironmentVariables = nodeData.EnvironmentVariables ?? new List<string>(),
+                            NetworkIpMap = nodeData.NetworkStaticIps ?? new Dictionary<string, string>(),
+                            NetworkOptionsMap = nodeData.NetworkOptions?.ToDictionary(kv => kv.Key, kv => kv.Value.Clone()) ?? new Dictionary<string, ContainerNetworkOptions>(),
+                            DockerVolumeName = nodeData.DockerVolumeName ?? string.Empty,
+                            VolumeExternal = nodeData.VolumeExternal,
+                            VolumeLabels = nodeData.VolumeLabels ?? new Dictionary<string, string>(),
+                            VolumeDriverOptions = nodeData.VolumeDriverOptions ?? new Dictionary<string, string>(),
                             RestartPolicy = nodeData.RestartPolicy ?? "no",
                             ComposeServiceName = nodeData.ComposeServiceName ?? string.Empty,
                             ComposeRawServiceYaml = nodeData.ComposeRawServiceYaml ?? string.Empty,
+                            ComposeRawVolumeYaml = nodeData.ComposeRawVolumeYaml ?? string.Empty,
                             StatusColor = "#808080" // 초기 색상은 회색(Unkown)으로 고정, 이후 실시간 갱신됨
                         };
 
@@ -318,7 +345,20 @@ namespace DockerDiagram.Helpers
                         )
                         {
                             Id = string.IsNullOrEmpty(groupData.Id) ? Guid.NewGuid().ToString() : groupData.Id,
-                            ParentSheet = sheetVm
+                            ParentSheet = sheetVm,
+                            Driver = string.IsNullOrWhiteSpace(groupData.Driver) ? "bridge" : groupData.Driver,
+                            Subnet = groupData.Subnet,
+                            Gateway = groupData.Gateway,
+                            IpRange = groupData.IpRange,
+                            Internal = groupData.Internal,
+                            Attachable = groupData.Attachable,
+                            EnableIPv6 = groupData.EnableIPv6,
+                            External = groupData.External,
+                            ComposeNetworkName = groupData.ComposeNetworkName ?? string.Empty,
+                            ComposeRawNetworkYaml = groupData.ComposeRawNetworkYaml ?? string.Empty,
+                            Labels = groupData.Labels ?? new Dictionary<string, string>(),
+                            DriverOptions = groupData.DriverOptions ?? new Dictionary<string, string>(),
+                            AuxAddresses = groupData.AuxAddresses ?? new Dictionary<string, string>()
                         };
 
                         // 그룹 안에 저장되어 있던 노드들을 다시 묶어줌

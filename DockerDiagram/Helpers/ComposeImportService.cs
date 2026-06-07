@@ -24,7 +24,8 @@ namespace DockerDiagram.Helpers
             IContainerService containerService,
             IVolumeService volumeService,
             INetworkService networkService,
-            IDialogService dialogService)
+            IDialogService dialogService,
+            IComposeService composeService)
         {
             // 🔥 [MVVM 수정 1] UI(OpenFileDialog) 종속성 제거 및 IDialogService 활용
             string? selectedFileName = dialogService.ShowOpenFileDialog(
@@ -102,6 +103,7 @@ namespace DockerDiagram.Helpers
                             Width = 160,
                             Height = 80
                         };
+                        ApplyComposeVolumeSettings(nodeMap[vol.Key], rawComposeRoot, vol.Key);
                         newSheet.Nodes.Add(nodeMap[vol.Key]);
                     }
                 }
@@ -155,9 +157,11 @@ namespace DockerDiagram.Helpers
                             if (!visualGroupMap.ContainsKey(netName)) visualGroupMap[netName] = new List<NodeViewModel>();
                             if (!visualGroupMap[netName].Contains(sourceContainer)) visualGroupMap[netName].Add(sourceContainer);
 
-                            var staticIp = ComposeYamlHelper.GetNetworkIpv4(svc.Value.Networks, netName);
-                            if (!string.IsNullOrWhiteSpace(staticIp))
-                                sourceContainer.NetworkIpMap[netName] = staticIp;
+                            var networkOptions = ComposeYamlHelper.GetNetworkOptions(svc.Value.Networks, netName);
+                            if (networkOptions.HasAnyOption)
+                                sourceContainer.NetworkOptionsMap[netName] = networkOptions;
+                            if (!string.IsNullOrWhiteSpace(networkOptions.StaticIPv4))
+                                sourceContainer.NetworkIpMap[netName] = networkOptions.StaticIPv4;
                         }
                     }
                     else
@@ -184,6 +188,7 @@ namespace DockerDiagram.Helpers
                                     Width = 160,
                                     Height = 80
                                 };
+                                ApplyComposeVolumeSettings(targetVolume, rawComposeRoot, volName);
                                 nodeMap[volName] = targetVolume;
                                 newSheet.Nodes.Add(targetVolume);
                             }
@@ -254,6 +259,7 @@ namespace DockerDiagram.Helpers
                         Id = Guid.NewGuid().ToString(),
                         ParentSheet = newSheet // 그룹이 소속된 시트를 명시적으로 할당
                     };
+                    ApplyComposeNetworkSettings(groupVm, rawComposeRoot, netName);
 
                     newSheet.Groups.Add(groupVm);
                     groupMap[netName] = groupVm;
@@ -315,36 +321,11 @@ namespace DockerDiagram.Helpers
 
                     try
                     {
-                        // 백그라운드에서 CMD 창 없이 docker compose 명령 실행
-                        var psi = new System.Diagnostics.ProcessStartInfo
-                        {
-                            FileName = "docker",
-                            Arguments = $"compose -f \"{selectedFileName}\" up -d",
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true,
-                            UseShellExecute = false,
-                            CreateNoWindow = true,
-                            WorkingDirectory = Path.GetDirectoryName(selectedFileName)
-                        };
-
-                        using var process = new System.Diagnostics.Process { StartInfo = psi };
-                        var errorBuilder = new System.Text.StringBuilder();
-
-                        process.OutputDataReceived += (sender, e) => { }; // 표준 출력은 무시
-                        process.ErrorDataReceived += (sender, e) => // 에러 로그 수집
-                        {
-                            if (!string.IsNullOrEmpty(e.Data)) errorBuilder.AppendLine(e.Data);
-                        };
-
-                        process.Start();
-                        process.BeginOutputReadLine();
-                        process.BeginErrorReadLine();
-
-                        await Task.Run(() => process.WaitForExit()); // 프로세스 종료 대기
+                        var composeResult = await composeService.UpAsync(selectedFileName, targetProfile);
 
                         foreach (var node in containerNodes) node.IsCreating = false;
 
-                        if (process.ExitCode == 0)
+                        if (composeResult.Success)
                         {
                             // 배포 대상이 원격일 수도 있으므로, 동적으로 결정된 targetDockerService를 사용
                             var containerSvc = (IContainerService)targetDockerService;
@@ -370,7 +351,7 @@ namespace DockerDiagram.Helpers
                         }
                         else
                         {
-                            dialogService.ShowMessage($"도커 배포 중 오류가 발생했습니다:\n{errorBuilder}");
+                            dialogService.ShowMessage($"도커 배포 중 오류가 발생했습니다:\n{composeResult.CombinedOutput}");
                         }
                     }
                     catch (Exception ex)
@@ -388,6 +369,71 @@ namespace DockerDiagram.Helpers
             {
                 dialogService.ShowMessage($"불러오기 실패: {ex.Message}");
             }
+        }
+
+        private static void ApplyComposeNetworkSettings(GroupViewModel group, Dictionary<object, object>? rawComposeRoot, string networkName)
+        {
+            var networkMap = ComposeYamlHelper.GetNetworkMap(rawComposeRoot, networkName);
+            if (networkMap == null) return;
+
+            group.ComposeRawNetworkYaml = ComposeYamlHelper.GetNetworkYaml(rawComposeRoot, networkName);
+            group.Driver = ComposeYamlHelper.GetValue(networkMap, "driver")?.ToString() ?? group.Driver;
+            group.Internal = ToBool(ComposeYamlHelper.GetValue(networkMap, "internal"));
+            group.Attachable = ToBool(ComposeYamlHelper.GetValue(networkMap, "attachable"));
+            group.External = ToBool(ComposeYamlHelper.GetValue(networkMap, "external"));
+            group.EnableIPv6 = ToBool(ComposeYamlHelper.GetValue(networkMap, "enable_ipv6"));
+            group.ComposeNetworkName = ComposeYamlHelper.GetValue(networkMap, "name")?.ToString() ?? "";
+            group.Labels = ComposeYamlHelper.ToStringDictionary(ComposeYamlHelper.GetValue(networkMap, "labels"));
+            group.DriverOptions = ComposeYamlHelper.ToStringDictionary(ComposeYamlHelper.GetValue(networkMap, "driver_opts"));
+
+            var externalMap = ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(networkMap, "external"));
+            if (externalMap != null)
+            {
+                group.External = true;
+                group.ComposeNetworkName = ComposeYamlHelper.GetValue(externalMap, "name")?.ToString() ?? group.ComposeNetworkName;
+            }
+
+            var ipamMap = ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(networkMap, "ipam"));
+            var configList = ComposeYamlHelper.GetValue(ipamMap, "config") as System.Collections.IEnumerable;
+            var firstConfig = configList?
+                .Cast<object>()
+                .Select(ComposeYamlHelper.GetMapping)
+                .FirstOrDefault(map => map != null);
+
+            if (firstConfig != null)
+            {
+                group.Subnet = ComposeYamlHelper.GetValue(firstConfig, "subnet")?.ToString() ?? "";
+                group.Gateway = ComposeYamlHelper.GetValue(firstConfig, "gateway")?.ToString() ?? "";
+                group.IpRange = ComposeYamlHelper.GetValue(firstConfig, "ip_range")?.ToString() ?? "";
+                group.AuxAddresses = ComposeYamlHelper.ToStringDictionary(ComposeYamlHelper.GetValue(firstConfig, "aux_addresses"));
+            }
+        }
+
+        private static void ApplyComposeVolumeSettings(NodeViewModel node, Dictionary<object, object>? rawComposeRoot, string volumeName)
+        {
+            var volumeMap = ComposeYamlHelper.GetVolumeMap(rawComposeRoot, volumeName);
+            if (volumeMap == null) return;
+
+            node.ComposeRawVolumeYaml = ComposeYamlHelper.GetVolumeYaml(rawComposeRoot, volumeName);
+            node.Driver = ComposeYamlHelper.GetValue(volumeMap, "driver")?.ToString() ?? node.Driver;
+            node.ImageName = string.IsNullOrWhiteSpace(node.Driver) || node.Driver == "-" ? node.ImageName : node.Driver;
+            node.VolumeExternal = ToBool(ComposeYamlHelper.GetValue(volumeMap, "external"));
+            node.DockerVolumeName = ComposeYamlHelper.GetValue(volumeMap, "name")?.ToString() ?? string.Empty;
+            node.VolumeLabels = ComposeYamlHelper.ToStringDictionary(ComposeYamlHelper.GetValue(volumeMap, "labels"));
+            node.VolumeDriverOptions = ComposeYamlHelper.ToStringDictionary(ComposeYamlHelper.GetValue(volumeMap, "driver_opts"));
+
+            var externalMap = ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(volumeMap, "external"));
+            if (externalMap != null)
+            {
+                node.VolumeExternal = true;
+                node.DockerVolumeName = ComposeYamlHelper.GetValue(externalMap, "name")?.ToString() ?? node.DockerVolumeName;
+            }
+        }
+
+        private static bool ToBool(object? value)
+        {
+            if (value is bool boolean) return boolean;
+            return bool.TryParse(value?.ToString(), out var parsed) && parsed;
         }
     }
 }

@@ -1,5 +1,7 @@
 ﻿using System.Windows;
 
+using DockerDiagram.Models;
+
 namespace DockerDiagram.Helpers
 {
     /// <summary>
@@ -60,6 +62,145 @@ namespace DockerDiagram.Helpers
                 Title = title
             };
             return dlg.ShowDialog() == true ? dlg.FileName : null;
+        }
+
+        public bool TryShowPruneOptionsDialog(out DockerPruneOptions options)
+        {
+            var dlg = new DockerDiagram.Views.PruneDialog
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            if (dlg.ShowDialog() == true)
+            {
+                options = dlg.PruneOptions;
+                return true;
+            }
+
+            options = new DockerPruneOptions();
+            return false;
+        }
+
+        public bool TryShowVolumeOptionsDialog(VolumeCreateOptions initialOptions, out VolumeCreateOptions options)
+        {
+            var dlg = new DockerDiagram.Views.VolumeDialog(this, initialOptions)
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            if (dlg.ShowDialog() == true)
+            {
+                options = dlg.CreateOptions;
+                return true;
+            }
+
+            options = initialOptions;
+            return false;
+        }
+
+        public void ShowContainerDetail(object dataContext)
+        {
+            var window = new DockerDiagram.ContainerDetailWindow
+            {
+                DataContext = dataContext,
+                Owner = Application.Current.MainWindow
+            };
+            window.Show();
+        }
+
+        public bool TryShowMountDialog(out string mountPath, out string owner)
+        {
+            var dlg = new DockerDiagram.Views.MountDialog(this)
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            if (dlg.ShowDialog() == true)
+            {
+                mountPath = dlg.MountPath;
+                owner = dlg.VolumeOwner;
+                return true;
+            }
+
+            mountPath = string.Empty;
+            owner = string.Empty;
+            return false;
+        }
+
+        public bool TryShowArrangeDialog(out int columns)
+        {
+            var dlg = new DockerDiagram.Views.ArrangeDialog(this)
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            if (dlg.ShowDialog() == true)
+            {
+                columns = dlg.Columns;
+                return true;
+            }
+
+            columns = 0;
+            return false;
+        }
+
+        public bool TryShowImageTagDialog(
+            string sourceImage,
+            string repository,
+            string tag,
+            out string newRepository,
+            out string newTag,
+            out bool force)
+        {
+            var window = new DockerDiagram.Views.ImageTagWindow(sourceImage, repository, tag)
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            if (window.ShowDialog() == true)
+            {
+                newRepository = window.Repository;
+                newTag = window.ImageTag;
+                force = window.Force;
+                return true;
+            }
+
+            newRepository = repository;
+            newTag = tag;
+            force = false;
+            return false;
+        }
+
+        public bool TryShowImagePushDialog(
+            string repository,
+            string tag,
+            out string newRepository,
+            out string newTag,
+            out string username,
+            out string password,
+            out string serverAddress)
+        {
+            var window = new DockerDiagram.Views.ImagePushWindow(repository, tag)
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            if (window.ShowDialog() == true)
+            {
+                newRepository = window.Repository;
+                newTag = window.ImageTag;
+                username = window.Username;
+                password = window.Password;
+                serverAddress = window.ServerAddress;
+                return true;
+            }
+
+            newRepository = repository;
+            newTag = tag;
+            username = string.Empty;
+            password = string.Empty;
+            serverAddress = string.Empty;
+            return false;
         }
     }
 }

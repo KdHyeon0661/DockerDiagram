@@ -1,5 +1,7 @@
 ﻿using System.Windows;
 
+using DockerDiagram.Models;
+
 namespace DockerDiagram.Helpers
 {
     /// <summary>
@@ -16,5 +18,12 @@ namespace DockerDiagram.Helpers
         bool ShowHostKeyConfirm(string host, string fingerprintText);
         string? ShowOpenFileDialog(string filter, string title);
         string? ShowSaveFileDialog(string filter, string defaultExt, string defaultFileName, string title);
+        bool TryShowPruneOptionsDialog(out DockerPruneOptions options);
+        bool TryShowVolumeOptionsDialog(VolumeCreateOptions initialOptions, out VolumeCreateOptions options);
+        void ShowContainerDetail(object dataContext);
+        bool TryShowMountDialog(out string mountPath, out string owner);
+        bool TryShowArrangeDialog(out int columns);
+        bool TryShowImageTagDialog(string sourceImage, string repository, string tag, out string newRepository, out string newTag, out bool force);
+        bool TryShowImagePushDialog(string repository, string tag, out string newRepository, out string newTag, out string username, out string password, out string serverAddress);
     }
 }

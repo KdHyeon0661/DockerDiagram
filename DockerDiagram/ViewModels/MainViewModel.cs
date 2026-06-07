@@ -87,7 +87,7 @@ namespace DockerDiagram.ViewModels
 
             // 1. 실무 전담 부서(Sub-ViewModel) 고용 및 할당
             SheetManager = new SheetManagerViewModel(this, _defaultDockerService, _dialogService);
-            Toolbox = new ToolboxViewModel(this, _defaultDockerService, _dialogService);
+            Toolbox = new ToolboxViewModel(this, _defaultDockerService, _dialogService, new DockerComposeCliService());
             Explorer = new ResourceExplorerViewModel(this, _defaultDockerService, _dialogService);
             Inspector = new InspectorViewModel(this, _dialogService);
             SheetManager.PropertyChanged += SheetManager_PropertyChanged;
@@ -400,7 +400,10 @@ namespace DockerDiagram.ViewModels
                                     string volName = mount.Name;
                                     string destination = mount.Destination;
 
-                                    var existingVolNode = ActiveSheet.Nodes.FirstOrDefault(n => n.Type == NodeType.Volume && n.Name == volName);
+                                    var existingVolNode = ActiveSheet.Nodes.FirstOrDefault(n =>
+                                        n.Type == NodeType.Volume &&
+                                        (string.Equals(n.Name, volName, StringComparison.OrdinalIgnoreCase) ||
+                                         string.Equals(n.EffectiveVolumeName, volName, StringComparison.OrdinalIgnoreCase)));
                                     NodeViewModel targetVolNode;
 
                                     if (existingVolNode != null)
@@ -612,7 +615,10 @@ namespace DockerDiagram.ViewModels
                         mountPath = volStr.Substring(lastColon + 1);
                     }
 
-                    var existingVolNode = ActiveSheet.Nodes.FirstOrDefault(n => n.Type == NodeType.Volume && n.Name == volName);
+                    var existingVolNode = ActiveSheet.Nodes.FirstOrDefault(n =>
+                        n.Type == NodeType.Volume &&
+                        (string.Equals(n.Name, volName, StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(n.EffectiveVolumeName, volName, StringComparison.OrdinalIgnoreCase)));
                     NodeViewModel targetVolNode;
 
                     if (existingVolNode != null) targetVolNode = existingVolNode;
@@ -657,12 +663,23 @@ namespace DockerDiagram.ViewModels
 
         public async Task CreateNewVolumeNodeAsync(string name, string driver, double x, double y)
         {
+            await CreateNewVolumeNodeAsync(VolumeCreateOptions.Basic(name, driver), x, y);
+        }
+
+        public async Task CreateNewVolumeNodeAsync(VolumeCreateOptions options, double x, double y)
+        {
             if (ActiveSheet == null) return;
             var historyBefore = CaptureDiagramState(ActiveSheet);
+            string displayName = options.Name.Trim();
+            string dockerVolumeName = options.EffectiveDockerVolumeName.Trim();
+            string driver = string.IsNullOrWhiteSpace(options.Driver) ? "local" : options.Driver.Trim();
+            options.Name = displayName;
+            options.DockerVolumeName = dockerVolumeName;
+            options.Driver = driver;
 
             var node = new NodeViewModel(_containerService, _volumeService, _dialogService)
             {
-                Name = $"{name} (Creating...)",
+                Name = $"{displayName} (Creating...)",
                 ImageName = driver,
                 Type = NodeType.Volume,
                 X = x,
@@ -674,14 +691,32 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                await _volumeService.CreateVolumeAsync(name, driver);
+                if (options.External)
+                {
+                    var existing = await _volumeService.InspectVolumeAsync(dockerVolumeName);
+                    driver = string.IsNullOrWhiteSpace(existing.Driver) ? driver : existing.Driver;
+                }
+                else
+                {
+                    await _volumeService.CreateVolumeAsync(options);
+                }
 
-                node.Name = name;
+                node.Name = displayName;
+                node.DockerVolumeName = dockerVolumeName;
+                node.VolumeExternal = options.External;
+                node.VolumeLabels = new Dictionary<string, string>(options.Labels);
+                node.VolumeDriverOptions = new Dictionary<string, string>(options.DriverOptions);
                 node.ContainerId = "";
+                node.Driver = driver;
+                node.ImageName = driver;
                 node.IsCreating = false;
                 node.StatusColor = "#E67E22";
                 node.IsDockerConnected = true;
-                RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Create volume {name}", History.IncludeDockerResourceHistory);
+                RecordAdditionsFromSnapshot(
+                    ActiveSheet,
+                    historyBefore,
+                    options.External ? $"Add external volume {dockerVolumeName}" : $"Create volume {dockerVolumeName}",
+                    !options.External && History.IncludeDockerResourceHistory);
             }
             catch (Exception ex)
             {
@@ -692,17 +727,52 @@ namespace DockerDiagram.ViewModels
 
         public async Task CreateNewNetworkGroupAsync(string name, string driver, double x, double y, double w, double h)
         {
-            if (string.IsNullOrWhiteSpace(name) || ActiveSheet == null) return;
+            await CreateNewNetworkGroupAsync(NetworkCreateOptions.Basic(name, driver), x, y, w, h);
+        }
+
+        public async Task CreateNewNetworkGroupAsync(NetworkCreateOptions options, double x, double y, double w, double h)
+        {
+            if (string.IsNullOrWhiteSpace(options.Name) || ActiveSheet == null) return;
             var historyBefore = CaptureDiagramState(ActiveSheet);
 
             try
             {
-                string networkId = await _networkService.CreateNetworkAsync(name, driver);
+                string networkId;
+                if (options.External)
+                {
+                    var dockerNetworkName = string.IsNullOrWhiteSpace(options.ComposeNetworkName) ? options.Name : options.ComposeNetworkName;
+                    var networks = await _networkService.GetNetworksAsync();
+                    var existingNetwork = networks.FirstOrDefault(n => string.Equals(n.Name, dockerNetworkName, StringComparison.OrdinalIgnoreCase));
+                    if (existingNetwork == null)
+                    {
+                        _dialogService.ShowError($"외부 네트워크 '{dockerNetworkName}'을(를) Docker에서 찾을 수 없습니다.\n먼저 Docker에 해당 네트워크를 만든 뒤 다시 시도하세요.", "External Network");
+                        return;
+                    }
 
-                var newNetworkGroup = new GroupViewModel(x, y, w, h, _networkService, _dialogService, name, GroupType.Network)
+                    networkId = existingNetwork.Id;
+                    options.Driver = existingNetwork.Driver;
+                }
+                else
+                {
+                    networkId = await _networkService.CreateNetworkAsync(options);
+                }
+
+                var newNetworkGroup = new GroupViewModel(x, y, w, h, _networkService, _dialogService, options.Name, GroupType.Network)
                 {
                     Id = networkId,
-                    Driver = driver,
+                    Driver = options.Driver,
+                    Subnet = options.Subnet,
+                    Gateway = options.Gateway,
+                    IpRange = options.IpRange,
+                    Internal = options.Internal,
+                    Attachable = options.Attachable,
+                    EnableIPv6 = options.EnableIPv6,
+                    External = options.External,
+                    ComposeNetworkName = options.ComposeNetworkName,
+                    ComposeRawNetworkYaml = options.ComposeRawNetworkYaml,
+                    Labels = new Dictionary<string, string>(options.Labels),
+                    DriverOptions = new Dictionary<string, string>(options.DriverOptions),
+                    AuxAddresses = new Dictionary<string, string>(options.AuxAddresses),
                     IsDockerConnected = true,
                     ParentSheet = this.ActiveSheet
                 };
@@ -714,11 +784,11 @@ namespace DockerDiagram.ViewModels
 
                 Inspector.SelectedElement = newNetworkGroup;
                 IsModified = true;
-                RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Create network {name}", History.IncludeDockerResourceHistory);
+                RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Create network {options.Name}", !options.External && History.IncludeDockerResourceHistory);
             }
             catch (Exception ex)
             {
-                _dialogService.ShowError($"'{name}' 네트워크 생성에 실패했습니다:\n{ex.Message}", "Network Create Error");
+                _dialogService.ShowError($"'{options.Name}' 네트워크 생성에 실패했습니다:\n{ex.Message}", "Network Create Error");
             }
         }
 
@@ -827,7 +897,10 @@ namespace DockerDiagram.ViewModels
                                     string volName = mount.Name;
                                     string mountPath = mount.Destination;
 
-                                    var existingVolNode = ActiveSheet.Nodes.FirstOrDefault(n => n.Type == NodeType.Volume && n.Name == volName);
+                                    var existingVolNode = ActiveSheet.Nodes.FirstOrDefault(n =>
+                                        n.Type == NodeType.Volume &&
+                                        (string.Equals(n.Name, volName, StringComparison.OrdinalIgnoreCase) ||
+                                         string.Equals(n.EffectiveVolumeName, volName, StringComparison.OrdinalIgnoreCase)));
                                     NodeViewModel targetVolNode;
 
                                     if (existingVolNode != null) targetVolNode = existingVolNode;
@@ -925,40 +998,18 @@ namespace DockerDiagram.ViewModels
             };
             ActiveSheet.Nodes.Add(dummyNode);
 
-            bool buildSuccess = false;
             try
             {
-                await Task.Run(() =>
-                {
-                    var startInfo = new ProcessStartInfo
-                    {
-                        FileName = "cmd.exe",
-                        Arguments = $"/c docker build -t {targetImageName} -f \"{dockerfilePath}\" \"{buildContextPath}\"",
-                        CreateNoWindow = true,
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
-                    using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("docker build 프로세스를 시작할 수 없습니다.");
-                    process.WaitForExit();
-                    buildSuccess = process.ExitCode == 0;
-                });
+                await _imageService.BuildImageAsync(targetImageName, buildContextPath, dockerfilePath);
 
                 ActiveSheet.Nodes.Remove(dummyNode);
 
-                if (buildSuccess)
-                {
-                    string containerName = targetImageName.Split(':')[0] + "-" + Guid.NewGuid().ToString().Substring(0, 4);
+                string containerName = targetImageName.Split(':')[0] + "-" + Guid.NewGuid().ToString().Substring(0, 4);
 
-                    await CreateNewContainerNodeAsync(
-                        containerName, targetImageName.Split(':')[0],
-                        targetImageName.Contains(":") ? targetImageName.Split(':')[1] : "latest",
-                        new List<string>(), new List<string>(), new List<string>(), "no", 0, 0, x, y);
-                }
-                else
-                {
-                    _dialogService.ShowMessage($"[{targetImageName}] 이미지 빌드에 실패했습니다. (도커파일 문법 확인)");
-                }
+                await CreateNewContainerNodeAsync(
+                    containerName, targetImageName.Split(':')[0],
+                    targetImageName.Contains(":") ? targetImageName.Split(':')[1] : "latest",
+                    new List<string>(), new List<string>(), new List<string>(), "no", 0, 0, x, y);
             }
             catch (Exception ex)
             {
@@ -999,34 +1050,10 @@ namespace DockerDiagram.ViewModels
                     await File.WriteAllTextAsync(dockerfilePath, dockerfileContent);
                 }
 
-                bool buildSuccess = false;
+                await _imageService.BuildImageAsync(targetImageName, buildContextPath, dockerfilePath);
 
-                await Task.Run(() =>
-                {
-                    var startInfo = new ProcessStartInfo
-                    {
-                        FileName = "cmd.exe",
-                        Arguments = $"/c docker build -t {targetImageName} -f \"{dockerfilePath}\" \"{buildContextPath}\"",
-                        CreateNoWindow = true,
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
-
-                    using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("docker build 프로세스를 시작할 수 없습니다.");
-                    process.WaitForExit();
-                    buildSuccess = process.ExitCode == 0;
-                });
-
-                if (buildSuccess)
-                {
-                    _dialogService.ShowConfirm($"[{targetImageName}] 이미지가 성공적으로 생성되었습니다!", "빌드 완료");
-                    await Explorer.SyncWithDockerEngineAsync();
-                }
-                else
-                {
-                    _dialogService.ShowConfirm($"[{targetImageName}] 이미지 빌드에 실패했습니다.\nDockerfile 문법을 확인해 주세요.", "빌드 오류");
-                }
+                _dialogService.ShowConfirm($"[{targetImageName}] 이미지가 성공적으로 생성되었습니다!", "빌드 완료");
+                await Explorer.SyncWithDockerEngineAsync();
             }
             catch (Exception ex)
             {
@@ -1144,11 +1171,11 @@ namespace DockerDiagram.ViewModels
                 });
         }
 
-        public IHistoryCommand CreateNodeDeleteCommand(SheetViewModel sheet, NodeViewModel node, bool deleteDocker)
+        public IHistoryCommand CreateNodeDeleteCommand(SheetViewModel sheet, NodeViewModel node, bool deleteDocker, bool forceVolumeDelete = false)
         {
             var relatedConnectors = sheet.Connectors.Where(c => c.Source == node || c.Target == node).ToList();
             var containingGroups = sheet.Groups.Where(g => g.ContainedNodes.Contains(node)).ToList();
-            bool affectsDocker = deleteDocker && node.Type != NodeType.Internet;
+            bool affectsDocker = deleteDocker && node.Type != NodeType.Internet && !(node.Type == NodeType.Volume && node.VolumeExternal);
 
             return new DelegateHistoryCommand(
                 affectsDocker ? $"Delete Docker {node.Type}: {node.Name}" : $"Delete diagram node: {node.Name}",
@@ -1161,7 +1188,7 @@ namespace DockerDiagram.ViewModels
                 },
                 redo: async () =>
                 {
-                    if (affectsDocker) await DeleteDockerObjectsAsync(new[] { node }, Array.Empty<GroupViewModel>());
+                    if (affectsDocker) await DeleteDockerObjectsAsync(new[] { node }, Array.Empty<GroupViewModel>(), forceVolumeDelete);
                     await RemoveNodeFromDiagramOnlyAsync(sheet, node, relatedConnectors, containingGroups);
                     IsModified = true;
                 });
@@ -1173,7 +1200,7 @@ namespace DockerDiagram.ViewModels
                 .Where(c => c.Source == (IConnectableItem)group || c.Target == (IConnectableItem)group)
                 .ToList();
             var containedNodes = group.ContainedNodes.ToList();
-            bool affectsDocker = deleteDocker && group.Type == GroupType.Network;
+            bool affectsDocker = deleteDocker && group.Type == GroupType.Network && !group.External;
 
             return new DelegateHistoryCommand(
                 affectsDocker ? $"Delete Docker network: {group.Title}" : $"Delete diagram group: {group.Title}",
@@ -1268,7 +1295,33 @@ namespace DockerDiagram.ViewModels
             sheet.UpdateGroupLayering();
         }
 
-        private async Task DeleteDockerObjectsAsync(IEnumerable<NodeViewModel> nodes, IEnumerable<GroupViewModel> groups)
+        public async Task<(bool ShouldDelete, bool Force)> ConfirmVolumeDockerDeleteAsync(IVolumeService volumeService, string volumeName, bool allowForceAttempt)
+        {
+            var usedBy = await volumeService.GetContainersUsingVolumeAsync(volumeName);
+            if (usedBy.Count == 0) return (true, false);
+
+            string containerList = string.Join("\n", usedBy.Select(name => $"- {name}"));
+
+            if (!allowForceAttempt)
+            {
+                _dialogService.ShowInfo(
+                    $"볼륨 '{volumeName}'은(는) 현재 컨테이너에서 사용 중이라 Docker 삭제를 보호했습니다.\n\n사용 중인 컨테이너:\n{containerList}",
+                    "Volume Delete Protection");
+                return (false, false);
+            }
+
+            var result = _dialogService.ShowYesNoCancel(
+                $"볼륨 '{volumeName}'은(는) 현재 컨테이너에서 사용 중입니다.\n\n" +
+                $"사용 중인 컨테이너:\n{containerList}\n\n" +
+                "[예(Yes)] : 강제 삭제를 시도\n" +
+                "[아니요(No)] : 보호하고 취소\n" +
+                "[취소(Cancel)] : 취소",
+                "Volume Delete Protection");
+
+            return result == MessageBoxResult.Yes ? (true, true) : (false, false);
+        }
+
+        private async Task DeleteDockerObjectsAsync(IEnumerable<NodeViewModel> nodes, IEnumerable<GroupViewModel> groups, bool forceVolumeDelete = false)
         {
             foreach (var node in nodes)
             {
@@ -1281,26 +1334,38 @@ namespace DockerDiagram.ViewModels
                     }
                     else if (node.Type == NodeType.Volume)
                     {
+                        if (node.VolumeExternal) continue;
+
+                        var decision = forceVolumeDelete
+                            ? (ShouldDelete: true, Force: true)
+                            : await ConfirmVolumeDockerDeleteAsync(_volumeService, node.EffectiveVolumeName, allowForceAttempt: false);
+                        if (!decision.ShouldDelete) continue;
+
                         if (History.IncludeVolumeBackupForUndo)
                         {
                             await BackupVolumeForUndoAsync(node);
                         }
 
-                        await _volumeService.RemoveVolumeAsync(node.Name);
+                        await _volumeService.RemoveVolumeAsync(node.EffectiveVolumeName, decision.Force);
                         node.IsDockerConnected = false;
                     }
                 }
                 catch (Exception ex)
                 {
+                    if (node.Type == NodeType.Volume)
+                    {
+                        _dialogService.ShowError($"볼륨 '{node.EffectiveVolumeName}' 삭제 실패:\n{ex.Message}", "Volume Delete");
+                    }
                     Debug.WriteLine($"[History] Docker delete skipped: {ex.Message}");
                 }
             }
 
             foreach (var group in groups.Where(g => g.Type == GroupType.Network))
             {
+                if (group.External) continue;
                 try
                 {
-                    await _networkService.RemoveNetworkAsync(!string.IsNullOrWhiteSpace(group.Id) ? group.Id : group.Title);
+                    await _networkService.RemoveNetworkAsync(!string.IsNullOrWhiteSpace(group.Id) ? group.Id : group.DockerNetworkName);
                     group.IsDockerConnected = false;
                 }
                 catch (Exception ex)
@@ -1318,7 +1383,17 @@ namespace DockerDiagram.ViewModels
             {
                 try
                 {
-                    group.Id = await _networkService.CreateNetworkAsync(group.Title, string.IsNullOrWhiteSpace(group.Driver) ? "bridge" : group.Driver);
+                    if (group.External)
+                    {
+                        var networks = await _networkService.GetNetworksAsync();
+                        var existingNetwork = networks.FirstOrDefault(n => string.Equals(n.Name, group.DockerNetworkName, StringComparison.OrdinalIgnoreCase));
+                        if (existingNetwork == null) throw new InvalidOperationException($"External network '{group.DockerNetworkName}' was not found.");
+                        group.Id = existingNetwork.Id;
+                    }
+                    else
+                    {
+                        group.Id = await _networkService.CreateNetworkAsync(group.ToNetworkCreateOptions());
+                    }
                     group.IsDockerConnected = true;
                 }
                 catch (Exception ex)
@@ -1334,7 +1409,21 @@ namespace DockerDiagram.ViewModels
                 {
                     try
                     {
-                        await _volumeService.CreateVolumeAsync(node.Name, string.IsNullOrWhiteSpace(node.Driver) || node.Driver == "-" ? "local" : node.Driver);
+                        if (node.VolumeExternal)
+                        {
+                            await _volumeService.InspectVolumeAsync(node.EffectiveVolumeName);
+                        }
+                        else
+                        {
+                            await _volumeService.CreateVolumeAsync(new VolumeCreateOptions
+                            {
+                                Name = node.Name,
+                                DockerVolumeName = node.DockerVolumeName,
+                                Driver = string.IsNullOrWhiteSpace(node.Driver) || node.Driver == "-" ? "local" : node.Driver,
+                                Labels = new Dictionary<string, string>(node.VolumeLabels),
+                                DriverOptions = new Dictionary<string, string>(node.VolumeDriverOptions)
+                            });
+                        }
                         node.IsDockerConnected = true;
                         await RestoreVolumeFromUndoBackupAsync(node);
                     }
@@ -1371,12 +1460,13 @@ namespace DockerDiagram.ViewModels
         private async Task BackupVolumeForUndoAsync(NodeViewModel node)
         {
             if (node.Type != NodeType.Volume) return;
+            if (node.VolumeExternal) return;
 
             if (_volumeUndoBackups.TryGetValue(node.Id, out var previousPath))
                 VolumeUndoBackupStore.DeleteFile(previousPath);
 
-            string backupPath = VolumeUndoBackupStore.CreateBackupPath(node.Name);
-            await _volumeService.BackupVolumeAsync(node.Name, backupPath);
+            string backupPath = VolumeUndoBackupStore.CreateBackupPath(node.EffectiveVolumeName);
+            await _volumeService.BackupVolumeAsync(node.EffectiveVolumeName, backupPath);
             _volumeUndoBackups[node.Id] = backupPath;
             node.DetailStatus = "Ghost backup";
             node.IsDockerConnected = false;
@@ -1385,10 +1475,11 @@ namespace DockerDiagram.ViewModels
         private async Task RestoreVolumeFromUndoBackupAsync(NodeViewModel node)
         {
             if (node.Type != NodeType.Volume) return;
+            if (node.VolumeExternal) return;
             if (!_volumeUndoBackups.TryGetValue(node.Id, out var backupPath)) return;
             if (!File.Exists(backupPath)) return;
 
-            await _volumeService.RestoreVolumeAsync(node.Name, backupPath);
+            await _volumeService.RestoreVolumeAsync(node.EffectiveVolumeName, backupPath);
             node.IsDockerConnected = true;
             await node.RefreshDetailsAsync();
         }
@@ -1450,13 +1541,7 @@ namespace DockerDiagram.ViewModels
         // =========================================================
         public async Task<bool> ConnectVolumeToContainerAsync(NodeViewModel containerNode, NodeViewModel volumeNode)
         {
-            var dlg = new Views.MountDialog(_dialogService);
-            dlg.Owner = Application.Current.MainWindow;
-
-            if (dlg.ShowDialog() != true) return false;
-
-            string mountPath = dlg.MountPath;
-            string owner = dlg.VolumeOwner;
+            if (!_dialogService.TryShowMountDialog(out string mountPath, out string owner)) return false;
 
             string containerId = containerNode.ContainerId;
             string volumeName = volumeNode.Name;

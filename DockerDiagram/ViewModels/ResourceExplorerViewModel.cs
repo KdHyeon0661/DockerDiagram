@@ -9,7 +9,6 @@ using System.Windows.Input;
 using Docker.DotNet.Models;
 using DockerDiagram.Helpers;
 using DockerDiagram.Models;
-using DockerDiagram.Views;
 
 namespace DockerDiagram.ViewModels
 {
@@ -152,7 +151,12 @@ namespace DockerDiagram.ViewModels
             }
 
             var usedContainerIds = new HashSet<string>(allNodes.Where(n => n.Type == NodeType.Container).Select(n => n.ContainerId));
-            var usedVolumeNames = new HashSet<string>(allNodes.Where(n => n.Type == NodeType.Volume).Select(n => n.Name));
+            var usedVolumeNames = new HashSet<string>(
+                allNodes
+                    .Where(n => n.Type == NodeType.Volume)
+                    .SelectMany(n => new[] { n.Name, n.EffectiveVolumeName })
+                    .Where(name => !string.IsNullOrWhiteSpace(name)),
+                StringComparer.OrdinalIgnoreCase);
 
             var usedNetworkNames = new HashSet<string>();
             foreach (var sheet in _mainVm.Sheets)
@@ -222,7 +226,7 @@ namespace DockerDiagram.ViewModels
                     node.IsDockerConnected = node.Type switch
                     {
                         NodeType.Container => !string.IsNullOrWhiteSpace(node.ContainerId) && containerIds.Contains(node.ContainerId),
-                        NodeType.Volume => volumeNames.Contains(node.Name),
+                        NodeType.Volume => volumeNames.Contains(node.EffectiveVolumeName),
                         NodeType.Internet => true,
                         _ => false
                     };
@@ -265,7 +269,10 @@ namespace DockerDiagram.ViewModels
                     try
                     {
                         var service = (IVolumeService)(_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService);
-                        await service.RemoveVolumeAsync(v.Name);
+                        var decision = await _mainVm.ConfirmVolumeDockerDeleteAsync(service, v.Name, allowForceAttempt: true);
+                        if (!decision.ShouldDelete) return;
+
+                        await service.RemoveVolumeAsync(v.Name, decision.Force);
                         await SyncWithDockerEngineAsync();
                     }
                     catch (Exception ex) { _dialogService.ShowMessage($"볼륨 삭제 실패: {ex.Message}"); }
@@ -323,15 +330,14 @@ namespace DockerDiagram.ViewModels
             if (parameter is not DockerImage img) return;
 
             var sourceImage = GetImageReference(img);
-            var window = new ImageTagWindow(sourceImage, img.Repository, img.Tag);
-            if (window.ShowDialog() != true) return;
+            if (!_dialogService.TryShowImageTagDialog(sourceImage, img.Repository, img.Tag, out var repository, out var imageTag, out var force)) return;
 
             try
             {
                 var service = (IImageService)(_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService);
-                await service.TagImageAsync(sourceImage, window.Repository, window.ImageTag, window.Force);
+                await service.TagImageAsync(sourceImage, repository, imageTag, force);
                 await SyncWithDockerEngineAsync();
-                _dialogService.ShowInfo($"이미지 태그를 추가했습니다.\n{window.Repository}:{window.ImageTag}", "Tag Image");
+                _dialogService.ShowInfo($"이미지 태그를 추가했습니다.\n{repository}:{imageTag}", "Tag Image");
             }
             catch (Exception ex)
             {
@@ -348,10 +354,19 @@ namespace DockerDiagram.ViewModels
                 return;
             }
 
-            var window = new ImagePushWindow(img.Repository, img.Tag);
-            if (window.ShowDialog() != true) return;
+            if (!_dialogService.TryShowImagePushDialog(
+                    img.Repository,
+                    img.Tag,
+                    out var repository,
+                    out var imageTag,
+                    out var username,
+                    out var password,
+                    out var serverAddress))
+            {
+                return;
+            }
 
-            if (!_dialogService.ShowConfirm($"[{window.Repository}:{window.ImageTag}] 이미지를 push할까요?", "Push Image")) return;
+            if (!_dialogService.ShowConfirm($"[{repository}:{imageTag}] 이미지를 push할까요?", "Push Image")) return;
 
             try
             {
@@ -361,11 +376,11 @@ namespace DockerDiagram.ViewModels
 
                 var service = (IImageService)(_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService);
                 await service.PushImageAsync(
-                    window.Repository,
-                    window.ImageTag,
-                    window.Username,
-                    window.Password,
-                    window.ServerAddress);
+                    repository,
+                    imageTag,
+                    username,
+                    password,
+                    serverAddress);
 
                 PullProgressValue = 100;
                 PullProgressMessage = "Push 완료";

@@ -10,7 +10,7 @@ namespace DockerDiagram.Models
     /// </summary>
     public class DiagramFile
     {
-        public string Version { get; set; } = "1.32"; // 파일 구조의 버전 (하위 호환성 체크용)
+        public string Version { get; set; } = "1.33"; // 파일 구조의 버전 (하위 호환성 체크용)
         public DateTime SavedAt { get; set; } = DateTime.Now; // 파일이 마지막으로 저장된 시간
         public List<SheetData> Sheets { get; set; } = new List<SheetData>(); // 파일에 포함된 모든 시트(도화지) 목록
         public int ActiveSheetIndex { get; set; } = 0; // 파일을 다시 열었을 때 포커스를 맞출 시트의 인덱스
@@ -59,9 +59,16 @@ namespace DockerDiagram.Models
         // --- 도커 세부 설정 정보 ---
         public List<string> PortBindings { get; set; } = new List<string>(); // 포트 매핑 정보
         public List<string> EnvironmentVariables { get; set; } = new List<string>(); // 환경 변수 정보
+        public Dictionary<string, string> NetworkStaticIps { get; set; } = new Dictionary<string, string>(); // 네트워크별 정적 IPv4
+        public Dictionary<string, ContainerNetworkOptions> NetworkOptions { get; set; } = new Dictionary<string, ContainerNetworkOptions>(); // 네트워크별 연결 옵션
+        public string DockerVolumeName { get; set; } = string.Empty; // 실제 Docker 볼륨 이름
+        public bool VolumeExternal { get; set; } // 앱이 생성하지 않고 참조하는 외부 볼륨
+        public Dictionary<string, string> VolumeLabels { get; set; } = new Dictionary<string, string>(); // 볼륨 라벨
+        public Dictionary<string, string> VolumeDriverOptions { get; set; } = new Dictionary<string, string>(); // 볼륨 드라이버 옵션
         public string RestartPolicy { get; set; } = "no"; // 재시작 정책 (no, always 등)
         public string ComposeServiceName { get; set; } = string.Empty; // 원본 compose service 키
         public string ComposeRawServiceYaml { get; set; } = string.Empty; // 원본 service YAML
+        public string ComposeRawVolumeYaml { get; set; } = string.Empty; // 원본 volume YAML
     }
 
     /// <summary>
@@ -89,6 +96,19 @@ namespace DockerDiagram.Models
 
         public string Title { get; set; } = "Group"; // 그룹의 이름
         public GroupType Type { get; set; } = GroupType.General; // 그룹의 종류 (일반 폴더, 도커 네트워크 등)
+        public string Driver { get; set; } = "bridge";
+        public string Subnet { get; set; } = string.Empty;
+        public string Gateway { get; set; } = string.Empty;
+        public string IpRange { get; set; } = string.Empty;
+        public bool Internal { get; set; }
+        public bool Attachable { get; set; }
+        public bool EnableIPv6 { get; set; }
+        public bool External { get; set; }
+        public string ComposeNetworkName { get; set; } = string.Empty;
+        public string ComposeRawNetworkYaml { get; set; } = string.Empty;
+        public Dictionary<string, string> Labels { get; set; } = new();
+        public Dictionary<string, string> DriverOptions { get; set; } = new();
+        public Dictionary<string, string> AuxAddresses { get; set; } = new();
 
         // --- 시각적 위치 및 크기 정보 ---
         public double X { get; set; }

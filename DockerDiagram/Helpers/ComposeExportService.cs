@@ -149,22 +149,8 @@ namespace DockerDiagram.Helpers
 
                 foreach (var netGroup in networkGroups)
                 {
-                    if (ComposeYamlHelper.HasKey(networks, netGroup.Title)) continue;
-
-                    var netObj = new Dictionary<object, object> { ["driver"] = "bridge" };
-
-                    string? generatedSubnet = GetSubnetIfRequired(netGroup.Title, containerNodes);
-                    if (!string.IsNullOrEmpty(generatedSubnet))
-                    {
-                        netObj["ipam"] = new Dictionary<object, object>
-                        {
-                            ["config"] = new List<object>
-                            {
-                                new Dictionary<object, object> { ["subnet"] = generatedSubnet }
-                            }
-                        };
-                    }
-                    networks[netGroup.Title] = netObj;
+                    var networkKey = FindExistingKey(networks, netGroup.Title) ?? netGroup.Title;
+                    networks[networkKey] = BuildNetworkDefinition(netGroup, containerNodes, ComposeYamlHelper.GetMapping(networks[networkKey]));
                 }
 
                 composeRoot["networks"] = networks;
@@ -183,8 +169,8 @@ namespace DockerDiagram.Helpers
 
                 foreach (var vol in namedVolumes)
                 {
-                    if (!ComposeYamlHelper.HasKey(volumeMap, vol.Name))
-                        volumeMap[vol.Name] = new Dictionary<object, object>(); // 빈 객체 {} 생성
+                    var volumeKey = FindExistingKey(volumeMap, vol.Name) ?? vol.Name;
+                    volumeMap[volumeKey] = BuildVolumeDefinition(vol, ComposeYamlHelper.GetMapping(volumeMap[volumeKey]));
                 }
                 composeRoot["volumes"] = volumeMap;
             }
@@ -233,6 +219,145 @@ namespace DockerDiagram.Helpers
         /// </summary>
         private static bool IsValidIp(string? ip) => !string.IsNullOrWhiteSpace(ip) && ip.Count(c => c == '.') == 3;
 
+        private static object? FindExistingKey(Dictionary<object, object> map, string key)
+        {
+            return map.Keys.FirstOrDefault(existingKey =>
+                string.Equals(existingKey?.ToString(), key, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static Dictionary<object, object> BuildNetworkDefinition(
+            GroupViewModel netGroup,
+            List<NodeViewModel> containerNodes,
+            Dictionary<object, object>? existingDefinition)
+        {
+            var netObj = ComposeYamlHelper.ParseMapping(netGroup.ComposeRawNetworkYaml)
+                         ?? (existingDefinition != null
+                             ? new Dictionary<object, object>(existingDefinition)
+                             : new Dictionary<object, object>());
+
+            if (netGroup.External)
+            {
+                netObj.Clear();
+                netObj["external"] = true;
+                if (!string.IsNullOrWhiteSpace(netGroup.ComposeNetworkName))
+                    netObj["name"] = netGroup.ComposeNetworkName;
+                return netObj;
+            }
+
+            RemoveComposeKey(netObj, "external");
+
+            netObj["driver"] = string.IsNullOrWhiteSpace(netGroup.Driver) ? "bridge" : netGroup.Driver;
+            SetBoolValue(netObj, "internal", netGroup.Internal);
+            SetBoolValue(netObj, "attachable", netGroup.Attachable);
+            SetBoolValue(netObj, "enable_ipv6", netGroup.EnableIPv6);
+            SetStringValue(netObj, "name", netGroup.ComposeNetworkName);
+            SetDictionaryValue(netObj, "labels", netGroup.Labels);
+            SetDictionaryValue(netObj, "driver_opts", netGroup.DriverOptions);
+
+            string? generatedSubnet = GetSubnetIfRequired(netGroup.Title, containerNodes);
+            string? subnet = string.IsNullOrWhiteSpace(netGroup.Subnet) ? generatedSubnet : netGroup.Subnet;
+
+            if (!string.IsNullOrWhiteSpace(subnet) ||
+                !string.IsNullOrWhiteSpace(netGroup.Gateway) ||
+                !string.IsNullOrWhiteSpace(netGroup.IpRange) ||
+                netGroup.AuxAddresses.Count > 0)
+            {
+                var ipam = ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(netObj, "ipam")) != null
+                    ? new Dictionary<object, object>(ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(netObj, "ipam"))!)
+                    : new Dictionary<object, object>();
+
+                var configList = ToMutableConfigList(ComposeYamlHelper.GetValue(ipam, "config"));
+                var firstConfig = configList.Count > 0 && ComposeYamlHelper.GetMapping(configList[0]) != null
+                    ? new Dictionary<object, object>(ComposeYamlHelper.GetMapping(configList[0])!)
+                    : new Dictionary<object, object>();
+
+                SetStringValue(firstConfig, "subnet", subnet);
+                SetStringValue(firstConfig, "gateway", netGroup.Gateway);
+                SetStringValue(firstConfig, "ip_range", netGroup.IpRange);
+                SetDictionaryValue(firstConfig, "aux_addresses", netGroup.AuxAddresses);
+
+                if (configList.Count == 0) configList.Add(firstConfig);
+                else configList[0] = firstConfig;
+
+                ipam["config"] = configList;
+                netObj["ipam"] = ipam;
+            }
+
+            return netObj;
+        }
+
+        private static List<object> ToMutableConfigList(object? configValue)
+        {
+            if (configValue is IEnumerable<object> objectEnumerable)
+                return objectEnumerable.ToList();
+
+            if (configValue is System.Collections.IEnumerable enumerable)
+                return enumerable.Cast<object>().ToList();
+
+            return new List<object>();
+        }
+
+        private static void SetBoolValue(Dictionary<object, object> map, string key, bool value)
+        {
+            if (value) map[key] = true;
+            else RemoveComposeKey(map, key);
+        }
+
+        private static void SetStringValue(Dictionary<object, object> map, string key, string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value)) map[key] = value;
+            else RemoveComposeKey(map, key);
+        }
+
+        private static void SetDictionaryValue(Dictionary<object, object> map, string key, Dictionary<string, string> value)
+        {
+            if (value.Count > 0)
+                map[key] = new Dictionary<object, object>(value.ToDictionary(kv => (object)kv.Key, kv => (object)kv.Value));
+            else
+                RemoveComposeKey(map, key);
+        }
+
+        private static Dictionary<object, object> BuildVolumeDefinition(NodeViewModel volumeNode, Dictionary<object, object>? existingDefinition)
+        {
+            var volObj = ComposeYamlHelper.ParseMapping(volumeNode.ComposeRawVolumeYaml)
+                         ?? (existingDefinition != null
+                             ? new Dictionary<object, object>(existingDefinition)
+                             : new Dictionary<object, object>());
+
+            if (volumeNode.VolumeExternal)
+            {
+                volObj["external"] = true;
+                if (!string.IsNullOrWhiteSpace(volumeNode.DockerVolumeName) &&
+                    !string.Equals(volumeNode.DockerVolumeName, volumeNode.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    volObj["name"] = volumeNode.DockerVolumeName;
+                }
+                else
+                {
+                    RemoveComposeKey(volObj, "name");
+                }
+                return volObj;
+            }
+
+            RemoveComposeKey(volObj, "external");
+            SetStringValue(volObj, "name",
+                !string.IsNullOrWhiteSpace(volumeNode.DockerVolumeName) &&
+                !string.Equals(volumeNode.DockerVolumeName, volumeNode.Name, StringComparison.OrdinalIgnoreCase)
+                    ? volumeNode.DockerVolumeName
+                    : string.Empty);
+            SetStringValue(volObj, "driver", volumeNode.Driver == "-" ? string.Empty : volumeNode.Driver);
+            SetDictionaryValue(volObj, "labels", volumeNode.VolumeLabels);
+            SetDictionaryValue(volObj, "driver_opts", volumeNode.VolumeDriverOptions);
+
+            return volObj;
+        }
+
+        private static void RemoveComposeKey(Dictionary<object, object> map, string key)
+        {
+            var existingKey = FindExistingKey(map, key);
+            if (existingKey != null) map.Remove(existingKey);
+        }
+
         /// <summary>
         /// 특정 컨테이너와 연결된 볼륨 목록을 찾고, .env 파일과 연동할 수 있는 환경변수 포맷의 문자열 리스트로 반환합니다.
         /// </summary>
@@ -264,23 +389,30 @@ namespace DockerDiagram.Helpers
 
         private static object BuildServiceNetworks(List<NetworkInfo> connectedNets)
         {
-            bool hasStaticIp = connectedNets.Any(n => !string.IsNullOrEmpty(n.IpAddress) && IsValidIp(n.IpAddress));
-            if (!hasStaticIp)
+            bool hasEndpointOptions = connectedNets.Any(n => n.Options?.HasAnyOption == true);
+            if (!hasEndpointOptions)
                 return connectedNets.Select(n => n.NetworkName!).ToList();
 
             var netDict = new Dictionary<object, object>();
             foreach (var net in connectedNets)
             {
                 var netConfig = new Dictionary<object, object>();
-                if (!string.IsNullOrEmpty(net.IpAddress) && IsValidIp(net.IpAddress))
-                    netConfig["ipv4_address"] = net.IpAddress;
+                if (!string.IsNullOrEmpty(net.Options?.StaticIPv4) && IsValidIp(net.Options.StaticIPv4))
+                    netConfig["ipv4_address"] = net.Options.StaticIPv4;
+                if (!string.IsNullOrWhiteSpace(net.Options?.StaticIPv6))
+                    netConfig["ipv6_address"] = net.Options.StaticIPv6;
+                if (net.Options?.Aliases.Count > 0)
+                    netConfig["aliases"] = net.Options.Aliases;
+                if (net.Options?.DriverOptions.Count > 0)
+                    netConfig["driver_opts"] = new Dictionary<object, object>(
+                        net.Options.DriverOptions.ToDictionary(kv => (object)kv.Key, kv => (object)kv.Value));
 
                 netDict[net.NetworkName!] = netConfig;
             }
             return netDict;
         }
 
-        private class NetworkInfo { public string? NetworkName; public string? IpAddress; }
+        private class NetworkInfo { public string? NetworkName; public ContainerNetworkOptions? Options; }
 
         /// <summary>
         /// 특정 컨테이너가 속해있는 네트워크 그룹 목록과 각각의 할당된 IP를 찾아 반환합니다.
@@ -294,11 +426,7 @@ namespace DockerDiagram.Helpers
             {
                 if (group.ContainedNodes.Contains(container))
                 {
-                    string? ip = null;
-                    if (container.NetworkIpMap != null && container.NetworkIpMap.ContainsKey(group.Title))
-                        ip = container.NetworkIpMap[group.Title];
-
-                    list.Add(new NetworkInfo { NetworkName = group.Title, IpAddress = ip });
+                    list.Add(new NetworkInfo { NetworkName = group.Title, Options = container.GetNetworkOptions(group.Title) });
                 }
             }
             return list;
@@ -311,11 +439,10 @@ namespace DockerDiagram.Helpers
         {
             foreach (var container in containers)
             {
-                if (container.NetworkIpMap != null &&
-                    container.NetworkIpMap.TryGetValue(networkName, out var ip) &&
-                    IsValidIp(ip))
+                var options = container.GetNetworkOptions(networkName);
+                if (options != null && IsValidIp(options.StaticIPv4))
                 {
-                    var parts = ip.Split('.');
+                    var parts = options.StaticIPv4.Split('.');
                     if (parts.Length == 4) return $"{parts[0]}.{parts[1]}.{parts[2]}.0/24";
                 }
             }

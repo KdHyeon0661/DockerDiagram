@@ -1,44 +1,169 @@
-﻿using DockerDiagram.Helpers; // IDialogService 사용을 위해 추가
+using DockerDiagram.Helpers;
+using DockerDiagram.Models;
+using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 
 namespace DockerDiagram.Views
 {
-    /// <summary>
-    /// 다이어그램 캔버스에서 새로운 도커 가상 네트워크(Network) 그룹을 생성하기 위해
-    /// 사용자로부터 네트워크 이름과 드라이버(bridge, host 등)를 입력받는 UI 팝업 창(View) 클래스입니다.
-    /// </summary>
-    public partial class NetworkDialog : Window // 새 도커 네트워크 생성 대화상자
+    public partial class NetworkDialog : Window
     {
         private readonly IDialogService _dialogService;
 
-        public string NetworkName => txtName.Text.Trim(); // 사용자가 입력한 새로운 네트워크의 이름을 반환합니다.
+        public string NetworkName => txtName.Text.Trim();
 
-        public string Driver => (cmbDriver.SelectedItem as ComboBoxItem)?.Content.ToString() ?? "bridge"; // 사용자가 선택한 네트워크 드라이버(예: bridge, macvlan 등)를 반환하며, 기본값은 "bridge"입니다.
+        public string Driver => (cmbDriver.SelectedItem as ComboBoxItem)?.Content.ToString() ?? "bridge";
 
-        /// <summary>
-        /// 대화상자를 초기화하고 다이얼로그 서비스를 주입받습니다.
-        /// 창이 열리면 즉시 이름을 입력할 수 있도록 텍스트 박스에 포커스를 맞춥니다.
-        /// </summary>
+        public NetworkCreateOptions CreateOptions => new NetworkCreateOptions
+        {
+            Name = NetworkName,
+            Driver = Driver,
+            Subnet = txtSubnet.Text.Trim(),
+            Gateway = txtGateway.Text.Trim(),
+            IpRange = txtIpRange.Text.Trim(),
+            Internal = chkInternal.IsChecked == true,
+            Attachable = chkAttachable.IsChecked == true,
+            EnableIPv6 = chkEnableIPv6.IsChecked == true,
+            External = chkExternal.IsChecked == true,
+            ComposeNetworkName = txtComposeName.Text.Trim(),
+            Labels = ParseKeyValueLines(txtLabels.Text),
+            DriverOptions = BuildDriverOptions(),
+            AuxAddresses = ParseKeyValueLines(txtAuxAddresses.Text)
+        };
+
         public NetworkDialog(IDialogService dialogService)
         {
             InitializeComponent();
-            _dialogService = dialogService; // 서비스 할당
+            _dialogService = dialogService;
 
+            UpdateDriverSpecificOptions();
             txtName.Focus();
         }
 
-        /// <summary>
-        /// 'Create' 확인 버튼을 눌렀을 때 실행되며, 네트워크 이름이 정상적으로 입력되었는지 검증한 후 성공 결과를 반환하며 창을 닫습니다.
-        /// </summary>
-        private void BtnOk_Click(object sender, RoutedEventArgs e) // 확인 버튼
+        private void Driver_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(NetworkName)) // 네트워크 이름이 비어있는지 확인
+            if (spDriverSpecificOptions != null)
+                UpdateDriverSpecificOptions();
+        }
+
+        private void BtnOk_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(NetworkName))
             {
-                _dialogService.ShowError("네트워크 명을 입력하세요.", "입력 오류");
+                _dialogService.ShowError("Enter a network name.", "Input Error");
                 return;
             }
+
+            if (!ValidateKeyValueLines(txtAuxAddresses.Text, "Aux Addresses")) return;
+            if (!ValidateKeyValueLines(txtLabels.Text, "Labels")) return;
+            if (!ValidateKeyValueLines(txtDriverOptions.Text, "Driver Options")) return;
+
+            if (IsMacvlanOrIpvlan() &&
+                chkExternal.IsChecked != true &&
+                string.IsNullOrWhiteSpace(txtParentInterface.Text))
+            {
+                _dialogService.ShowError($"{Driver} requires a parent interface, e.g. eth0.", "Input Error");
+                return;
+            }
+
+            if (chkExternal.IsChecked == true && HasCreateOnlyOptions())
+            {
+                _dialogService.ShowInfo(
+                    "External networks reference an existing Docker network.\n" +
+                    "Creation-only options are stored for Compose export, but Docker network create will not be called.",
+                    "External Network");
+            }
+
             DialogResult = true;
+        }
+
+        private void UpdateDriverSpecificOptions()
+        {
+            bool isMacvlan = string.Equals(Driver, "macvlan", System.StringComparison.OrdinalIgnoreCase);
+            bool isIpvlan = string.Equals(Driver, "ipvlan", System.StringComparison.OrdinalIgnoreCase);
+
+            spDriverSpecificOptions.Visibility = isMacvlan || isIpvlan ? Visibility.Visible : Visibility.Collapsed;
+            gridMacvlanMode.Visibility = isMacvlan ? Visibility.Visible : Visibility.Collapsed;
+            gridIpvlanMode.Visibility = isIpvlan ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private bool IsMacvlanOrIpvlan()
+        {
+            return string.Equals(Driver, "macvlan", System.StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(Driver, "ipvlan", System.StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool HasCreateOnlyOptions()
+        {
+            return !string.IsNullOrWhiteSpace(txtSubnet.Text) ||
+                   !string.IsNullOrWhiteSpace(txtGateway.Text) ||
+                   !string.IsNullOrWhiteSpace(txtIpRange.Text) ||
+                   !string.IsNullOrWhiteSpace(txtParentInterface.Text) ||
+                   chkInternal.IsChecked == true ||
+                   chkAttachable.IsChecked == true ||
+                   chkEnableIPv6.IsChecked == true ||
+                   GetKeyValueLines(txtAuxAddresses.Text).Any() ||
+                   GetKeyValueLines(txtLabels.Text).Any() ||
+                   GetKeyValueLines(txtDriverOptions.Text).Any();
+        }
+
+        private Dictionary<string, string> BuildDriverOptions()
+        {
+            var options = ParseKeyValueLines(txtDriverOptions.Text);
+
+            if (IsMacvlanOrIpvlan())
+            {
+                var parent = txtParentInterface.Text.Trim();
+                if (!string.IsNullOrWhiteSpace(parent))
+                    options["parent"] = parent;
+
+                if (string.Equals(Driver, "macvlan", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    var mode = GetComboBoxContent(cmbMacvlanMode);
+                    if (!string.IsNullOrWhiteSpace(mode))
+                        options["macvlan_mode"] = mode;
+                }
+                else if (string.Equals(Driver, "ipvlan", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    var mode = GetComboBoxContent(cmbIpvlanMode);
+                    if (!string.IsNullOrWhiteSpace(mode))
+                        options["ipvlan_mode"] = mode;
+                }
+            }
+
+            return options;
+        }
+
+        private bool ValidateKeyValueLines(string text, string fieldName)
+        {
+            var invalidLine = GetKeyValueLines(text).FirstOrDefault(line => !line.Contains('=') || line.StartsWith("="));
+            if (invalidLine == null) return true;
+
+            _dialogService.ShowError($"{fieldName} must use key=value format.\n\nInvalid line: {invalidLine}", "Input Error");
+            return false;
+        }
+
+        private static Dictionary<string, string> ParseKeyValueLines(string text)
+        {
+            return GetKeyValueLines(text)
+                .Select(line => line.Split(new[] { '=' }, 2))
+                .Where(parts => parts.Length == 2 && !string.IsNullOrWhiteSpace(parts[0]))
+                .GroupBy(parts => parts[0].Trim())
+                .ToDictionary(group => group.Key, group => group.Last()[1].Trim());
+        }
+
+        private static IEnumerable<string> GetKeyValueLines(string text)
+        {
+            return (text ?? "")
+                .Split(new[] { "\r\n", "\n" }, System.StringSplitOptions.None)
+                .Select(line => line.Trim())
+                .Where(line => !string.IsNullOrWhiteSpace(line));
+        }
+
+        private static string GetComboBoxContent(ComboBox comboBox)
+        {
+            return (comboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
         }
     }
 }

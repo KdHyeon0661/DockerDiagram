@@ -441,8 +441,8 @@ namespace DockerDiagram
                         return null;
                     }
 
-                    var payload = await dockerService.InspectVolumeAsync(node.Name);
-                    return ($"Volume inspect - {node.Name}", payload);
+                    var payload = await dockerService.InspectVolumeAsync(node.EffectiveVolumeName);
+                    return ($"Volume inspect - {node.EffectiveVolumeName}", payload);
                 }
 
                 _dialogService.ShowInfo("Internet 노드는 Docker inspect 대상이 아닙니다.", "Raw Inspect");
@@ -1226,7 +1226,7 @@ namespace DockerDiagram
                                 if (dlg.ShowDialog() == true)
                                 {
                                     // MainViewModel의 함수 내부에서 이미 UpdateGroupLayering을 호출하므로 await 대기만 수행
-                                    await vm.CreateNewNetworkGroupAsync(dlg.NetworkName, dlg.Driver, x, y, w, h);
+                                    await vm.CreateNewNetworkGroupAsync(dlg.CreateOptions, x, y, w, h);
                                 }
                             }
                         }
@@ -1271,8 +1271,7 @@ namespace DockerDiagram
                             {
                                 if (targetGroups.Contains(group))
                                 {
-                                    // 도커 엔진 추가 통신을 막기 위해 복원(isRestoring: true) 플래그 상태로 동기화
-                                    await group.AddNodeAsync(nodeVm, isRestoring: true);
+                                    await group.AddNodeAsync(nodeVm);
                                 }
                                 else
                                 {
@@ -1812,7 +1811,7 @@ namespace DockerDiagram
                             dlg.Owner = this;
                             if (dlg.ShowDialog() == true)
                             {
-                                await vm.CreateNewVolumeNodeAsync(dlg.VolumeName, dlg.Driver, defaultX, defaultY);
+                                await vm.CreateNewVolumeNodeAsync(dlg.CreateOptions, defaultX, defaultY);
                             }
                         }
                         else if (type == NodeType.Internet)
@@ -1903,7 +1902,7 @@ namespace DockerDiagram
                             dlg.Owner = this;
                             if (dlg.ShowDialog() == true)
                             {
-                                await vm.CreateNewVolumeNodeAsync(dlg.VolumeName, dlg.Driver, snapX, snapY);
+                                await vm.CreateNewVolumeNodeAsync(dlg.CreateOptions, snapX, snapY);
                             }
                         }
                         else
@@ -2304,6 +2303,33 @@ namespace DockerDiagram
                 Owner = this
             };
             imgWindow.ShowDialog();
+        }
+
+        private void ShowDiskUsage_Click(object sender, RoutedEventArgs e)
+        {
+            OptionPopup.IsOpen = false;
+
+            if (ViewModel.ActiveSheet == null)
+            {
+                _dialogService.ShowInfo("활성화된 시트가 없습니다.", "Docker Disk Usage");
+                return;
+            }
+
+            var profileName = ViewModel.ActiveSheet.Profile?.Name;
+            if (string.IsNullOrWhiteSpace(profileName))
+            {
+                profileName = "Docker";
+            }
+
+            var window = new Views.SystemDiskUsageWindow(
+                ViewModel.ActiveSheet.DockerService,
+                _dialogService,
+                profileName)
+            {
+                Owner = this
+            };
+
+            window.ShowDialog();
         }
 
         /// <summary>

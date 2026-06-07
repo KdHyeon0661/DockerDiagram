@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using DockerDiagram.Models;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -62,10 +63,34 @@ namespace DockerDiagram.Helpers
             return GetMapping(GetValue(services, serviceName));
         }
 
+        public static Dictionary<object, object>? GetNetworkMap(Dictionary<object, object>? root, string networkName)
+        {
+            var networks = GetMapping(GetValue(root, "networks"));
+            return GetMapping(GetValue(networks, networkName));
+        }
+
+        public static Dictionary<object, object>? GetVolumeMap(Dictionary<object, object>? root, string volumeName)
+        {
+            var volumes = GetMapping(GetValue(root, "volumes"));
+            return GetMapping(GetValue(volumes, volumeName));
+        }
+
         public static string GetServiceYaml(Dictionary<object, object>? root, string serviceName)
         {
             var service = GetServiceMap(root, serviceName);
             return service == null ? string.Empty : SerializeObject(service);
+        }
+
+        public static string GetNetworkYaml(Dictionary<object, object>? root, string networkName)
+        {
+            var network = GetNetworkMap(root, networkName);
+            return network == null ? string.Empty : SerializeObject(network);
+        }
+
+        public static string GetVolumeYaml(Dictionary<object, object>? root, string volumeName)
+        {
+            var volume = GetVolumeMap(root, volumeName);
+            return volume == null ? string.Empty : SerializeObject(volume);
         }
 
         public static List<string> ToStringList(object? value)
@@ -181,6 +206,32 @@ namespace DockerDiagram.Helpers
 
             var config = GetMapping(GetValue(map, networkName));
             return GetValue(config, "ipv4_address")?.ToString();
+        }
+
+        public static ContainerNetworkOptions GetNetworkOptions(object? networks, string networkName)
+        {
+            var options = new ContainerNetworkOptions();
+            var map = GetMapping(networks);
+            if (map == null) return options;
+
+            var config = GetMapping(GetValue(map, networkName));
+            if (config == null) return options;
+
+            options.StaticIPv4 = GetValue(config, "ipv4_address")?.ToString() ?? "";
+            options.StaticIPv6 = GetValue(config, "ipv6_address")?.ToString() ?? "";
+            options.Aliases = ToStringList(GetValue(config, "aliases"));
+            options.DriverOptions = ToStringDictionary(GetValue(config, "driver_opts"));
+            return options;
+        }
+
+        public static Dictionary<string, string> ToStringDictionary(object? value)
+        {
+            var map = GetMapping(value);
+            if (map == null) return new Dictionary<string, string>();
+
+            return map
+                .Where(kv => kv.Key != null && kv.Value != null)
+                .ToDictionary(kv => kv.Key.ToString() ?? "", kv => kv.Value?.ToString() ?? "");
         }
 
         public static string? GetBuildLabel(object? build)

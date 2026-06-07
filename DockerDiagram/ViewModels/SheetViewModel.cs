@@ -160,6 +160,8 @@ namespace DockerDiagram.ViewModels
             {
                 nodeVm.StatusColor = "#E67E22";
                 nodeVm.ContainerId = "";
+                nodeVm.DockerVolumeName = volume.Name;
+                nodeVm.VolumeExternal = !string.IsNullOrWhiteSpace(volume.Id);
                 nodeVm.IsDockerConnected = true;
             }
             else if (nodeModel is DockerInternet internet)

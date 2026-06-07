@@ -204,8 +204,18 @@ namespace DockerDiagram.ViewModels
 
                 if (result == System.Windows.MessageBoxResult.Cancel) return;
 
+                bool deleteDocker = result == System.Windows.MessageBoxResult.Yes;
+                bool forceVolumeDelete = false;
+
+                if (deleteDocker && node.Type == NodeType.Volume && !node.VolumeExternal)
+                {
+                    var decision = await _mainVm.ConfirmVolumeDockerDeleteAsync(volumeService, node.EffectiveVolumeName, allowForceAttempt: true);
+                    if (!decision.ShouldDelete) return;
+                    forceVolumeDelete = decision.Force;
+                }
+
                 await _mainVm.History.ExecuteAndRecordAsync(
-                    _mainVm.CreateNodeDeleteCommand(sheet, node, deleteDocker: result == System.Windows.MessageBoxResult.Yes));
+                    _mainVm.CreateNodeDeleteCommand(sheet, node, deleteDocker, forceVolumeDelete));
             }
 
             // =========================================================

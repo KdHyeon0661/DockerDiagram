@@ -21,5 +21,10 @@ namespace DockerDiagram.Models
 
         public int LocalTunnelPort { get; set; } // 백그라운드에서 뚫어놓은 내 PC의 비밀 통로 포트 (예: 23750)
         public string? SshKeyFilePath { get; set; } // 자동 재접속을 위한 SSH 프라이빗 키(.pem) 파일 경로
+
+        // =====================================
+        // [Docker CLI context 직접 연결 전용 데이터]
+        // =====================================
+        public string? DockerEndpoint { get; set; } // npipe://, unix://, tcp:// 등 Docker context의 endpoint
     }
 }

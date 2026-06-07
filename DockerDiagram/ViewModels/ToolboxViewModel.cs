@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Diagnostics;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using DockerDiagram.Helpers;
@@ -15,6 +14,7 @@ namespace DockerDiagram.ViewModels
         private readonly MainViewModel _mainVm;
         private readonly IDockerService _defaultDockerService;
         private readonly IDialogService _dialogService;
+        private readonly IComposeService _composeService;
 
         public ICommand FlowClearCommand { get; }
         public ICommand FlowAllClearCommand { get; }
@@ -22,11 +22,12 @@ namespace DockerDiagram.ViewModels
         public ICommand ImportComposeCommand { get; }
         public ICommand ExportComposeCommand { get; }
 
-        public ToolboxViewModel(MainViewModel mainVm, IDockerService defaultDockerService, IDialogService dialogService)
+        public ToolboxViewModel(MainViewModel mainVm, IDockerService defaultDockerService, IDialogService dialogService, IComposeService composeService)
         {
             _mainVm = mainVm;
             _defaultDockerService = defaultDockerService;
             _dialogService = dialogService;
+            _composeService = composeService;
 
             FlowClearCommand = new RelayCommand(ExecuteFlowClear);
             FlowAllClearCommand = new RelayCommand(ExecuteFlowAllClear);
@@ -50,7 +51,8 @@ namespace DockerDiagram.ViewModels
                     (IContainerService)activeService,
                     (IVolumeService)activeService,
                     (INetworkService)activeService,
-                    _dialogService
+                    _dialogService,
+                    _composeService
                 );
             });
         }
@@ -91,39 +93,20 @@ namespace DockerDiagram.ViewModels
         /// </summary>
         private async Task ExecuteSystemPruneAsync(object? obj)
         {
-            var dlg = new Views.PruneDialog();
-            dlg.Owner = System.Windows.Application.Current.MainWindow;
-
-            if (dlg.ShowDialog() != true) return;
-
-            string targetCommand = dlg.FinalCommand;
+            if (!_dialogService.TryShowPruneOptionsDialog(out var pruneOptions)) return;
 
             try
             {
                 Mouse.OverrideCursor = Cursors.Wait;
 
-                string pruneResult = "";
-                await Task.Run(() =>
+                if (pruneOptions.Target == DockerPruneTarget.Volume)
                 {
-                    var startInfo = new ProcessStartInfo
-                    {
-                        FileName = "cmd.exe",
-                        Arguments = $"/c {targetCommand}",
-                        CreateNoWindow = true,
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
+                    await ExecuteSafeVolumePruneAsync();
+                    return;
+                }
 
-                    using (var process = Process.Start(startInfo))
-                    {
-                        if (process != null)
-                        {
-                            pruneResult = process.StandardOutput.ReadToEnd();
-                            process.WaitForExit();
-                        }
-                    }
-                });
+                var service = (ISystemService)(_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService);
+                var pruneResult = await service.PruneAsync(pruneOptions);
 
                 // 청소가 끝났으니 사이드바(Explorer) 담당자에게 새로고침을 지시
                 if (_mainVm.Explorer != null)
@@ -131,7 +114,7 @@ namespace DockerDiagram.ViewModels
                     await _mainVm.Explorer.SyncWithDockerEngineAsync();
                 }
 
-                _dialogService.ShowInfo($"명령어 실행: {targetCommand}\n\n[결과]\n{pruneResult.Trim()}", "청소 완료");
+                _dialogService.ShowInfo($"Docker Engine API prune 실행\n\n[결과]\n{pruneResult.Summary}", "청소 완료");
             }
             catch (Exception ex)
             {
@@ -141,6 +124,62 @@ namespace DockerDiagram.ViewModels
             {
                 Mouse.OverrideCursor = null;
             }
+        }
+
+        private async Task ExecuteSafeVolumePruneAsync()
+        {
+            var service = (IVolumeService)(_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService);
+            var volumes = await service.GetVolumesAsync();
+            var unusedVolumes = new System.Collections.Generic.List<DockerVolume>();
+
+            foreach (var volume in volumes)
+            {
+                if (string.IsNullOrWhiteSpace(volume.Name)) continue;
+                var users = await service.GetContainersUsingVolumeAsync(volume.Name);
+                if (users.Count == 0)
+                    unusedVolumes.Add(volume);
+            }
+
+            if (unusedVolumes.Count == 0)
+            {
+                _dialogService.ShowInfo("삭제할 미사용 볼륨이 없습니다.", "Volume Prune");
+                return;
+            }
+
+            string volumeList = string.Join("\n", unusedVolumes.ConvertAll(v => $"- {v.Name}"));
+            if (!_dialogService.ShowConfirm(
+                    $"다음 미사용 볼륨 {unusedVolumes.Count}개를 삭제하시겠습니까?\n\n{volumeList}",
+                    "Volume Prune"))
+            {
+                return;
+            }
+
+            var deleted = new System.Collections.Generic.List<string>();
+            var failed = new System.Collections.Generic.List<string>();
+
+            foreach (var volume in unusedVolumes)
+            {
+                try
+                {
+                    await service.RemoveVolumeAsync(volume.Name, force: false);
+                    deleted.Add(volume.Name);
+                }
+                catch (Exception ex)
+                {
+                    failed.Add($"{volume.Name}: {ex.Message}");
+                }
+            }
+
+            if (_mainVm.Explorer != null)
+                await _mainVm.Explorer.SyncWithDockerEngineAsync();
+
+            string result = $"삭제됨: {deleted.Count}개";
+            if (deleted.Count > 0)
+                result += "\n\n" + string.Join("\n", deleted.ConvertAll(v => $"- {v}"));
+            if (failed.Count > 0)
+                result += $"\n\n실패: {failed.Count}개\n" + string.Join("\n", failed.ConvertAll(v => $"- {v}"));
+
+            _dialogService.ShowInfo(result, "Volume Prune 완료");
         }
     }
 }
