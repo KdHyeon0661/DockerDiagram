@@ -10,7 +10,7 @@ namespace DockerDiagram.Models
     /// </summary>
     public class DiagramFile
     {
-        public string Version { get; set; } = "1.33"; // 파일 구조의 버전 (하위 호환성 체크용)
+        public string Version { get; set; } = "1.41"; // 파일 구조의 버전 (하위 호환성 체크용)
         public DateTime SavedAt { get; set; } = DateTime.Now; // 파일이 마지막으로 저장된 시간
         public List<SheetData> Sheets { get; set; } = new List<SheetData>(); // 파일에 포함된 모든 시트(도화지) 목록
         public int ActiveSheetIndex { get; set; } = 0; // 파일을 다시 열었을 때 포커스를 맞출 시트의 인덱스

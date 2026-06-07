@@ -1,198 +1,308 @@
 # Visual Docker Manager (DockerDiagram)
 
-**Visual Docker Manager**는 Windows 환경에서 Docker 리소스를 시각적으로 관리하고 설계할 수 있는 WPF 기반 데스크톱 애플리케이션입니다.
-복잡한 CLI 명령어 대신 캔버스 위에 노드를 배치하고 관계를 그려나가는 방식으로 Docker 환경을 구축하고 파일로 관리할 수 있습니다.
+**Visual Docker Manager**는 Windows WPF 기반의 Docker 시각화 및 관리 도구입니다.
 
----
+복잡한 Docker 명령어를 직접 기억하지 않아도, 컨테이너, 볼륨, 네트워크, 외부 연결을 캔버스 위에 노드로 배치하고 선으로 연결하면서 실제 Docker 리소스를 관리할 수 있습니다.
 
 ## 주요 기능
 
-### 멀티 탭 및 원격 환경 지원 (SSH 터널링) **[NEW]**
-- **Local PC**의 Docker Desktop 뿐만 아니라, **원격 서버의 Docker Daemon**에도 접속하여 관리할 수 있습니다.
-- **SSH 터널링**을 통한 안전한 연결 및 프라이빗 키 인증을 지원합니다.
-- 각 환경(엔드포인트)은 **독립된 탭(Sheet)**으로 구성되어 여러 서버의 인프라를 동시에 설계하고 모니터링할 수 있습니다.
+- 컨테이너, 볼륨, 네트워크, 그룹, 연결선을 다루는 시각적 Docker 캔버스
+- Local Docker, SSH 원격 Docker, Docker context 기반 연결 지원
+- 컨테이너 생성, 시작, 중지, 일시정지, 재시작, kill, rename, exec 지원
+- 이미지 pull, search, delete, build, tag, push, save, load, import 지원
+- 볼륨 고급 옵션, 백업/복원, 사용 감지, 삭제 보호, 안전 prune 지원
+- 네트워크 IPAM, subnet, gateway, IPv6, labels, driver options, static IP, aliases, endpoint options 지원
+- 컨테이너/볼륨/네트워크 raw inspect JSON 보기
+- Docker events 기반 실시간 동기화와 보조 polling
+- Docker Engine `system/df` 기반 디스크 사용량 보기
+- Docker Compose import/export와 네트워크/볼륨 옵션 보존
+- `.vdm` 프로젝트 저장/불러오기
 
-### Docker 리소스 탐색 & 동기화
-- Docker 엔진과 주기적으로 동기화하여 다음 항목을 표시합니다.
-  - **Containers**
-  - **Volumes**
-  - **Networks**
-  - **Docker Images**
-- 목록에서 항목을 **드래그 앤 드롭**으로 캔버스에 배치합니다.
-- 목록 항목에서 **삭제(컨테이너/볼륨/네트워크/이미지)**를 지원합니다.
-  - 이미지 삭제 실패 시 **강제 삭제(force)**를 제안하는 흐름이 포함되어 있습니다.
-- **[NEW]** 전용 **이미지 관리(Image Manager)** 및 검색 창을 지원합니다.
-- **[NEW]** **시스템 대청소(System Prune)** 기능을 통해 중지된 컨테이너나 미사용 볼륨, 네트워크를 GUI에서 일괄 정리할 수 있습니다.
+## 시각적 Docker 다이어그램
 
-### 캔버스(다이어그램) 편집
-- 노드(Node): 컨테이너/볼륨/네트워크를 시각 요소로 배치
-- 커넥터(Connector): 노드 간 관계를 표현
-- 라우팅: `OrthogonalRouter`로 **직교(꺾이는) 경로** 생성 (포트 방향 포함)
+Docker 리소스를 캔버스 위의 시각 요소로 표현합니다.
 
-### 강력한 컨테이너 생성 파이프라인 **[NEW]**
-- **UI 직접 설정**: 포트, 볼륨, 환경변수 등을 생성 다이얼로그에서 직관적으로 입력
-- **CLI 파싱 (Hybrid)**: `docker run` 형태의 명령어를 그대로 붙여넣으면, 앱이 자동으로 분석하여 캔버스에 노드를 배치하고 실행
-- **Dockerfile 빌드**: 작성한 도커파일 텍스트나 업로드한 파일을 기반으로 백그라운드에서 이미지를 빌드한 뒤 즉시 컨테이너로 구동
+- 컨테이너 노드
+- 볼륨 노드
+- 네트워크 그룹
+- 인터넷/외부 연결 노드
+- 의존성 연결선
+- 볼륨 마운트 연결선
+- 네트워크 연결선
 
-### 관계(Connector) 타입
-코드상 관계 타입은 3가지로 정의되어 있으며, 상황에 따라 표시 정보가 다릅니다.
-- **Dependency**: Container ↔ Container
-- **VolumeMount**: Container ↔ Volume (마운트 경로 표시 가능, 연결 시 자동 백업/복원 마운트 처리 지원)
-- **NetworkAttach**: Container ↔ Network (컨테이너 IP 표시 가능)
+캔버스는 드래그 앤 드롭, 선택, 리사이즈, 직각 라우팅, 줌, 패닝, undo/redo, 다중 시트를 지원합니다.
 
-### 그룹(Group)
-- 사각 드래그로 노드를 묶어 **그룹**을 생성/관리
-- 그룹 단위 **정렬(Arrange)** 및 **Start All / Stop All** 제공
+## 연결 관리
 
-### 내보내기 & 저장
-- **Save**: `.vdm` 파일로 레이아웃 저장 (JSON 기반)
-- **Load**: `.vdm` 파일 로드
-- **Export Compose**: 현재 시트를 `docker-compose.yml`로 내보내기
-- 자동 저장: 마지막 저장 경로(`Properties.Settings.Default.LastFilePath`)가 존재하면 **1분 주기**로 QuickSave 수행
+여러 Docker 환경을 하나의 앱 안에서 관리할 수 있습니다.
 
-### Docker Desktop 감시
-- Docker 프로세스가 꺼진 것을 감지하면 **재실행 여부를 묻고**, 거부 시 앱을 종료합니다.
+- Local Docker Desktop
+- SSH 터널을 통한 원격 Docker
+- Docker context 기반 연결
+- 여러 연결 워크스페이스
 
----
+각 워크스페이스는 독립적인 시트와 Docker 연결 정보를 가질 수 있습니다.
+
+## 컨테이너 관리
+
+컨테이너 관련 기능은 다음을 지원합니다.
+
+- UI 옵션 기반 컨테이너 생성 및 실행
+- `docker run` 형태의 명령어 분석 및 실행
+- start, stop, pause, unpause, restart, kill
+- 컨테이너 이름 변경
+- 사용자 지정 exec 명령 실행
+- 터미널 열기
+- 로그 및 상세 정보 보기
+- 컨테이너를 이미지로 commit
+- 컨테이너 파일시스템을 tar로 export
+- tar 파일시스템을 이미지로 import
+- 기존 컨테이너 정보에서 Dockerfile 형태의 요약 추출
+
+## 이미지 관리
+
+이미지 관리 화면과 리소스 목록에서 Docker 이미지를 관리할 수 있습니다.
+
+- 이미지 검색
+- 이미지 pull
+- 이미지 삭제 및 강제 삭제
+- Dockerfile context 기반 이미지 build
+- 이미지 tag
+- 이미지 push
+- 이미지를 tar로 save
+- tar 이미지 load
+- root filesystem tar를 이미지로 import
+
+이미지 build는 `docker build` CLI를 직접 실행하지 않고 Docker.DotNet을 통해 Docker Engine API로 처리합니다.
+
+## 볼륨 관리
+
+볼륨은 단순 생성뿐 아니라 고급 옵션과 데이터 보호 흐름을 지원합니다.
+
+- 관리형 볼륨 생성
+- 외부 볼륨 참조
+- 다이어그램 이름과 실제 Docker 볼륨 이름 분리
+- driver, driver options, labels 설정
+- `.vdm` 저장 시 볼륨 옵션 보존
+- Compose import/export 시 볼륨 옵션 보존
+- 볼륨 raw inspect JSON 보기
+- driver, mountpoint, labels, options, size, ref count 표시
+- 사용 중인 컨테이너와 mount destination, read/write 정보 표시
+- 볼륨 tar 백업/복원
+- 백업, 삭제, 재생성, 복원, rollback 보호를 포함한 볼륨 재생성
+- 사용 중인 볼륨 삭제 보호
+- 삭제될 미사용 볼륨 목록을 먼저 보여주는 안전 volume prune
+
+## 네트워크 관리
+
+네트워크 생성과 컨테이너 연결 옵션을 세밀하게 설정할 수 있습니다.
+
+- driver 선택
+- IPAM subnet
+- gateway
+- ip_range
+- aux_addresses
+- internal network
+- attachable
+- IPv6 활성화
+- labels
+- driver options
+- macvlan/ipvlan parent 옵션
+- 컨테이너별 static IPv4
+- 컨테이너별 static IPv6
+- network aliases
+- endpoint driver options
+
+기존 방식도 유지됩니다. 네트워크 영역을 만들고, 컨테이너 노드를 그 영역 위에 배치하면 해당 네트워크에 연결되는 흐름을 계속 사용할 수 있습니다.
+
+## Docker Compose 지원
+
+Docker Compose YAML을 가져오거나 내보낼 수 있습니다.
+
+보존 대상은 다음과 같습니다.
+
+- services
+- depends_on
+- ports
+- environment
+- volume mounts
+- top-level volumes
+- top-level networks
+- network IPAM options
+- network labels / driver_opts
+- volume external / name / labels / driver_opts
+- round-trip 품질을 위한 raw Compose YAML 조각
+
+Compose 배포는 `IComposeService` 뒤로 격리되어 있습니다. 기본 구현은 Docker Compose CLI 플러그인을 사용합니다. `docker compose up`은 Docker Engine API의 단일 기능이 아니라 Compose 플러그인이 여러 Engine API 호출로 풀어 실행하는 기능이기 때문입니다.
+
+## 시스템 도구
+
+전역 Docker 관리 기능은 다음을 지원합니다.
+
+- Docker system disk usage 보기
+- container prune
+- image prune
+- network prune
+- system prune
+- 안전 volume prune
+- Docker events 기반 동기화
+- raw inspect viewer
 
 ## 요구 사항
 
-- Windows 10/11
-- Docker Desktop 설치 및 실행(권장: WSL2 백엔드)
-- .NET SDK 9 (또는 Visual Studio에서 .NET 9 Desktop 개발 환경)
-- (Terminal 기능 사용 시) `docker` CLI가 PATH에 잡혀있어야 합니다.
-  - `OpenTerminal()`은 `cmd.exe`에서 `docker exec -it ...`를 실행합니다.
+- Windows 10 또는 Windows 11
+- Docker Desktop 또는 접근 가능한 Docker Engine
+- Compose 배포 기능 사용 시 Docker Compose CLI 플러그인
+- .NET SDK 10
+- Visual Studio의 .NET Desktop Development workload 또는 .NET CLI
 
----
+일부 기능은 Docker CLI가 PATH에 있어야 합니다.
 
-## 빌드/실행
+- `docker exec -it` 기반 대화형 터미널
+- `docker compose` 기반 Compose 배포
+- Docker context 검색 및 관리
+
+핵심 Docker 리소스 관리는 가능한 범위에서 Docker.DotNet과 Docker Engine API를 사용합니다.
+
+## 빌드 및 실행
 
 ### Visual Studio
-1. Visual Studio에서 `DockerDiagram.csproj`를 엽니다.
-2. 빌드 후 실행(F5)
+
+1. `DockerDiagram.csproj`를 엽니다.
+2. NuGet 패키지를 복원합니다.
+3. F5로 빌드 및 실행합니다.
 
 ### CLI
+
 ```bash
 dotnet restore
-dotnet build -c Release
+dotnet build
 dotnet run
 ```
 
----
+## 빠른 사용 방법
 
-## 사용 방법(빠른 가이드)
+1. Docker Desktop을 실행하거나 원격 Docker 연결을 준비합니다.
+2. DockerDiagram을 실행합니다.
+3. 왼쪽 리소스 목록에서 기존 컨테이너, 볼륨, 네트워크를 캔버스로 드래그합니다.
+4. 템플릿에서 새 컨테이너, 볼륨, 네트워크, 그룹, 인터넷 노드를 만들 수 있습니다.
+5. 컨테이너와 볼륨 또는 네트워크를 선으로 연결합니다.
+6. 항목을 선택하면 상세 정보와 작업 버튼을 사용할 수 있습니다.
+7. 프로젝트를 `.vdm` 파일로 저장합니다.
 
-### 1) Docker 리소스 배치
-- 좌측 패널의 **Existing Containers / Volumes / Networks / Docker Images**에서 항목을 캔버스로 드래그합니다.
-- `Templates` 섹션의 **New Container / New Volume / New Network** 템플릿을 이용하면 생성 다이얼로그(예: `ContainerDialog`)를 통해 새 리소스 생성 흐름을 시작할 수 있습니다.
+## `.vdm` 프로젝트 파일
 
-### 2) 줌/팬
-- **마우스 휠**: Zoom (Scale)
-- **오른쪽 버튼 드래그**: Pan (OffsetX/OffsetY)
+DockerDiagram은 다이어그램을 `.vdm` 파일로 저장합니다.
 
-### 3) 선택/삭제
-- 요소 선택 후 **Delete 키**로 삭제할 수 있습니다.
+파일은 JSON 기반이며 다음 정보를 저장합니다.
 
-### 4) 컨테이너 제어
-- 컨테이너 노드 선택 시:
-  - Start / Stop / Pause(토글) / Restart
-  - Terminal (컨테이너 내부 쉘/명령 프롬프트 진입 시도)
+- 파일 포맷 버전
+- 저장 시각
+- 연결 워크스페이스
+- 시트 목록
+- 캔버스 크기, 오프셋, 확대 비율
+- 노드
+- 연결선
+- 그룹
+- Docker 리소스 메타데이터
+- 네트워크/볼륨 고급 옵션
+- Compose 보존 데이터
 
----
-
-## 저장 파일(.vdm) 포맷
-
-저장 확장자는 `.vdm`이며, 내부는 JSON입니다.  
-모델 정의는 `Models/SaveData.cs`의 `DiagramFile`, `SheetData`, `NodeData`, `ConnectionData`, `GroupData`를 따릅니다.
-
-- 최상위: `DiagramFile`
-  - `Version`, `SavedAt`, `ActiveSheetIndex`, `Sheets[]`
-- 시트: `SheetData`
-  - `Title`, `MapWidth`, `MapHeight`, `OffsetX`, `OffsetY`, `Scale`
-  - `Nodes[]`, `Connections[]`, `Groups[]`
-- 노드: `NodeData`
-  - `Id`(다이어그램용), `DockerId`(실제 Docker ID), `Name`, `ImageName`, `Type`, `X/Y/Width/Height`
-- 연결: `ConnectionData`
-  - `SourceNodeId`, `TargetNodeId`, `SourceDir`, `TargetDir`, `RelationType`
-
-> 참고: `NodeType`, `PortDirection`, `RelationType`는 `JsonStringEnumConverter`를 사용하지 않으므로 기본 직렬화 기준으로 **숫자(enum ordinal)** 로 저장됩니다.
-
----
+파일 포맷 버전은 루트 `DiagramFile` 모델에 남겨둡니다. 이후 저장 구조가 바뀌어도 구버전 `.vdm` 파일과의 호환성을 판단하기 위해 필요합니다.
 
 ## 프로젝트 구조
-
-본 프로젝트는 **MVVM 패턴**과 **의존성 주입(DI)**을 준수하여 설계되었습니다.
 
 ```text
 DockerDiagram/
 ├─ DockerDiagram.csproj
 ├─ App.xaml / App.xaml.cs
-├─ MainWindow.xaml / MainWindow.xaml.cs    # 캔버스 줌/팬, 마우스 드래그/리사이징 UI 라우터
+├─ MainWindow.xaml / MainWindow.xaml.cs
 ├─ Helpers/
-│  ├─ DockerApiService.cs          # Docker.DotNet API 기반 코어 통신 서비스
-│  ├─ DockerServiceHelper.cs       # Docker Desktop 실행/감지
-│  ├─ SshTunnelManager.cs          # SSH 포트 포워딩 관리
-│  ├─ ComposeExportService.cs      # docker-compose.yml 생성
-│  ├─ FileService.cs               # .vdm 저장/로드(QuickSave 포함)
-│  ├─ OrthogonalRouter.cs          # 직교 라우팅 + PortDirection
-│  └─ RelayCommand.cs / ViewModelBase.cs ...
+│  ├─ DockerApiService.cs
+│  ├─ DockerInterface.cs
+│  ├─ DockerContextService.cs
+│  ├─ DockerComposeCliService.cs
+│  ├─ ComposeImportService.cs
+│  ├─ ComposeExportService.cs
+│  ├─ FileService.cs
+│  ├─ DialogService.cs
+│  ├─ SshTunnelManager.cs
+│  └─ OrthogonalRouter.cs
 ├─ Models/
-│  ├─ NodeType.cs
-│  ├─ DockerContainer.cs / DockerImage.cs
-│  ├─ TemplateItem.cs
-│  └─ SaveData.cs                  # .vdm 파일 모델
+│  ├─ SaveData.cs
+│  ├─ DockerContainer.cs
+│  ├─ DockerImage.cs
+│  ├─ NetworkCreateOptions.cs
+│  ├─ VolumeCreateOptions.cs
+│  └─ ...
 ├─ ViewModels/
-│  ├─ MainViewModel.cs             # 탭(Sheet) 관리, 전역 커맨드, CLI 파싱 등 컨트롤 타워
-│  ├─ SheetViewModel.cs            # 개별 캔버스 상태(줌/팬, 노드/커넥터/그룹)
-│  ├─ NodeViewModel.cs             # 노드(컨테이너/볼륨/네트워크) + 컨테이너 제어 커맨드
-│  ├─ ConnectorViewModel.cs        # 연결선(관계 타입, IP/마운트 경로 표시)
-│  └─ GroupViewModel.cs            # 그룹(Arrange, StartAll/StopAll)
-└─ Views/                          # IDialogService를 주입받는 순수 UI 팝업 창들
-   ├─ ContainerDialog.xaml(.cs)
-   ├─ VolumeDialog.xaml(.cs)
-   ├─ NetworkDialog.xaml(.cs)
-   ├─ MountDialog.xaml(.cs)
-   ├─ ArrangeDialog.xaml(.cs)
-   ├─ ImageManagerWindow.xaml(.cs) # 이미지 관리 뷰
-   ├─ PruneDialog.xaml(.cs)        # 시스템 대청소 뷰
-   └─ SshConnectionDialog.xaml(.cs)# 원격 SSH 연결 뷰
+│  ├─ MainViewModel.cs
+│  ├─ SheetManagerViewModel.cs
+│  ├─ SheetViewModel.cs
+│  ├─ NodeViewModel.cs
+│  ├─ ConnectorViewModel.cs
+│  ├─ GroupViewModel.cs
+│  ├─ ResourceExplorerViewModel.cs
+│  ├─ InspectorViewModel.cs
+│  └─ ToolboxViewModel.cs
+└─ Views/
+   ├─ ContainerDialog.xaml
+   ├─ VolumeDialog.xaml
+   ├─ NetworkDialog.xaml
+   ├─ ImageManagerWindow.xaml
+   ├─ SystemDiskUsageWindow.xaml
+   ├─ RawInspectWindow.xaml
+   └─ ...
 ```
 
----
+## 구조 메모
 
-## 트러블슈팅
+이 앱은 MVVM에 맞춰 구조를 정리하고 있습니다.
 
-### Docker가 실행 중인데도 연결이 안 될 때
-- Docker Desktop이 **정상적으로 Running**인지 확인
-- Windows에서 Named Pipe(`npipe://./pipe/docker_engine`) 접근 권한 문제일 수 있습니다.
-- Docker Desktop 재시작 후 재시도
+- ViewModel은 상태와 명령을 관리합니다.
+- 창 생성과 파일 다이얼로그는 `IDialogService`를 통해 처리합니다.
+- Docker Engine 통신은 서비스 인터페이스를 통해 분리합니다.
+- Compose 배포는 `IComposeService` 뒤로 격리합니다.
+- Docker API 호출은 가능한 경우 Docker.DotNet을 사용합니다.
+- Engine API로 직접 대응하기 어려운 기능만 전용 인프라 서비스 안에서 CLI를 사용합니다.
 
-### 컨테이너 터널링/SSH 접속 문제
-- 로컬 PC에서 SSH 접속에 필요한 프라이빗 키(.pem, .ppk)의 권한 및 포트(기본 22) 개방 상태를 확인해 주세요.
+## 문제 해결
 
-### Terminal 버튼이 동작하지 않을 때
-- `docker` CLI가 PATH에 없으면 `docker exec ...`가 실패합니다.
-- PowerShell/CMD에서 `docker version`이 동작하는지 확인하세요.
+### Docker가 감지되지 않을 때
 
----
+- Docker Desktop이 실행 중인지 확인합니다.
+- 터미널에서 `docker version`이 동작하는지 확인합니다.
+- Docker Desktop을 재시작합니다.
+- Windows named pipe 또는 Docker endpoint 접근 권한을 확인합니다.
 
-## 참고(패키지)
+### Compose 배포가 실패할 때
 
-- Docker.DotNet
-- System.ServiceProcess.ServiceController
+- `docker compose version`이 동작하는지 확인합니다.
+- Docker Compose CLI 플러그인이 설치되어 있는지 확인합니다.
+- 현재 선택한 연결 프로필이 대상 Docker Engine에 접근 가능한지 확인합니다.
 
----
+### SSH 연결이 실패할 때
 
-## 추가 예정
+- host, port, username, private key 경로를 확인합니다.
+- 원격 서버에 SSH 접속이 가능한지 확인합니다.
+- 방화벽과 포트 접근 권한을 확인합니다.
 
-- **swarm 기능**
-- **k8s 기능**
-- **엔드포인트 지정**
-- **전반적인 구조 개선**
-- **etc**
+### 터미널이 열리지 않을 때
 
----
+- Docker CLI가 PATH에 있는지 확인합니다.
+- 컨테이너 안에 `bash`, `sh`, `cmd`, `powershell` 중 하나가 있는지 확인합니다.
+
+## 향후 개선 후보
+
+- Docker Compose 프로젝트 라이프사이클 대시보드
+- registry login/logout 관리
+- Buildx / BuildKit cache 관리
+- Docker Swarm 지원
+- Kubernetes 연동
+- Docker secrets/configs
+- 더 정밀한 볼륨 크기 분석
 
 ## 라이선스
 
-이 ZIP에 별도의 LICENSE 파일이 포함되어 있지 않습니다. 필요하다면 라이선스를 추가해 주세요.
+이 프로젝트는 MIT License를 따릅니다.  
+자세한 내용은 [LICENSE](./LICENSE) 파일을 참고하세요.
