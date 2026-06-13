@@ -184,8 +184,8 @@ namespace DockerDiagram.ViewModels
                 Point end = GetExactBorderPoint(Target, tDir);
 
                 // 연결 대상이 그룹일 경우 장애물 박스(Rect)를 0으로 만들어서 선이 그룹 안쪽으로 파고들 수 있게 합니다.
-                Rect obsSource = Source is GroupViewModel ? new Rect(start.X, start.Y, 0, 0) : new Rect(Source.X, Source.Y, Source.Width, Source.Height);
-                Rect obsTarget = Target is GroupViewModel ? new Rect(end.X, end.Y, 0, 0) : new Rect(Target.X, Target.Y, Target.Width, Target.Height);
+                Rect obsSource = Source.UsePointRouting ? new Rect(start.X, start.Y, 0, 0) : new Rect(Source.X, Source.Y, Source.Width, Source.Height);
+                Rect obsTarget = Target.UsePointRouting ? new Rect(end.X, end.Y, 0, 0) : new Rect(Target.X, Target.Y, Target.Width, Target.Height);
 
                 try
                 {

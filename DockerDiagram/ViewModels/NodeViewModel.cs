@@ -15,7 +15,7 @@ namespace DockerDiagram.ViewModels
     /// <summary>
     /// 노드의 공통 배치·선택 상태를 관리하고 타입별 자식 ViewModel을 조정합니다.
     /// </summary>
-    public class NodeViewModel : ViewModelBase, IConnectableItem
+    public class NodeViewModel : ConnectableItemViewModel
     {
         #region Constants & Fields
         private const int GRID_SIZE = 10;
@@ -29,14 +29,6 @@ namespace DockerDiagram.ViewModels
         private readonly VolumeNodeViewModel _volume;
         private readonly ContainerNetworkViewModel _network;
 
-        // 마운트 정보 원본 저장용 (캐시)
-        private SheetViewModel? _parentSheet;
-
-        private double _x;
-        private double _y;
-        private double _width = 160;
-        private double _height = 80;
-        private bool _isSelected;
         private bool _isCreating = false;
         private bool _isDockerConnected = false;
         private bool _isRunning;
@@ -71,127 +63,43 @@ namespace DockerDiagram.ViewModels
 
         #endregion
 
-        #region Events
-        public event EventHandler? OnPositionChanged;
-        public event EventHandler? OnModified;
-        #endregion
+        #region Layout Behavior
+        protected override double NormalizeX(double value) =>
+            Math.Round(value / GRID_SIZE) * GRID_SIZE;
 
-        #region Layout Properties
-        public double X
+        protected override double NormalizeY(double value) =>
+            Math.Round(value / GRID_SIZE) * GRID_SIZE;
+
+        protected override double NormalizeWidth(double value) =>
+            Math.Max(MIN_SIZE, Math.Round(value / GRID_SIZE) * GRID_SIZE);
+
+        protected override double NormalizeHeight(double value) =>
+            Math.Max(MIN_SIZE, Math.Round(value / GRID_SIZE) * GRID_SIZE);
+
+        protected override void OnSelectionChanged(bool isSelected)
         {
-            get => _x;
-            set
+            if (isSelected)
             {
-                double newVal = Math.Round(value / GRID_SIZE) * GRID_SIZE;
-                if (_x != newVal)
-                {
-                    _x = newVal;
-                    OnPropertyChanged();
-                    OnPositionChanged?.Invoke(this, EventArgs.Empty);
-                    OnModified?.Invoke(this, EventArgs.Empty);
-                }
+                StartMonitoring();
+                _ = RefreshDetailsAsync();
+            }
+            else
+            {
+                StopMonitoring();
             }
         }
 
-        public double Y
+        protected override void OnParentSheetChanged(
+            SheetViewModel? previous,
+            SheetViewModel? current)
         {
-            get => _y;
-            set
-            {
-                double newVal = Math.Round(value / GRID_SIZE) * GRID_SIZE;
-                if (_y != newVal)
-                {
-                    _y = newVal;
-                    OnPropertyChanged();
-                    OnPositionChanged?.Invoke(this, EventArgs.Empty);
-                    OnModified?.Invoke(this, EventArgs.Empty);
-                }
-            }
-        }
+            if (previous != null)
+                previous.Connectors.CollectionChanged -= Connectors_CollectionChanged;
 
-        public double Width
-        {
-            get => _width;
-            set
-            {
-                double val = Math.Max(MIN_SIZE, Math.Round(value / GRID_SIZE) * GRID_SIZE);
-                if (_width != val)
-                {
-                    _width = val;
-                    OnPropertyChanged();
-                    OnPropertyChanged(nameof(CenterX));
-                    OnPositionChanged?.Invoke(this, EventArgs.Empty);
-                    OnModified?.Invoke(this, EventArgs.Empty);
-                }
-            }
-        }
+            if (current != null)
+                current.Connectors.CollectionChanged += Connectors_CollectionChanged;
 
-        public double Height
-        {
-            get => _height;
-            set
-            {
-                double val = Math.Max(MIN_SIZE, Math.Round(value / GRID_SIZE) * GRID_SIZE);
-                if (_height != val)
-                {
-                    _height = val;
-                    OnPropertyChanged();
-                    OnPropertyChanged(nameof(CenterY));
-                    OnPositionChanged?.Invoke(this, EventArgs.Empty);
-                    OnModified?.Invoke(this, EventArgs.Empty);
-                }
-            }
-        }
-
-        public double CenterX => X + (Width / 2);
-        public double CenterY => Y + (Height / 2);
-
-        /// <summary>
-        /// 사용자가 화면에서 이 노드를 클릭하여 선택했는지 여부를 나타냅니다.
-        /// 선택 시 상세 정보 패널이 열리며, 컨테이너 리소스 모니터링 타이머가 자동으로 시작됩니다.
-        /// </summary>
-        public bool IsSelected
-        {
-            get => _isSelected;
-            set
-            {
-                if (SetProperty(ref _isSelected, value))
-                {
-                    if (value)
-                    {
-                        StartMonitoring();
-                        _ = RefreshDetailsAsync();
-                    }
-                    else
-                    {
-                        StopMonitoring();
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// 이 노드가 배치된 부모 도화지(Sheet) 객체를 참조합니다.
-        /// 시트가 할당되거나 변경될 때마다 선 연결(Connector) 변경 이벤트를 감지하도록 구독하여, 연결 상태 문자열을 실시간으로 갱신합니다.
-        /// </summary>
-        public SheetViewModel? ParentSheet
-        {
-            get => _parentSheet;
-            set
-            {
-                if (_parentSheet != value)
-                {
-                    if (_parentSheet != null)
-                        _parentSheet.Connectors.CollectionChanged -= Connectors_CollectionChanged;
-
-                    _parentSheet = value;
-
-                    if (_parentSheet != null)
-                        _parentSheet.Connectors.CollectionChanged += Connectors_CollectionChanged;
-
-                    RefreshConnections();
-                }
-            }
+            RefreshConnections();
         }
         #endregion
 
@@ -201,7 +109,7 @@ namespace DockerDiagram.ViewModels
         /// </summary>
         public NodeType Type { get; init; }
 
-        public string Name
+        public override string Name
         {
             get => _name;
             set
@@ -214,7 +122,6 @@ namespace DockerDiagram.ViewModels
         }
         public string ImageName { get; set; } = string.Empty;
         public string PortInfo { get; set; } = string.Empty;
-        public string Id { get; set; } = Guid.NewGuid().ToString();
         public string ComposeServiceName { get; set; } = string.Empty;
         public string ComposeRawServiceYaml { get; set; } = string.Empty;
         public string ComposeRawVolumeYaml { get; set; } = string.Empty;
@@ -434,7 +341,7 @@ namespace DockerDiagram.ViewModels
             string? dockerNetworkName = null) =>
             _network.ValidateBeforeConnectAsync(networkService, networkName, dockerNetworkName);
 
-        internal void NotifyModified() => OnModified?.Invoke(this, EventArgs.Empty);
+        internal void NotifyModified() => RaiseModified();
         #region Commands
         public ContainerOperationsViewModel ContainerOperations => _containerOperations;
         public AsyncRelayCommand StartCommand => _containerOperations.StartCommand;
@@ -463,6 +370,7 @@ namespace DockerDiagram.ViewModels
         /// 공통 노드 상태와 타입별 기능 ViewModel을 초기화합니다.
         /// </summary>
         public NodeViewModel(IContainerService containerService, IVolumeService volumeService, IDialogService dialogService)
+            : base(0, 0, 160, 80)
         {
             _containerService = containerService ?? throw new ArgumentNullException(nameof(containerService));
             _volumeService = volumeService ?? throw new ArgumentNullException(nameof(volumeService));

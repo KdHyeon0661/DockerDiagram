@@ -1073,7 +1073,7 @@ namespace DockerDiagram
                     r1 = new Rect(current.X, current.Y, 0, 0); // 드래그 중인 임시 지점
 
                     // 그룹은 경계 상자가 아닌 연결점 기준으로 라우팅합니다.
-                    r2 = _reconnectingConn.Target is GroupViewModel ? new Rect(endP.X, endP.Y, 0, 0) : new Rect(_reconnectingConn.Target.X, _reconnectingConn.Target.Y, _reconnectingConn.Target.Width, _reconnectingConn.Target.Height);
+                    r2 = _reconnectingConn.Target.UsePointRouting ? new Rect(endP.X, endP.Y, 0, 0) : new Rect(_reconnectingConn.Target.X, _reconnectingConn.Target.Y, _reconnectingConn.Target.Width, _reconnectingConn.Target.Height);
                 }
                 else
                 {
@@ -1083,7 +1083,7 @@ namespace DockerDiagram
                     d2 = PortDirection.None;
 
                     // 그룹은 경계 상자가 아닌 연결점 기준으로 라우팅합니다.
-                    r1 = _reconnectingConn.Source is GroupViewModel ? new Rect(startP.X, startP.Y, 0, 0) : new Rect(_reconnectingConn.Source.X, _reconnectingConn.Source.Y, _reconnectingConn.Source.Width, _reconnectingConn.Source.Height);
+                    r1 = _reconnectingConn.Source.UsePointRouting ? new Rect(startP.X, startP.Y, 0, 0) : new Rect(_reconnectingConn.Source.X, _reconnectingConn.Source.Y, _reconnectingConn.Source.Width, _reconnectingConn.Source.Height);
                     r2 = new Rect(current.X, current.Y, 0, 0); // 드래그 중인 임시 지점
                 }
 
@@ -1101,13 +1101,13 @@ namespace DockerDiagram
                         {
                             startP = hoverPoint;
                             d1 = hoverDir;
-                            r1 = hoverItem is GroupViewModel ? new Rect(startP.X, startP.Y, 0, 0) : physicalRect;
+                            r1 = hoverItem.UsePointRouting ? new Rect(startP.X, startP.Y, 0, 0) : physicalRect;
                         }
                         else
                         {
                             endP = hoverPoint;
                             d2 = hoverDir;
-                            r2 = hoverItem is GroupViewModel ? new Rect(endP.X, endP.Y, 0, 0) : physicalRect;
+                            r2 = hoverItem.UsePointRouting ? new Rect(endP.X, endP.Y, 0, 0) : physicalRect;
                         }
                     }
                 }
@@ -1131,7 +1131,7 @@ namespace DockerDiagram
                 PortDirection targetDir = PortDirection.None;
 
                 // 그룹은 연결점 기준으로 라우팅합니다.
-                Rect sourceRect = _sourceItem is GroupViewModel ? new Rect(startP.X, startP.Y, 0, 0) : new Rect(_sourceItem.X, _sourceItem.Y, _sourceItem.Width, _sourceItem.Height);
+                Rect sourceRect = _sourceItem.UsePointRouting ? new Rect(startP.X, startP.Y, 0, 0) : new Rect(_sourceItem.X, _sourceItem.Y, _sourceItem.Width, _sourceItem.Height);
                 Rect targetRect = new Rect(current.X, current.Y, 0, 0);
                 Point endPoint = current;
 
@@ -1152,7 +1152,7 @@ namespace DockerDiagram
                         endPoint = GetExactBorderPoint(targetItem, targetDir);
 
                         // 도착지가 그룹이면 투명 껍데기(0x0)로 처리
-                        targetRect = targetItem is GroupViewModel ? new Rect(endPoint.X, endPoint.Y, 0, 0) : physicalRect;
+                        targetRect = targetItem.UsePointRouting ? new Rect(endPoint.X, endPoint.Y, 0, 0) : physicalRect;
                     }
                 }
 
@@ -1211,8 +1211,6 @@ namespace DockerDiagram
                                 vm.ActiveSheet.Groups.Add(newGroup);
 
                                 await vm.ActiveSheet.RefreshGroupContainmentAsync(newGroup);
-
-                                vm.Inspector.SelectedElement = newGroup;
 
                                 vm.ActiveSheet.UpdateGroupLayering();
                             }

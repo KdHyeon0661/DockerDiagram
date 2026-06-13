@@ -16,17 +16,15 @@ namespace DockerDiagram.ViewModels
     /// 단순히 시각적인 정리를 위한 '일반 폴더(General)' 역할뿐만 아니라, 컨테이너들을 묶어 
     /// 실제 도커 통신망을 구성하고 제어하는 **'도커 네트워크(Network)'**의 핵심 역할도 함께 수행합니다.
     /// </summary>
-    public class GroupViewModel : ViewModelBase, IConnectableItem
+    public class GroupViewModel : ConnectableItemViewModel
     {
         #region Fields & Services
         private readonly INetworkService _networkService;
         private readonly IDialogService _dialogService;
 
         private string _title = "Group";
-        private bool _isSelected;
         private bool _isDockerConnected = true;
         private int _zIndex;
-        private double _x, _y, _width, _height;
 
         private string _borderColor = "#555";
         private string _headerColor = "White";
@@ -36,9 +34,12 @@ namespace DockerDiagram.ViewModels
         #endregion
 
         #region Basic Properties
-        public string Id { get; set; } = Guid.NewGuid().ToString();
         public string Title { get => _title; set => SetProperty(ref _title, value); }
-        public string Name => Title; // 인터페이스의 Name을 Group의 Title로 연결
+        public override string Name
+        {
+            get => Title;
+            set => Title = value;
+        }
         public GroupType Type { get; }
         public string Driver { get; set; } = "bridge"; // 네트워크 드라이버 정보
         public string Subnet { get; set; } = "";
@@ -55,7 +56,6 @@ namespace DockerDiagram.ViewModels
         public Dictionary<string, string> AuxAddresses { get; set; } = new();
         public string DockerNetworkName => string.IsNullOrWhiteSpace(ComposeNetworkName) ? Title : ComposeNetworkName;
         public int ZIndex { get => _zIndex; set => SetProperty(ref _zIndex, value); }
-        public bool IsSelected { get => _isSelected; set => SetProperty(ref _isSelected, value); }
         public bool IsDockerConnected
         {
             get => _isDockerConnected;
@@ -93,66 +93,14 @@ namespace DockerDiagram.ViewModels
         #endregion
 
         #region Layout Properties
-        public double X
-        {
-            get => _x;
-            set
-            {
-                if (SetProperty(ref _x, value))
-                {
-                    OnModified?.Invoke(this, EventArgs.Empty);
-                    OnPositionChanged?.Invoke(this, EventArgs.Empty);
-                }
-            }
-        }
-
-        public double Y
-        {
-            get => _y;
-            set
-            {
-                if (SetProperty(ref _y, value))
-                {
-                    OnModified?.Invoke(this, EventArgs.Empty);
-                    OnPositionChanged?.Invoke(this, EventArgs.Empty);
-                }
-            }
-        }
-
-        public double Width
-        {
-            get => _width;
-            set
-            {
-                if (SetProperty(ref _width, value))
-                {
-                    OnModified?.Invoke(this, EventArgs.Empty);
-                    OnPositionChanged?.Invoke(this, EventArgs.Empty);
-                    ParentSheet?.UpdateGroupLayering();
-                }
-            }
-        }
-
-        public double Height
-        {
-            get => _height;
-            set
-            {
-                if (SetProperty(ref _height, value))
-                {
-                    OnModified?.Invoke(this, EventArgs.Empty);
-                    OnPositionChanged?.Invoke(this, EventArgs.Empty);
-                    ParentSheet?.UpdateGroupLayering();
-                }
-            }
-        }
-
-        public double CenterX => X + (Width / 2);
-        public double CenterY => Y + (Height / 2);
         public double Area => Width * Height;
+        public override bool UsePointRouting => true;
 
-        // 부모 시트 (실행 순서 계산용)
-        public SheetViewModel? ParentSheet { get; set; }
+        protected override void OnBoundsChanged(string propertyName)
+        {
+            if (propertyName == nameof(Width) || propertyName == nameof(Height))
+                ParentSheet?.UpdateGroupLayering();
+        }
         #endregion
 
         #region Design Properties
@@ -174,11 +122,6 @@ namespace DockerDiagram.ViewModels
         public ICommand StopAllCommand { get; }
         #endregion
 
-        #region Events
-        public event EventHandler? OnModified;
-        public event EventHandler? OnPositionChanged;
-        #endregion
-
         #region Constructor
         /// <summary>
         /// 지정된 위치와 크기, 타입(일반/네트워크)을 바탕으로 새로운 그룹 객체를 생성하고 초기화합니다.
@@ -189,11 +132,12 @@ namespace DockerDiagram.ViewModels
                               IDialogService dialogService,
                               string title = "New Group",
                               GroupType type = GroupType.General) // 기본값은 일반 폴더
+            : base(x, y, w, h)
         {
             _networkService = networkService;
             _dialogService = dialogService;
 
-            X = x; Y = y; Width = w; Height = h; Title = title;
+            Title = title;
             Type = type; // 타입 확정!
 
             ArrangeCommand = new RelayCommand(_ => ArrangeNodes());
@@ -290,7 +234,7 @@ namespace DockerDiagram.ViewModels
                 }
 
                 ContainedNodes.Add(node);
-                OnModified?.Invoke(this, EventArgs.Empty);
+                RaiseModified();
 
                 if (!isRestoring && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
                 {
@@ -326,7 +270,7 @@ namespace DockerDiagram.ViewModels
             if (ContainedNodes.Contains(node))
             {
                 ContainedNodes.Remove(node);
-                OnModified?.Invoke(this, EventArgs.Empty);
+                RaiseModified();
 
                 if (!isRestoring && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
                 {
@@ -493,7 +437,7 @@ namespace DockerDiagram.ViewModels
                 this.Width = Math.Max(this.Width, 150);
                 this.Height = Math.Max(this.Height, 100);
 
-                OnModified?.Invoke(this, EventArgs.Empty);
+                RaiseModified();
             }
         }
 

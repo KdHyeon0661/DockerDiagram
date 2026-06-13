@@ -619,7 +619,6 @@ namespace DockerDiagram.ViewModels
 
                 await ActiveSheet.RefreshGroupContainmentAsync(newNetworkGroup);
 
-                Inspector.SelectedElement = newNetworkGroup;
                 IsModified = true;
                 RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Create network {options.Name}", !options.External && History.IncludeDockerResourceHistory);
             }

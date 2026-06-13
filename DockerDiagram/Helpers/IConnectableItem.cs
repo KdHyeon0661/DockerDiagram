@@ -18,6 +18,7 @@ namespace DockerDiagram.ViewModels
 
         double CenterX { get; } // 요소의 정중앙 X 좌표 (주로 선이 연결되는 기준점)
         double CenterY { get; } // 요소의 정중앙 Y 좌표 (주로 선이 연결되는 기준점)
+        bool UsePointRouting { get; } // 그룹처럼 경계 상자 대신 연결점을 기준으로 라우팅할지 여부
 
         // UI에서 마우스 드래그로 요소의 위치나 크기가 변할 때, 자신에게 연결된 선들에게 "나 움직였으니 선 위치 다시 계산해!" 라고 알려주는 이벤트
         event EventHandler? OnPositionChanged;
