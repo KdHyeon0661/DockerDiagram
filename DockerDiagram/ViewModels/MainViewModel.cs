@@ -4,30 +4,27 @@ using DockerDiagram.Models;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
-using System.Windows.Threading;
 
 namespace DockerDiagram.ViewModels
 {
     /// <summary>
-    /// 다이어그램 애플리케이션의 전체 상태를 관장하는 최상위(Root) 뷰모델입니다. (CEO 역할)
-    /// 무거운 비즈니스 로직은 4개의 전담 부서(Sub-ViewModel)로 위임하고,
-    /// 본체는 부서 간의 연결과 도커 노드/선 생성 등의 핵심 트랜잭션만 담당합니다.
+    /// 애플리케이션의 하위 ViewModel을 조정하고 Docker 리소스와 다이어그램 사이의 작업을 처리합니다.
     /// </summary>
     public class MainViewModel : ViewModelBase, IDisposable
     {
         private readonly IDockerService _defaultDockerService;
         private readonly IDialogService _dialogService;
+        private readonly DockerSyncCoordinator _dockerSync;
+        private readonly DiagramHistoryService _diagramHistory;
 
         // =========================================================
-        // 🏢 [Sub-ViewModels] 4개의 실무 전담 부서
+        // 하위 ViewModel
         // =========================================================
         public SheetManagerViewModel SheetManager { get; }
         public ToolboxViewModel Toolbox { get; }
@@ -36,7 +33,7 @@ namespace DockerDiagram.ViewModels
         public UndoRedoManagerViewModel History { get; }
 
         // =========================================================
-        // 🔗 [안전장치 래퍼] 기존 UI 바인딩이 깨지지 않도록 연결
+        // 기존 UI 바인딩을 위한 위임 속성
         // =========================================================
         public ObservableCollection<ConnectionWorkspaceViewModel> Workspaces => SheetManager.Workspaces;
         public ObservableCollection<SheetViewModel> Sheets => SheetManager.Sheets;
@@ -64,17 +61,8 @@ namespace DockerDiagram.ViewModels
         private IVolumeService _volumeService => ActiveSheet?.DockerService ?? _defaultDockerService;
         private INetworkService _networkService => ActiveSheet?.DockerService ?? _defaultDockerService;
         private IImageService _imageService => ActiveSheet?.DockerService ?? _defaultDockerService;
-        private ISystemService _systemService => ActiveSheet?.DockerService ?? _defaultDockerService;
 
-        // 도커 통신 동기화 타이머 및 상태
-        private DispatcherTimer _autoSyncTimer;
-        private DispatcherTimer _dockerEventSyncTimer;
-        private bool _isSyncing = false;
-        private CancellationTokenSource? _dockerEventsCts;
-        private IDockerService? _dockerEventsService;
-        private Task? _dockerEventsTask;
         private bool _disposed;
-        private readonly Dictionary<string, string> _volumeUndoBackups = new();
 
         // =========================================================
         // 🚀 생성자 (앱 시작 시 초기화)
@@ -85,193 +73,42 @@ namespace DockerDiagram.ViewModels
             _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
             History = new UndoRedoManagerViewModel(_dialogService);
 
-            // 1. 실무 전담 부서(Sub-ViewModel) 고용 및 할당
+            // 하위 ViewModel 구성
             SheetManager = new SheetManagerViewModel(this, _defaultDockerService, _dialogService);
             Toolbox = new ToolboxViewModel(this, _defaultDockerService, _dialogService, new DockerComposeCliService());
             Explorer = new ResourceExplorerViewModel(this, _defaultDockerService, _dialogService);
             Inspector = new InspectorViewModel(this, _dialogService);
-            SheetManager.PropertyChanged += SheetManager_PropertyChanged;
+            _diagramHistory = new DiagramHistoryService(
+                () => ActiveSheet?.DockerService ?? _defaultDockerService,
+                () => ActiveSheet,
+                () => IsModified = true,
+                History,
+                Explorer,
+                _dialogService);
 
             // 2. 초기 탭 생성 및 자동 로드 지시
             SheetManager.AddSheet();
             _ = SheetManager.LoadLastFileIfExistsAsync();
 
-            // 3. docker events를 기본 동기화 신호로 쓰고, 타이머는 놓친 이벤트를 보완하는 안전망으로 둡니다.
-            _autoSyncTimer = new DispatcherTimer();
-            _autoSyncTimer.Interval = TimeSpan.FromSeconds(10);
-            _autoSyncTimer.Tick += AutoSync_Tick;
-            _autoSyncTimer.Start();
-
-            _dockerEventSyncTimer = new DispatcherTimer();
-            _dockerEventSyncTimer.Interval = TimeSpan.FromMilliseconds(600);
-            _dockerEventSyncTimer.Tick += DockerEventSyncTimer_Tick;
-
-            // 첫 동기화 실행
-            _ = Explorer.SyncWithDockerEngineAsync();
-            RestartDockerEventMonitor();
+            _dockerSync = new DockerSyncCoordinator(
+                () => ActiveSheet?.DockerService ?? _defaultDockerService,
+                Explorer,
+                SheetManager);
         }
 
-        // =========================================================
-        // ⏱️ 도커 엔진 상태 동기화
-        // =========================================================
-        private async void AutoSync_Tick(object? sender, EventArgs e)
-        {
-            await SyncWithGuardAsync();
-            RestartDockerEventMonitor();
-        }
-
-        private async Task SyncWithGuardAsync()
-        {
-            if (_isSyncing) return;
-            try
-            {
-                _isSyncing = true;
-                await Explorer.SyncWithDockerEngineAsync();
-            }
-            finally
-            {
-                _isSyncing = false;
-            }
-        }
-
-        private void SheetManager_PropertyChanged(object? sender, PropertyChangedEventArgs e)
-        {
-            if (e.PropertyName == nameof(SheetManager.ActiveSheet))
-            {
-                RestartDockerEventMonitor();
-            }
-        }
-
-        private async void DockerEventSyncTimer_Tick(object? sender, EventArgs e)
-        {
-            _dockerEventSyncTimer.Stop();
-            await SyncWithGuardAsync();
-        }
-
-        private void RestartDockerEventMonitor()
-        {
-            if (_disposed) return;
-
-            var service = ActiveSheet?.DockerService ?? _defaultDockerService;
-            if (ReferenceEquals(service, _dockerEventsService) &&
-                _dockerEventsCts != null &&
-                !_dockerEventsCts.IsCancellationRequested)
-            {
-                return;
-            }
-
-            StopDockerEventMonitor();
-
-            _dockerEventsService = service;
-            _dockerEventsCts = new CancellationTokenSource();
-            var token = _dockerEventsCts.Token;
-
-            _dockerEventsTask = Task.Run(() => MonitorDockerEventsLoopAsync(service, token), token);
-        }
-
-        private async Task MonitorDockerEventsLoopAsync(IDockerService service, CancellationToken cancellationToken)
-        {
-            var progress = new Progress<Message>(message => OnDockerEventReceived(message, cancellationToken));
-
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                try
-                {
-                    await service.MonitorDockerEventsAsync(progress, cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[DockerEvents] Stream disconnected: {ex.Message}");
-                    await Application.Current.Dispatcher.InvokeAsync(() =>
-                    {
-                        if (!_disposed) Explorer.LastSyncTime = "Docker events reconnecting...";
-                    });
-
-                    try
-                    {
-                        await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                }
-            }
-        }
-
-        private void OnDockerEventReceived(Message message, CancellationToken cancellationToken)
-        {
-            if (cancellationToken.IsCancellationRequested || _disposed) return;
-            if (!IsDiagramRelevantDockerEvent(message)) return;
-
-            Application.Current.Dispatcher.BeginInvoke(new Action(() =>
-            {
-                if (_disposed || cancellationToken.IsCancellationRequested) return;
-
-                var action = string.IsNullOrWhiteSpace(message.Action) ? "changed" : message.Action;
-                var type = string.IsNullOrWhiteSpace(message.Type) ? "docker" : message.Type;
-                Explorer.LastSyncTime = $"Docker event: {type}/{action}";
-
-                _dockerEventSyncTimer.Stop();
-                _dockerEventSyncTimer.Start();
-            }));
-        }
-
-        private static bool IsDiagramRelevantDockerEvent(Message message)
-        {
-            if (message == null) return false;
-
-            var type = message.Type ?? string.Empty;
-            return type.Equals("container", StringComparison.OrdinalIgnoreCase) ||
-                   type.Equals("volume", StringComparison.OrdinalIgnoreCase) ||
-                   type.Equals("network", StringComparison.OrdinalIgnoreCase) ||
-                   type.Equals("image", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private void StopDockerEventMonitor()
-        {
-            _dockerEventSyncTimer?.Stop();
-
-            if (_dockerEventsCts != null)
-            {
-                _dockerEventsCts.Cancel();
-                _dockerEventsCts.Dispose();
-                _dockerEventsCts = null;
-            }
-
-            _dockerEventsService = null;
-            _dockerEventsTask = null;
-        }
-
-        public async Task OnDockerStartedAsync()
-        {
-            Debug.WriteLine("[MainViewModel] Docker started signal received. Refreshing...");
-            await Explorer.SyncWithDockerEngineAsync();
-            await SheetManager.RestoreLiveStateAsync();
-            RestartDockerEventMonitor();
-        }
+        public Task OnDockerStartedAsync() => _dockerSync.OnDockerStartedAsync();
 
         public void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
-
-            SheetManager.PropertyChanged -= SheetManager_PropertyChanged;
-            _autoSyncTimer.Stop();
-            _autoSyncTimer.Tick -= AutoSync_Tick;
-            _dockerEventSyncTimer.Stop();
-            _dockerEventSyncTimer.Tick -= DockerEventSyncTimer_Tick;
-            StopDockerEventMonitor();
+            _dockerSync.Dispose();
         }
 
         // =========================================================
         // 🎨 연결선(Connector) 긋기 로직
         // =========================================================
-        public async void AddConnection(IConnectableItem source, IConnectableItem target, PortDirection sourceDir, PortDirection targetDir)
+        public async Task AddConnectionAsync(IConnectableItem source, IConnectableItem target, PortDirection sourceDir, PortDirection targetDir)
         {
             if (ActiveSheet == null || source == target) return;
 
@@ -1072,473 +909,47 @@ namespace DockerDiagram.ViewModels
         // =========================================================
         // ↩️ Undo / Redo 히스토리 헬퍼
         // =========================================================
-        private record DiagramState(HashSet<string> NodeIds, HashSet<string> GroupIds, HashSet<ConnectorViewModel> Connectors);
+        private DiagramHistoryService.DiagramState CaptureDiagramState(SheetViewModel sheet) =>
+            _diagramHistory.CaptureState(sheet);
 
-        private DiagramState CaptureDiagramState(SheetViewModel sheet)
-        {
-            return new DiagramState(
-                sheet.Nodes.Select(n => n.Id).ToHashSet(),
-                sheet.Groups.Select(g => g.Id).ToHashSet(),
-                sheet.Connectors.ToHashSet());
-        }
+        private void RecordAdditionsFromSnapshot(
+            SheetViewModel sheet,
+            DiagramHistoryService.DiagramState before,
+            string description,
+            bool affectsDocker) =>
+            _diagramHistory.RecordAdditions(sheet, before, description, affectsDocker);
 
-        private void RecordAdditionsFromSnapshot(SheetViewModel sheet, DiagramState before, string description, bool affectsDocker)
-        {
-            if (History.IsReplaying) return;
+        private void RecordConnectorAdd(SheetViewModel sheet, ConnectorViewModel connector) =>
+            _diagramHistory.RecordConnectorAdd(sheet, connector);
 
-            var addedNodes = sheet.Nodes.Where(n => !before.NodeIds.Contains(n.Id)).ToList();
-            var addedGroups = sheet.Groups.Where(g => !before.GroupIds.Contains(g.Id)).ToList();
-            var addedConnectors = sheet.Connectors.Where(c => !before.Connectors.Contains(c)).ToList();
+        public void RecordNodeRectChange(NodeViewModel node, Rect before, Rect after, string description) =>
+            _diagramHistory.RecordNodeRectChange(node, before, after, description);
 
-            if (addedNodes.Count == 0 && addedGroups.Count == 0 && addedConnectors.Count == 0) return;
+        public void RecordGroupRectChange(GroupViewModel group, Rect before, Rect after, string description) =>
+            _diagramHistory.RecordGroupRectChange(group, before, after, description);
 
-            History.RecordExecuted(new DelegateHistoryCommand(
-                description,
-                affectsDocker,
-                undo: async () =>
-                {
-                    if (affectsDocker) await DeleteDockerObjectsAsync(addedNodes, addedGroups);
-                    await RemoveDiagramBatchAsync(sheet, addedNodes, addedGroups, addedConnectors);
-                    IsModified = true;
-                },
-                redo: async () =>
-                {
-                    if (affectsDocker) await RecreateDockerObjectsAsync(addedNodes, addedGroups);
-                    await RestoreDiagramBatchAsync(sheet, addedNodes, addedGroups, addedConnectors);
-                    IsModified = true;
-                }));
-        }
+        public IHistoryCommand CreateConnectorDeleteCommand(SheetViewModel sheet, ConnectorViewModel connector) =>
+            _diagramHistory.CreateConnectorDeleteCommand(sheet, connector);
 
-        private void RecordConnectorAdd(SheetViewModel sheet, ConnectorViewModel connector)
-        {
-            if (History.IsReplaying) return;
+        public IHistoryCommand CreateNodeDeleteCommand(
+            SheetViewModel sheet,
+            NodeViewModel node,
+            bool deleteDocker,
+            bool forceVolumeDelete = false) =>
+            _diagramHistory.CreateNodeDeleteCommand(sheet, node, deleteDocker, forceVolumeDelete);
 
-            History.RecordExecuted(new DelegateHistoryCommand(
-                "Add connector",
-                affectsDocker: false,
-                undo: () =>
-                {
-                    sheet.Connectors.Remove(connector);
-                    IsModified = true;
-                    return Task.CompletedTask;
-                },
-                redo: () =>
-                {
-                    if (!sheet.Connectors.Contains(connector)) sheet.Connectors.Add(connector);
-                    IsModified = true;
-                    return Task.CompletedTask;
-                }));
-        }
+        public IHistoryCommand CreateGroupDeleteCommand(
+            SheetViewModel sheet,
+            GroupViewModel group,
+            bool deleteDocker) =>
+            _diagramHistory.CreateGroupDeleteCommand(sheet, group, deleteDocker);
 
-        public void RecordNodeRectChange(NodeViewModel node, Rect before, Rect after, string description)
-        {
-            if (History.IsReplaying || RectEquals(before, after)) return;
-            History.RecordExecuted(new DelegateHistoryCommand(
-                description,
-                affectsDocker: false,
-                undo: async () => { ApplyNodeRect(node, before); await RefreshGroupContainmentForNodeAsync(node); IsModified = true; },
-                redo: async () => { ApplyNodeRect(node, after); await RefreshGroupContainmentForNodeAsync(node); IsModified = true; },
-                mergeKey: $"{node.Id}:{description}"));
-        }
+        public Task<(bool ShouldDelete, bool Force)> ConfirmVolumeDockerDeleteAsync(
+            IVolumeService volumeService,
+            string volumeName,
+            bool allowForceAttempt) =>
+            _diagramHistory.ConfirmVolumeDockerDeleteAsync(volumeService, volumeName, allowForceAttempt);
 
-        public void RecordGroupRectChange(GroupViewModel group, Rect before, Rect after, string description)
-        {
-            if (History.IsReplaying || RectEquals(before, after)) return;
-            History.RecordExecuted(new DelegateHistoryCommand(
-                description,
-                affectsDocker: false,
-                undo: () => { ApplyGroupRect(group, before); IsModified = true; return Task.CompletedTask; },
-                redo: () => { ApplyGroupRect(group, after); IsModified = true; return Task.CompletedTask; },
-                mergeKey: $"{group.Id}:{description}"));
-        }
-
-        public IHistoryCommand CreateConnectorDeleteCommand(SheetViewModel sheet, ConnectorViewModel connector)
-        {
-            return new DelegateHistoryCommand(
-                "Delete connector",
-                affectsDocker: false,
-                undo: () =>
-                {
-                    if (!sheet.Connectors.Contains(connector)) sheet.Connectors.Add(connector);
-                    IsModified = true;
-                    return Task.CompletedTask;
-                },
-                redo: () =>
-                {
-                    sheet.Connectors.Remove(connector);
-                    IsModified = true;
-                    return Task.CompletedTask;
-                });
-        }
-
-        public IHistoryCommand CreateNodeDeleteCommand(SheetViewModel sheet, NodeViewModel node, bool deleteDocker, bool forceVolumeDelete = false)
-        {
-            var relatedConnectors = sheet.Connectors.Where(c => c.Source == node || c.Target == node).ToList();
-            var containingGroups = sheet.Groups.Where(g => g.ContainedNodes.Contains(node)).ToList();
-            bool affectsDocker = deleteDocker && node.Type != NodeType.Internet && !(node.Type == NodeType.Volume && node.VolumeExternal);
-
-            return new DelegateHistoryCommand(
-                affectsDocker ? $"Delete Docker {node.Type}: {node.Name}" : $"Delete diagram node: {node.Name}",
-                affectsDocker,
-                undo: async () =>
-                {
-                    if (affectsDocker) await RecreateDockerObjectsAsync(new[] { node }, Array.Empty<GroupViewModel>());
-                    await RestoreNodeDiagramAsync(sheet, node, relatedConnectors, containingGroups);
-                    IsModified = true;
-                },
-                redo: async () =>
-                {
-                    if (affectsDocker) await DeleteDockerObjectsAsync(new[] { node }, Array.Empty<GroupViewModel>(), forceVolumeDelete);
-                    await RemoveNodeFromDiagramOnlyAsync(sheet, node, relatedConnectors, containingGroups);
-                    IsModified = true;
-                });
-        }
-
-        public IHistoryCommand CreateGroupDeleteCommand(SheetViewModel sheet, GroupViewModel group, bool deleteDocker)
-        {
-            var relatedConnectors = sheet.Connectors
-                .Where(c => c.Source == (IConnectableItem)group || c.Target == (IConnectableItem)group)
-                .ToList();
-            var containedNodes = group.ContainedNodes.ToList();
-            bool affectsDocker = deleteDocker && group.Type == GroupType.Network && !group.External;
-
-            return new DelegateHistoryCommand(
-                affectsDocker ? $"Delete Docker network: {group.Title}" : $"Delete diagram group: {group.Title}",
-                affectsDocker,
-                undo: async () =>
-                {
-                    if (affectsDocker) await RecreateDockerObjectsAsync(Array.Empty<NodeViewModel>(), new[] { group });
-                    await RestoreGroupDiagramAsync(sheet, group, relatedConnectors, containedNodes);
-                    IsModified = true;
-                },
-                redo: async () =>
-                {
-                    if (affectsDocker) await DeleteDockerObjectsAsync(Array.Empty<NodeViewModel>(), new[] { group });
-                    await RemoveGroupFromDiagramOnlyAsync(sheet, group, relatedConnectors);
-                    IsModified = true;
-                });
-        }
-
-        private static async Task RemoveDiagramBatchAsync(SheetViewModel sheet, List<NodeViewModel> nodes, List<GroupViewModel> groups, List<ConnectorViewModel> connectors)
-        {
-            foreach (var connector in connectors.ToList())
-                sheet.Connectors.Remove(connector);
-
-            foreach (var group in groups.ToList())
-                await RemoveGroupFromDiagramOnlyAsync(sheet, group, sheet.Connectors.Where(c => c.Source == (IConnectableItem)group || c.Target == (IConnectableItem)group).ToList());
-
-            foreach (var node in nodes.ToList())
-                await RemoveNodeFromDiagramOnlyAsync(sheet, node, sheet.Connectors.Where(c => c.Source == node || c.Target == node).ToList(), sheet.Groups.Where(g => g.ContainedNodes.Contains(node)).ToList());
-        }
-
-        private static async Task RestoreDiagramBatchAsync(SheetViewModel sheet, List<NodeViewModel> nodes, List<GroupViewModel> groups, List<ConnectorViewModel> connectors)
-        {
-            foreach (var node in nodes)
-                if (!sheet.Nodes.Contains(node)) sheet.Nodes.Add(node);
-
-            foreach (var group in groups)
-                if (!sheet.Groups.Contains(group)) sheet.AddGroup(group);
-
-            foreach (var group in groups)
-                foreach (var node in nodes.Where(n => IsNodeInsideGroup(n, group)))
-                    await group.AddNodeAsync(node, isRestoring: true);
-
-            foreach (var connector in connectors)
-                if (!sheet.Connectors.Contains(connector)) sheet.Connectors.Add(connector);
-
-            sheet.UpdateGroupLayering();
-        }
-
-        private static async Task RemoveNodeFromDiagramOnlyAsync(SheetViewModel sheet, NodeViewModel node, List<ConnectorViewModel> connectors, List<GroupViewModel> containingGroups)
-        {
-            foreach (var connector in connectors.ToList())
-                sheet.Connectors.Remove(connector);
-
-            foreach (var group in containingGroups.ToList())
-                await group.RemoveNodeAsync(node, isRestoring: true);
-
-            sheet.Nodes.Remove(node);
-        }
-
-        private static async Task RestoreNodeDiagramAsync(SheetViewModel sheet, NodeViewModel node, List<ConnectorViewModel> connectors, List<GroupViewModel> containingGroups)
-        {
-            if (!sheet.Nodes.Contains(node)) sheet.Nodes.Add(node);
-
-            foreach (var group in containingGroups)
-                if (sheet.Groups.Contains(group)) await group.AddNodeAsync(node, isRestoring: true);
-
-            foreach (var connector in connectors)
-                if (!sheet.Connectors.Contains(connector)) sheet.Connectors.Add(connector);
-        }
-
-        private static Task RemoveGroupFromDiagramOnlyAsync(SheetViewModel sheet, GroupViewModel group, List<ConnectorViewModel> connectors)
-        {
-            foreach (var connector in connectors.ToList())
-                sheet.Connectors.Remove(connector);
-
-            group.ContainedNodes.Clear();
-            sheet.Groups.Remove(group);
-            sheet.UpdateGroupLayering();
-            return Task.CompletedTask;
-        }
-
-        private static async Task RestoreGroupDiagramAsync(SheetViewModel sheet, GroupViewModel group, List<ConnectorViewModel> connectors, List<NodeViewModel> containedNodes)
-        {
-            if (!sheet.Groups.Contains(group)) sheet.AddGroup(group);
-
-            foreach (var node in containedNodes)
-                if (sheet.Nodes.Contains(node)) await group.AddNodeAsync(node, isRestoring: true);
-
-            foreach (var connector in connectors)
-                if (!sheet.Connectors.Contains(connector)) sheet.Connectors.Add(connector);
-
-            sheet.UpdateGroupLayering();
-        }
-
-        public async Task<(bool ShouldDelete, bool Force)> ConfirmVolumeDockerDeleteAsync(IVolumeService volumeService, string volumeName, bool allowForceAttempt)
-        {
-            var usedBy = await volumeService.GetContainersUsingVolumeAsync(volumeName);
-            if (usedBy.Count == 0) return (true, false);
-
-            string containerList = string.Join("\n", usedBy.Select(name => $"- {name}"));
-
-            if (!allowForceAttempt)
-            {
-                _dialogService.ShowInfo(
-                    $"볼륨 '{volumeName}'은(는) 현재 컨테이너에서 사용 중이라 Docker 삭제를 보호했습니다.\n\n사용 중인 컨테이너:\n{containerList}",
-                    "Volume Delete Protection");
-                return (false, false);
-            }
-
-            var result = _dialogService.ShowYesNoCancel(
-                $"볼륨 '{volumeName}'은(는) 현재 컨테이너에서 사용 중입니다.\n\n" +
-                $"사용 중인 컨테이너:\n{containerList}\n\n" +
-                "[예(Yes)] : 강제 삭제를 시도\n" +
-                "[아니요(No)] : 보호하고 취소\n" +
-                "[취소(Cancel)] : 취소",
-                "Volume Delete Protection");
-
-            return result == MessageBoxResult.Yes ? (true, true) : (false, false);
-        }
-
-        private async Task DeleteDockerObjectsAsync(IEnumerable<NodeViewModel> nodes, IEnumerable<GroupViewModel> groups, bool forceVolumeDelete = false)
-        {
-            foreach (var node in nodes)
-            {
-                try
-                {
-                    if (node.Type == NodeType.Container && !string.IsNullOrWhiteSpace(node.ContainerId))
-                    {
-                        await _containerService.RemoveContainerAsync(node.ContainerId);
-                        node.IsDockerConnected = false;
-                    }
-                    else if (node.Type == NodeType.Volume)
-                    {
-                        if (node.VolumeExternal) continue;
-
-                        var decision = forceVolumeDelete
-                            ? (ShouldDelete: true, Force: true)
-                            : await ConfirmVolumeDockerDeleteAsync(_volumeService, node.EffectiveVolumeName, allowForceAttempt: false);
-                        if (!decision.ShouldDelete) continue;
-
-                        if (History.IncludeVolumeBackupForUndo)
-                        {
-                            await BackupVolumeForUndoAsync(node);
-                        }
-
-                        await _volumeService.RemoveVolumeAsync(node.EffectiveVolumeName, decision.Force);
-                        node.IsDockerConnected = false;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    if (node.Type == NodeType.Volume)
-                    {
-                        _dialogService.ShowError($"볼륨 '{node.EffectiveVolumeName}' 삭제 실패:\n{ex.Message}", "Volume Delete");
-                    }
-                    Debug.WriteLine($"[History] Docker delete skipped: {ex.Message}");
-                }
-            }
-
-            foreach (var group in groups.Where(g => g.Type == GroupType.Network))
-            {
-                if (group.External) continue;
-                try
-                {
-                    await _networkService.RemoveNetworkAsync(!string.IsNullOrWhiteSpace(group.Id) ? group.Id : group.DockerNetworkName);
-                    group.IsDockerConnected = false;
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[History] Docker network delete skipped: {ex.Message}");
-                }
-            }
-
-            await Explorer.SyncWithDockerEngineAsync();
-        }
-
-        private async Task RecreateDockerObjectsAsync(IEnumerable<NodeViewModel> nodes, IEnumerable<GroupViewModel> groups)
-        {
-            foreach (var group in groups.Where(g => g.Type == GroupType.Network))
-            {
-                try
-                {
-                    if (group.External)
-                    {
-                        var networks = await _networkService.GetNetworksAsync();
-                        var existingNetwork = networks.FirstOrDefault(n => string.Equals(n.Name, group.DockerNetworkName, StringComparison.OrdinalIgnoreCase));
-                        if (existingNetwork == null) throw new InvalidOperationException($"External network '{group.DockerNetworkName}' was not found.");
-                        group.Id = existingNetwork.Id;
-                    }
-                    else
-                    {
-                        group.Id = await _networkService.CreateNetworkAsync(group.ToNetworkCreateOptions());
-                    }
-                    group.IsDockerConnected = true;
-                }
-                catch (Exception ex)
-                {
-                    if (!ex.Message.Contains("already exists") && !ex.Message.Contains("409")) throw;
-                    group.IsDockerConnected = true;
-                }
-            }
-
-            foreach (var node in nodes)
-            {
-                if (node.Type == NodeType.Volume)
-                {
-                    try
-                    {
-                        if (node.VolumeExternal)
-                        {
-                            await _volumeService.InspectVolumeAsync(node.EffectiveVolumeName);
-                        }
-                        else
-                        {
-                            await _volumeService.CreateVolumeAsync(new VolumeCreateOptions
-                            {
-                                Name = node.Name,
-                                DockerVolumeName = node.DockerVolumeName,
-                                Driver = string.IsNullOrWhiteSpace(node.Driver) || node.Driver == "-" ? "local" : node.Driver,
-                                Labels = new Dictionary<string, string>(node.VolumeLabels),
-                                DriverOptions = new Dictionary<string, string>(node.VolumeDriverOptions)
-                            });
-                        }
-                        node.IsDockerConnected = true;
-                        await RestoreVolumeFromUndoBackupAsync(node);
-                    }
-                    catch (Exception ex)
-                    {
-                        if (!ex.Message.Contains("already exists") && !ex.Message.Contains("409")) throw;
-                        node.IsDockerConnected = true;
-                        await RestoreVolumeFromUndoBackupAsync(node);
-                    }
-                }
-                else if (node.Type == NodeType.Container)
-                {
-                    var (image, tag) = SplitImageTag(node.ImageName);
-                    string newId = await _containerService.CreateAndStartContainerAsync(
-                        node.Name,
-                        image,
-                        tag,
-                        node.PortBindings?.ToList() ?? new List<string>(),
-                        node.EnvironmentVariables?.ToList() ?? new List<string>(),
-                        new List<string>(),
-                        string.IsNullOrWhiteSpace(node.RestartPolicy) ? "no" : node.RestartPolicy,
-                        0,
-                        0);
-
-                    node.ContainerId = newId;
-                    node.IsDockerConnected = true;
-                    await node.RefreshDetailsAsync();
-                }
-            }
-
-            await Explorer.SyncWithDockerEngineAsync();
-        }
-
-        private async Task BackupVolumeForUndoAsync(NodeViewModel node)
-        {
-            if (node.Type != NodeType.Volume) return;
-            if (node.VolumeExternal) return;
-
-            if (_volumeUndoBackups.TryGetValue(node.Id, out var previousPath))
-                VolumeUndoBackupStore.DeleteFile(previousPath);
-
-            string backupPath = VolumeUndoBackupStore.CreateBackupPath(node.EffectiveVolumeName);
-            await _volumeService.BackupVolumeAsync(node.EffectiveVolumeName, backupPath);
-            _volumeUndoBackups[node.Id] = backupPath;
-            node.DetailStatus = "Ghost backup";
-            node.IsDockerConnected = false;
-        }
-
-        private async Task RestoreVolumeFromUndoBackupAsync(NodeViewModel node)
-        {
-            if (node.Type != NodeType.Volume) return;
-            if (node.VolumeExternal) return;
-            if (!_volumeUndoBackups.TryGetValue(node.Id, out var backupPath)) return;
-            if (!File.Exists(backupPath)) return;
-
-            await _volumeService.RestoreVolumeAsync(node.EffectiveVolumeName, backupPath);
-            node.IsDockerConnected = true;
-            await node.RefreshDetailsAsync();
-        }
-
-        private async Task RefreshGroupContainmentForNodeAsync(NodeViewModel node)
-        {
-            if (ActiveSheet == null) return;
-            var targetGroups = ActiveSheet.FindGroupsAt(node.X, node.Y, node.Width, node.Height);
-            foreach (var group in ActiveSheet.Groups)
-            {
-                if (targetGroups.Contains(group)) await group.AddNodeAsync(node, isRestoring: true);
-                else await group.RemoveNodeAsync(node, isRestoring: true);
-            }
-        }
-
-        private static void ApplyNodeRect(NodeViewModel node, Rect rect)
-        {
-            node.X = rect.X;
-            node.Y = rect.Y;
-            node.Width = rect.Width;
-            node.Height = rect.Height;
-        }
-
-        private static void ApplyGroupRect(GroupViewModel group, Rect rect)
-        {
-            group.X = rect.X;
-            group.Y = rect.Y;
-            group.Width = rect.Width;
-            group.Height = rect.Height;
-        }
-
-        private static bool RectEquals(Rect a, Rect b)
-        {
-            return Math.Abs(a.X - b.X) < 0.1 &&
-                   Math.Abs(a.Y - b.Y) < 0.1 &&
-                   Math.Abs(a.Width - b.Width) < 0.1 &&
-                   Math.Abs(a.Height - b.Height) < 0.1;
-        }
-
-        private static bool IsNodeInsideGroup(NodeViewModel node, GroupViewModel group)
-        {
-            var centerX = node.X + node.Width / 2;
-            var centerY = node.Y + node.Height / 2;
-            return centerX >= group.X && centerX <= group.X + group.Width &&
-                   centerY >= group.Y && centerY <= group.Y + group.Height;
-        }
-
-        private static (string Image, string Tag) SplitImageTag(string imageName)
-        {
-            if (string.IsNullOrWhiteSpace(imageName)) return ("ubuntu", "latest");
-            int lastColon = imageName.LastIndexOf(':');
-            if (lastColon > 0 && lastColon < imageName.Length - 1)
-                return (imageName[..lastColon], imageName[(lastColon + 1)..]);
-            return (imageName, "latest");
-        }
-
-        // =========================================================
-        // 🔗 기존 연결성 (UI 상호작용 및 물리 볼륨 마운트)
-        // =========================================================
         public async Task<bool> ConnectVolumeToContainerAsync(NodeViewModel containerNode, NodeViewModel volumeNode)
         {
             if (!_dialogService.TryShowMountDialog(out string mountPath, out string owner)) return false;

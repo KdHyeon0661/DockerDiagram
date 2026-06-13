@@ -989,7 +989,7 @@ namespace DockerDiagram
                 return;
             }
 
-            // 4. 리사이징 (노드 또는 그룹 크기 조절) - ★ 삭제된 것 없이 원상 복구 완료
+            // 4. 노드 또는 그룹 크기 조절
             if (_isResizing)
             {
                 double diffX = current.X - _resizeStartWorldPos.X;
@@ -1057,7 +1057,7 @@ namespace DockerDiagram
                 return;
             }
 
-            // ★ 5. 재연결 (그룹 크기를 0x0으로 속여서 직각 선을 정상 작동시킴)
+            // 5. 그룹은 점 형태의 라우팅 대상으로 처리해 연결선을 다시 계산합니다.
             if (_isReconnecting && _reconnectingConn != null)
             {
                 Point startP, endP;
@@ -1072,7 +1072,7 @@ namespace DockerDiagram
                     d2 = _reconnectingConn.TargetDir;
                     r1 = new Rect(current.X, current.Y, 0, 0); // 드래그 중인 임시 지점
 
-                    // 타겟이 그룹이면 알고리즘이 뻗지 않도록 0x0 크기로 전달
+                    // 그룹은 경계 상자가 아닌 연결점 기준으로 라우팅합니다.
                     r2 = _reconnectingConn.Target is GroupViewModel ? new Rect(endP.X, endP.Y, 0, 0) : new Rect(_reconnectingConn.Target.X, _reconnectingConn.Target.Y, _reconnectingConn.Target.Width, _reconnectingConn.Target.Height);
                 }
                 else
@@ -1082,7 +1082,7 @@ namespace DockerDiagram
                     d1 = _reconnectingConn.SourceDir;
                     d2 = PortDirection.None;
 
-                    // 소스가 그룹이면 알고리즘이 뻗지 않도록 0x0 크기로 전달
+                    // 그룹은 경계 상자가 아닌 연결점 기준으로 라우팅합니다.
                     r1 = _reconnectingConn.Source is GroupViewModel ? new Rect(startP.X, startP.Y, 0, 0) : new Rect(_reconnectingConn.Source.X, _reconnectingConn.Source.Y, _reconnectingConn.Source.Width, _reconnectingConn.Source.Height);
                     r2 = new Rect(current.X, current.Y, 0, 0); // 드래그 중인 임시 지점
                 }
@@ -1124,13 +1124,13 @@ namespace DockerDiagram
                 return;
             }
 
-            // ★ 6. 신규 연결 (그룹 크기를 0x0으로 속여서 직각 선을 정상 작동시킴)
+            // 6. 신규 연결 경로 계산
             if (_isConnecting && _sourceItem != null)
             {
                 Point startP = GetExactBorderPoint(_sourceItem, _sourceDir);
                 PortDirection targetDir = PortDirection.None;
 
-                // 출발지가 그룹이면 투명 껍데기(0x0)로 처리
+                // 그룹은 연결점 기준으로 라우팅합니다.
                 Rect sourceRect = _sourceItem is GroupViewModel ? new Rect(startP.X, startP.Y, 0, 0) : new Rect(_sourceItem.X, _sourceItem.Y, _sourceItem.Width, _sourceItem.Height);
                 Rect targetRect = new Rect(current.X, current.Y, 0, 0);
                 Point endPoint = current;
@@ -1176,7 +1176,7 @@ namespace DockerDiagram
         // 5. 마우스 뗌 (네트워크/그룹 생성 완료)
         private async void Diagram_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            // 최상위 이벤트 핸들러(async void)이므로, 내부에서 예외가 터져 앱이 튕기는 것을 완벽히 방어합니다.
+            // 최상위 이벤트 핸들러이므로 내부 비동기 예외를 여기서 처리합니다.
             try
             {
                 _isClickedOnTab = false;
@@ -1210,10 +1210,8 @@ namespace DockerDiagram
                                 newGroup.ParentSheet = vm.ActiveSheet;
                                 vm.ActiveSheet.Groups.Add(newGroup);
 
-                                // 🔥 [버그 수정] 동기 메서드에서 비동기(Task) 메서드로 전환된 부분을 await로 안전하게 대기
                                 await vm.ActiveSheet.RefreshGroupContainmentAsync(newGroup);
 
-                                // 🔥 [핵심 수정] vm.SelectedElement 대신 Inspector 부서로 선택을 지시합니다!
                                 vm.Inspector.SelectedElement = newGroup;
 
                                 vm.ActiveSheet.UpdateGroupLayering();
@@ -1363,8 +1361,10 @@ namespace DockerDiagram
                                 Rect targetRect = new Rect(targetItem.X, targetItem.Y, targetItem.Width, targetItem.Height);
                                 PortDirection targetDir = GetClosestDirection(GetWorldPosition(e), targetRect);
 
-                                // AddConnection은 MainViewModel(CEO)의 역할이므로 그대로 둡니다!
-                                (DataContext as MainViewModel)?.AddConnection(_sourceItem, targetItem, _sourceDir, targetDir);
+                                if (DataContext is MainViewModel mainViewModel)
+                                {
+                                    await mainViewModel.AddConnectionAsync(_sourceItem, targetItem, _sourceDir, targetDir);
+                                }
                             }
                         }
                     }
@@ -1489,7 +1489,6 @@ namespace DockerDiagram
                     {
                         int oldIdx = vm.Sheets.IndexOf(sourceSheet!);
                         int newIdx = vm.Sheets.IndexOf(targetSheet);
-                        // 🔥 [수정] SheetManager 부서에게 시트 이동을 지시합니다.
                         vm.SheetManager.MoveSheet(oldIdx, newIdx);
                     }
                 }
@@ -1576,7 +1575,6 @@ namespace DockerDiagram
             var border = contextMenu?.PlacementTarget as FrameworkElement;
             if (border?.DataContext is SheetViewModel sheet)
             {
-                // 🔥 [수정] SheetManager 부서에게 삭제를 지시합니다.
                 (DataContext as MainViewModel)?.SheetManager.DeleteSheet(sheet);
             }
         }
@@ -1640,7 +1638,6 @@ namespace DockerDiagram
                 _isNetworkDrawingMode = true;
                 _isGroupingMode = false;       // 그룹 모드 끄기
                 Mouse.OverrideCursor = Cursors.Cross; // 십자가 커서
-                                                      // 🔥 [수정] Inspector 부서에게 선택 해제를 지시합니다.
                 (DataContext as MainViewModel)?.Inspector.ClearSelection();
                 e.Handled = true; // 이벤트 소비 (DoDragDrop 방지)
                 return;
@@ -1652,7 +1649,6 @@ namespace DockerDiagram
                 _isGroupingMode = true;
                 _isNetworkDrawingMode = false; // 네트워크 모드 끄기
                 Mouse.OverrideCursor = Cursors.Cross; // 십자가 커서
-                                                      // 🔥 [수정] Inspector 부서에게 선택 해제를 지시합니다.
                 (DataContext as MainViewModel)?.Inspector.ClearSelection();
                 e.Handled = true; // 이벤트 소비 (DoDragDrop 방지)
                 return;
@@ -1769,16 +1765,13 @@ namespace DockerDiagram
                                 {
                                     Mouse.OverrideCursor = Cursors.Wait;
 
-                                    // ==========================================
-                                    // ★ 탭 선택에 따른 분기 처리
-                                    // ==========================================
+                                    // 선택한 생성 방식에 맞는 입력을 처리합니다.
                                     if (dlg.SelectedCreationMode == 0) // 1. [🎛️ 직접 설정 (UI)] 탭
                                     {
                                         // 이미지 이름과 태그(:)를 안전하게 분리
                                         string fullImage = dlg.ImageName.Contains(":") ? dlg.ImageName : dlg.ImageName + ":latest";
                                         var parts = fullImage.Split(new[] { ':' }, 2);
 
-                                        // ★ 끝에 dlg.Command, dlg.IsInteractive 정식으로 추가!
                                         await vm.CreateNewContainerNodeAsync(
                                             dlg.ContainerName, parts[0], parts.Length > 1 ? parts[1] : "latest",
                                             dlg.Ports, dlg.EnvVars,
@@ -1787,7 +1780,6 @@ namespace DockerDiagram
                                     }
                                     else if (dlg.SelectedCreationMode == 1) // 2. [💻 명령어로 생성 (CLI)] 탭
                                     {
-                                        // 하이브리드 파싱 로직 호출!
                                         await vm.ProcessCliCommandAsync(dlg.CliCommand, defaultX, defaultY);
                                     }
                                     else if (dlg.SelectedCreationMode == 2) // 3. [🛠️ 도커파일로 빌드] 탭
@@ -1816,7 +1808,6 @@ namespace DockerDiagram
                         }
                         else if (type == NodeType.Internet)
                         {
-                            // ★ [수정됨] CreateInternetAt 대신 통합된 CreateNodeAt 사용!
                             await vm.CreateNodeAtAsync(new DockerInternet { Name = "Internet" }, defaultX, defaultY);
                         }
                     }
@@ -1863,22 +1854,18 @@ namespace DockerDiagram
                             {
                                 Mouse.OverrideCursor = Cursors.Wait;
 
-                                // ==========================================
-                                // ★ [수정된 부분] 탭 선택에 따라 분기 처리!
-                                // ==========================================
+                                // 선택한 생성 방식에 맞는 입력을 처리합니다.
                                 if (dlg.SelectedCreationMode == 0) // 1. [🎛️ 직접 설정 (UI)] 탭
                                 {
                                     string fullImage = dlg.ImageName.Contains(":") ? dlg.ImageName : dlg.ImageName + ":latest";
                                     var parts = fullImage.Split(new[] { ':' }, 2);
 
-                                    // 기존 코드 (※ 끝에 Command와 IsInteractive 값도 같이 넘겨주면 완벽합니다!)
                                     await vm.CreateNewContainerNodeAsync(dlg.ContainerName, parts[0], parts.Length > 1 ? parts[1] : "latest",
                                         dlg.Ports, dlg.EnvVars, dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount, snapX, snapY,
                                         dlg.SelectedNetwork, dlg.Command, dlg.IsInteractive);
                                 }
                                 else if (dlg.SelectedCreationMode == 1) // 2. [💻 명령어로 생성 (CLI)] 탭
                                 {
-                                    // 방금 MainViewModel에 만든 '하이브리드 파싱' 메서드 호출!
                                     await vm.ProcessCliCommandAsync(dlg.CliCommand, snapX, snapY);
                                 }
                                 else if (dlg.SelectedCreationMode == 2) // 3. [🛠️ 도커파일로 빌드] 탭
@@ -1948,7 +1935,6 @@ namespace DockerDiagram
         /// 사이드바의 '실제 도커 리소스(컨테이너, 볼륨, 네트워크)' 목록에서 항목을 마우스로 드래그할 때 호출됩니다.
         /// 선택된 항목의 타입에 따라 알맞은 모델 데이터를 `DataObject`로 포장하여 시스템의 드래그 앤 드롭 파이프라인에 전달합니다.
         /// </summary>
-        // ExistingItem_MouseMove 수정 (네트워크일 경우 DockerGroup으로 포장)
         private void ExistingItem_MouseMove(object sender, MouseEventArgs e)
         {
             if (e.LeftButton == MouseButtonState.Pressed && !_isToolDragging)

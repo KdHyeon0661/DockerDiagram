@@ -1,29 +1,19 @@
 ﻿using DockerDiagram.Helpers;
 using DockerDiagram.Models;
-using Docker.DotNet.Models;
 using OxyPlot;
-using OxyPlot.Axes;
-using OxyPlot.Series;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
-using System.Net;
-using System.Threading;
 using System.Threading.Tasks;
-using System.Windows;
 using System.Windows.Input;
-using System.Windows.Threading;
 
 namespace DockerDiagram.ViewModels
 {
     /// <summary>
-    /// 다이어그램 캔버스 위에 배치되는 개별 노드(컨테이너, 볼륨, 인터넷)의 시각적 상태와 도커 데이터를 관리하는 핵심 뷰모델입니다.
-    /// 단순한 UI 표현을 넘어 도커 엔진과 실시간으로 동기화(CPU/메모리 모니터링, 상태 갱신)를 수행하며,
-    /// 시작/정지, 터미널 접속, 로그 조회 등 사용자의 제어 명령을 백엔드 서비스로 전달하는 컨트롤 센터 역할을 합니다.
+    /// 노드의 공통 배치·선택 상태를 관리하고 타입별 자식 ViewModel을 조정합니다.
     /// </summary>
     public class NodeViewModel : ViewModelBase, IConnectableItem
     {
@@ -34,11 +24,12 @@ namespace DockerDiagram.ViewModels
         private readonly IContainerService _containerService;
         private readonly IVolumeService _volumeService;
         private readonly IDialogService _dialogService;
+        private readonly ContainerMonitoringViewModel _monitoring;
+        private readonly ContainerOperationsViewModel _containerOperations;
+        private readonly VolumeNodeViewModel _volume;
+        private readonly ContainerNetworkViewModel _network;
 
         // 마운트 정보 원본 저장용 (캐시)
-        private List<Docker.DotNet.Models.MountPoint> _cachedMounts = new();
-        private DispatcherTimer? _statsTimer;
-        private CancellationTokenSource? _logStreamCts;
         private SheetViewModel? _parentSheet;
 
         private double _x;
@@ -69,23 +60,6 @@ namespace DockerDiagram.ViewModels
         private string _healthColor = "#888888";
         private string _containerLogs = "Loading logs...";
         private string _statusColor = "#28a745";
-        private string _dockerVolumeName = string.Empty;
-        private bool _volumeExternal;
-        private Dictionary<string, string> _volumeLabels = new();
-        private Dictionary<string, string> _volumeDriverOptions = new();
-        private string _volumeLabelsText = "None";
-        private string _volumeDriverOptionsText = "None";
-        private string _volumeSizeText = "Unknown";
-        private long _volumeRefCount;
-
-        private double _maxCpuCount = 8.0;
-        private double _targetCpuCount = 1.0;
-        private long _maxMemoryMb = 8192;
-        private long _targetMemoryMb = 512;
-        private string _cpuUsage = "0.0%";
-        private double _cpuValue = 0;
-        private string _memoryUsage = "0B / 0B";
-        private double _memoryValue = 0;
 
         private int _networkDisplayMode = 0;
         private int _volumeDisplayMode = 0;
@@ -95,9 +69,6 @@ namespace DockerDiagram.ViewModels
         private string _containerFilePath = @"/app/data";
         private string _newEnvInput = "";
 
-        private LineSeries _cpuSeries;
-        private LineSeries _memorySeries;
-        private int _timeIndex = 0; // X축 기준점이 될 시간 흐름 인덱스
         #endregion
 
         #region Events
@@ -247,75 +218,43 @@ namespace DockerDiagram.ViewModels
         public string ComposeServiceName { get; set; } = string.Empty;
         public string ComposeRawServiceYaml { get; set; } = string.Empty;
         public string ComposeRawVolumeYaml { get; set; } = string.Empty;
+        public VolumeNodeViewModel Volume => _volume;
 
         public Dictionary<string, string> VolumeLabels
         {
-            get => _volumeLabels;
-            set
-            {
-                if (SetProperty(ref _volumeLabels, value ?? new Dictionary<string, string>()))
-                {
-                    VolumeLabelsText = FormatKeyValueMap(_volumeLabels);
-                }
-            }
+            get => _volume.Labels;
+            set => _volume.Labels = value;
         }
 
         public Dictionary<string, string> VolumeDriverOptions
         {
-            get => _volumeDriverOptions;
-            set
-            {
-                if (SetProperty(ref _volumeDriverOptions, value ?? new Dictionary<string, string>()))
-                {
-                    VolumeDriverOptionsText = FormatKeyValueMap(_volumeDriverOptions);
-                }
-            }
+            get => _volume.DriverOptions;
+            set => _volume.DriverOptions = value;
         }
 
-        public string VolumeLabelsText
-        {
-            get => _volumeLabelsText;
-            private set => SetProperty(ref _volumeLabelsText, value);
-        }
-
-        public string VolumeDriverOptionsText
-        {
-            get => _volumeDriverOptionsText;
-            private set => SetProperty(ref _volumeDriverOptionsText, value);
-        }
-
-        public string VolumeSizeText
-        {
-            get => _volumeSizeText;
-            private set => SetProperty(ref _volumeSizeText, value);
-        }
-
-        public long VolumeRefCount
-        {
-            get => _volumeRefCount;
-            private set => SetProperty(ref _volumeRefCount, value);
-        }
+        public string VolumeLabelsText => _volume.LabelsText;
+        public string VolumeDriverOptionsText => _volume.DriverOptionsText;
+        public string VolumeSizeText => _volume.SizeText;
+        public long VolumeRefCount => _volume.RefCount;
 
         public string DockerVolumeName
         {
-            get => _dockerVolumeName;
+            get => _volume.DockerVolumeName;
             set
             {
-                if (SetProperty(ref _dockerVolumeName, value))
-                {
-                    OnPropertyChanged(nameof(EffectiveVolumeName));
-                }
+                _volume.DockerVolumeName = value;
+                OnPropertyChanged(nameof(DockerVolumeName));
+                OnPropertyChanged(nameof(EffectiveVolumeName));
             }
         }
 
         public bool VolumeExternal
         {
-            get => _volumeExternal;
-            set => SetProperty(ref _volumeExternal, value);
+            get => _volume.External;
+            set => _volume.External = value;
         }
 
-        public string EffectiveVolumeName =>
-            string.IsNullOrWhiteSpace(DockerVolumeName) ? Name : DockerVolumeName;
+        public string EffectiveVolumeName => _volume.EffectiveVolumeName;
 
         /// <summary>
         /// 도커 엔진에서 발급한 실제 컨테이너(또는 볼륨)의 고유 해시 ID입니다.
@@ -419,21 +358,17 @@ namespace DockerDiagram.ViewModels
         #endregion
 
         #region Resource Monitoring Properties
-        public double MaxCpuCount { get => _maxCpuCount; set => SetProperty(ref _maxCpuCount, value); }
-        public double TargetCpuCount { get => _targetCpuCount; set => SetProperty(ref _targetCpuCount, value); }
-        public long MaxMemoryMb { get => _maxMemoryMb; set => SetProperty(ref _maxMemoryMb, value); }
-        public long TargetMemoryMb { get => _targetMemoryMb; set => SetProperty(ref _targetMemoryMb, value); }
-        public string CpuUsage { get => _cpuUsage; set => SetProperty(ref _cpuUsage, value); }
-        public double CpuValue { get => _cpuValue; set => SetProperty(ref _cpuValue, value); }
-        public string MemoryUsage { get => _memoryUsage; set => SetProperty(ref _memoryUsage, value); }
-        public double MemoryValue
-        {
-            get => _memoryValue;
-            set => SetProperty(ref _memoryValue, double.IsNaN(value) ? 0 : value);
-        }
-
-        public PlotModel CpuPlotModel { get; private set; }
-        public PlotModel MemoryPlotModel { get; private set; }
+        public ContainerMonitoringViewModel Monitoring => _monitoring;
+        public double MaxCpuCount { get => _monitoring.MaxCpuCount; set => _monitoring.MaxCpuCount = value; }
+        public double TargetCpuCount { get => _monitoring.TargetCpuCount; set => _monitoring.TargetCpuCount = value; }
+        public long MaxMemoryMb { get => _monitoring.MaxMemoryMb; set => _monitoring.MaxMemoryMb = value; }
+        public long TargetMemoryMb { get => _monitoring.TargetMemoryMb; set => _monitoring.TargetMemoryMb = value; }
+        public string CpuUsage => _monitoring.CpuUsage;
+        public double CpuValue => _monitoring.CpuValue;
+        public string MemoryUsage => _monitoring.MemoryUsage;
+        public double MemoryValue => _monitoring.MemoryValue;
+        public PlotModel CpuPlotModel => _monitoring.CpuPlotModel;
+        public PlotModel MemoryPlotModel => _monitoring.MemoryPlotModel;
         #endregion
 
         #region Lists & Collections
@@ -449,80 +384,27 @@ namespace DockerDiagram.ViewModels
             {
                 if (SetProperty(ref _volumeDisplayMode, value))
                 {
-                    UpdateVolumeList(); // 모드가 바뀌면 리스트 내용 즉시 갱신
+                    _containerOperations?.RefreshMountedVolumes();
                 }
             }
         }
 
-        public class NetworkDetail : ViewModelBase
+        public ContainerNetworkViewModel Network => _network;
+        public ObservableCollection<ContainerNetworkDetailViewModel> NetworkDetailList => _network.Details;
+        public Dictionary<string, string> NetworkIpMap
         {
-            private string _staticIPv4 = "";
-            private string _staticIPv6 = "";
-            private string _aliasesText = "";
-            private string _driverOptionsText = "";
-
-            public string NetworkName { get; set; } = "";
-            public string IPv4 { get; set; } = "-";
-            public string IPv6 { get; set; } = "-";
-            public Action<NetworkDetail>? OptionsChanged { get; set; }
-            public AsyncRelayCommand? ApplyCommand { get; set; }
-
-            public string StaticIPv4
-            {
-                get => _staticIPv4;
-                set
-                {
-                    if (SetProperty(ref _staticIPv4, value))
-                    {
-                        OptionsChanged?.Invoke(this);
-                    }
-                }
-            }
-
-            public string StaticIPv6
-            {
-                get => _staticIPv6;
-                set
-                {
-                    if (SetProperty(ref _staticIPv6, value))
-                    {
-                        OptionsChanged?.Invoke(this);
-                    }
-                }
-            }
-
-            public string AliasesText
-            {
-                get => _aliasesText;
-                set
-                {
-                    if (SetProperty(ref _aliasesText, value))
-                    {
-                        OptionsChanged?.Invoke(this);
-                    }
-                }
-            }
-
-            public string DriverOptionsText
-            {
-                get => _driverOptionsText;
-                set
-                {
-                    if (SetProperty(ref _driverOptionsText, value))
-                    {
-                        OptionsChanged?.Invoke(this);
-                    }
-                }
-            }
+            get => _network.IpMap;
+            set => _network.IpMap = value;
         }
-
-        public ObservableCollection<NetworkDetail> NetworkDetailList { get; } = new();
-        public Dictionary<string, string> NetworkIpMap { get; set; } = new();
-        public Dictionary<string, ContainerNetworkOptions> NetworkOptionsMap { get; set; } = new();
+        public Dictionary<string, ContainerNetworkOptions> NetworkOptionsMap
+        {
+            get => _network.OptionsMap;
+            set => _network.OptionsMap = value;
+        }
         public ObservableCollection<string> MountedVolumeList { get; } = new();
         public ObservableCollection<string> ConnectedNodes { get; } = new();
-        public ObservableCollection<string> UsedByContainers { get; } = new();
-        public ObservableCollection<VolumeUsageInfo> VolumeUsageDetails { get; } = new();
+        public ObservableCollection<string> UsedByContainers => _volume.UsedByContainers;
+        public ObservableCollection<VolumeUsageInfo> VolumeUsageDetails => _volume.UsageDetails;
 
         public List<string> PortBindings { get => _portBindings; set => SetProperty(ref _portBindings, value); }
         public List<string> EnvironmentVariables
@@ -543,393 +425,102 @@ namespace DockerDiagram.ViewModels
         public string NewEnvInput { get => _newEnvInput; set => SetProperty(ref _newEnvInput, value); }
         #endregion
 
-        public ContainerNetworkOptions? GetNetworkOptions(string networkName)
-        {
-            if (NetworkOptionsMap.TryGetValue(networkName, out var options))
-            {
-                var cloned = options.Clone();
-                return cloned.HasAnyOption ? cloned : null;
-            }
+        public ContainerNetworkOptions? GetNetworkOptions(string networkName) =>
+            _network.GetOptions(networkName);
 
-            if (NetworkIpMap.TryGetValue(networkName, out var staticIp) && !string.IsNullOrWhiteSpace(staticIp))
-            {
-                return new ContainerNetworkOptions { StaticIPv4 = staticIp.Trim() };
-            }
+        public Task<bool> ValidateNetworkOptionsBeforeConnectAsync(
+            INetworkService networkService,
+            string networkName,
+            string? dockerNetworkName = null) =>
+            _network.ValidateBeforeConnectAsync(networkService, networkName, dockerNetworkName);
 
-            var diagramNetworkName = ResolveDiagramNetworkName(networkName);
-            if (!string.IsNullOrWhiteSpace(diagramNetworkName) && !string.Equals(diagramNetworkName, networkName, StringComparison.OrdinalIgnoreCase))
-            {
-                if (NetworkOptionsMap.TryGetValue(diagramNetworkName, out var diagramOptions))
-                {
-                    var cloned = diagramOptions.Clone();
-                    return cloned.HasAnyOption ? cloned : null;
-                }
-
-                if (NetworkIpMap.TryGetValue(diagramNetworkName, out var diagramStaticIp) && !string.IsNullOrWhiteSpace(diagramStaticIp))
-                {
-                    return new ContainerNetworkOptions { StaticIPv4 = diagramStaticIp.Trim() };
-                }
-            }
-
-            return null;
-        }
-
-        private void SetNetworkOptions(NetworkDetail detail)
-        {
-            if (string.IsNullOrWhiteSpace(detail.NetworkName)) return;
-            var optionKey = ResolveDiagramNetworkName(detail.NetworkName) ?? detail.NetworkName;
-
-            var options = new ContainerNetworkOptions
-            {
-                StaticIPv4 = detail.StaticIPv4.Trim(),
-                StaticIPv6 = detail.StaticIPv6.Trim(),
-                Aliases = ParseList(detail.AliasesText),
-                DriverOptions = ParseKeyValueText(detail.DriverOptionsText)
-            };
-
-            if (options.HasAnyOption)
-            {
-                NetworkOptionsMap[optionKey] = options;
-            }
-            else
-            {
-                NetworkOptionsMap.Remove(optionKey);
-            }
-
-            if (!string.Equals(optionKey, detail.NetworkName, StringComparison.OrdinalIgnoreCase))
-            {
-                NetworkOptionsMap.Remove(detail.NetworkName);
-                NetworkIpMap.Remove(detail.NetworkName);
-            }
-
-            if (string.IsNullOrWhiteSpace(options.StaticIPv4)) NetworkIpMap.Remove(optionKey);
-            else NetworkIpMap[optionKey] = options.StaticIPv4;
-
-            OnPropertyChanged(nameof(NetworkIpMap));
-            OnPropertyChanged(nameof(NetworkOptionsMap));
-            OnModified?.Invoke(this, EventArgs.Empty);
-        }
-
-        private string? ResolveDiagramNetworkName(string dockerNetworkName)
-        {
-            return ParentSheet?.Groups
-                .Where(group => group.Type == GroupType.Network && group.ContainedNodes.Contains(this))
-                .FirstOrDefault(group =>
-                    string.Equals(group.Title, dockerNetworkName, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(group.DockerNetworkName, dockerNetworkName, StringComparison.OrdinalIgnoreCase))
-                ?.Title;
-        }
-
-        private async Task ApplyNetworkOptionsAsync(string networkName)
-        {
-            if (ParentSheet?.DockerService is not INetworkService networkService || string.IsNullOrWhiteSpace(ContainerId))
-                return;
-
-            try
-            {
-                if (!ValidateEndpointDriverOptionsText(networkName)) return;
-                if (!await ValidateNetworkOptionsBeforeConnectAsync(networkService, networkName)) return;
-
-                var result = _dialogService.ShowYesNoCancel(
-                    $"'{networkName}' 네트워크 옵션을 적용하려면 컨테이너 네트워크 연결을 재생성해야 합니다.\n" +
-                    "작업 중 아주 짧게 해당 네트워크 연결이 끊길 수 있습니다.\n\n계속하시겠습니까?",
-                    "Apply Network Options");
-                if (result != MessageBoxResult.Yes) return;
-
-                try
-                {
-                    await networkService.DisconnectNetworkAsync(networkName, ContainerId);
-                }
-                catch (Exception ex) when (ex.Message.Contains("is not connected") || ex.Message.Contains("연결되어 있지"))
-                {
-                    Debug.WriteLine($"[DockerDiscovery] Apply network options skipped disconnect: {ex.Message}");
-                }
-
-                try
-                {
-                    await networkService.ConnectNetworkAsync(networkName, ContainerId, GetNetworkOptions(networkName));
-                }
-                catch
-                {
-                    try
-                    {
-                        await networkService.ConnectNetworkAsync(networkName, ContainerId);
-                    }
-                    catch (Exception rollbackEx)
-                    {
-                        Debug.WriteLine($"[DockerDiscovery] Network option rollback failed: {rollbackEx.Message}");
-                    }
-                    throw;
-                }
-
-                await RefreshDetailsAsync();
-            }
-            catch (Exception ex)
-            {
-                _dialogService.ShowError($"'{Name}' 컨테이너의 '{networkName}' 네트워크 옵션 적용 중 오류가 발생했습니다.\n{ex.Message}", "Network Options Error");
-            }
-        }
-
-        public async Task<bool> ValidateNetworkOptionsBeforeConnectAsync(INetworkService networkService, string networkName, string? dockerNetworkName = null)
-        {
-            var options = GetNetworkOptions(networkName);
-            if (options == null || !options.HasAnyOption) return true;
-            var inspectName = string.IsNullOrWhiteSpace(dockerNetworkName) ? networkName : dockerNetworkName;
-
-            NetworkResponse network;
-            try
-            {
-                network = await networkService.InspectNetworkAsync(inspectName);
-            }
-            catch (Exception ex)
-            {
-                _dialogService.ShowError($"'{networkName}' 네트워크 정보를 확인할 수 없어 연결 옵션을 적용할 수 없습니다.\n{ex.Message}", "Network Options");
-                return false;
-            }
-
-            if (options.DriverOptions.Count > 0 && IsEndpointDriverOptionsDefinitelyUnsupported(network.Driver))
-            {
-                _dialogService.ShowError($"'{networkName}' 네트워크의 드라이버({network.Driver})는 endpoint driver options를 지원하지 않습니다.", "Network Options");
-                return false;
-            }
-
-            if (!string.IsNullOrWhiteSpace(options.StaticIPv4) &&
-                !ValidateStaticIp(network, options.StaticIPv4, isIPv6: false, out var ipv4Error))
-            {
-                _dialogService.ShowError(ipv4Error, "Static IPv4");
-                return false;
-            }
-
-            if (!string.IsNullOrWhiteSpace(options.StaticIPv6))
-            {
-                if (network.EnableIPv6 != true)
-                {
-                    _dialogService.ShowError($"'{networkName}' 네트워크는 IPv6가 활성화되어 있지 않습니다.\n먼저 네트워크 생성 옵션에서 IPv6를 켜야 Static IPv6를 사용할 수 있습니다.", "Static IPv6");
-                    return false;
-                }
-
-                if (!ValidateStaticIp(network, options.StaticIPv6, isIPv6: true, out var ipv6Error))
-                {
-                    _dialogService.ShowError(ipv6Error, "Static IPv6");
-                    return false;
-                }
-            }
-
-            if (IsStaticIpInUseByAnotherContainer(network, options.StaticIPv4, isIPv6: false, out var ipv4Owner))
-            {
-                _dialogService.ShowError($"Static IPv4 '{options.StaticIPv4}'는 이미 '{ipv4Owner}' 컨테이너가 사용 중입니다.", "IP Conflict");
-                return false;
-            }
-
-            if (IsStaticIpInUseByAnotherContainer(network, options.StaticIPv6, isIPv6: true, out var ipv6Owner))
-            {
-                _dialogService.ShowError($"Static IPv6 '{options.StaticIPv6}'는 이미 '{ipv6Owner}' 컨테이너가 사용 중입니다.", "IP Conflict");
-                return false;
-            }
-
-            return true;
-        }
-
-        private bool ValidateEndpointDriverOptionsText(string networkName)
-        {
-            var detail = NetworkDetailList.FirstOrDefault(item => item.NetworkName == networkName);
-            if (detail == null || string.IsNullOrWhiteSpace(detail.DriverOptionsText)) return true;
-
-            var invalid = detail.DriverOptionsText
-                .Split(new[] { ',', ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(item => item.Trim())
-                .FirstOrDefault(item => !item.Contains('=') || item.StartsWith("="));
-
-            if (invalid == null) return true;
-
-            _dialogService.ShowError($"Endpoint driver options는 key=value 형식으로 입력해야 합니다.\n\n문제 항목: {invalid}", "Network Options");
-            return false;
-        }
-
-        private bool ValidateStaticIp(NetworkResponse network, string ip, bool isIPv6, out string error)
-        {
-            error = "";
-            var familyName = isIPv6 ? "IPv6" : "IPv4";
-            if (!System.Net.IPAddress.TryParse(ip, out var parsed) || IsIPv6Address(parsed) != isIPv6)
-            {
-                error = $"'{ip}'는 올바른 {familyName} 주소가 아닙니다.";
-                return false;
-            }
-
-            var subnets = network.IPAM?.Config?
-                .Select(config => config.Subnet)
-                .Where(subnet => !string.IsNullOrWhiteSpace(subnet) && IsCidrFamily(subnet!, isIPv6))
-                .ToList() ?? new List<string>();
-
-            if (subnets.Count == 0)
-            {
-                error = $"'{network.Name}' 네트워크에서 {familyName} subnet 정보를 찾을 수 없어 Static {familyName}를 안전하게 검증할 수 없습니다.";
-                return false;
-            }
-
-            if (!subnets.Any(subnet => IsIpInCidr(ip, subnet!)))
-            {
-                error = $"'{ip}'는 '{network.Name}' 네트워크의 {familyName} subnet 범위 안에 없습니다.\nSubnet: {string.Join(", ", subnets)}";
-                return false;
-            }
-
-            return true;
-        }
-
-        private bool IsStaticIpInUseByAnotherContainer(NetworkResponse network, string ip, bool isIPv6, out string owner)
-        {
-            owner = "";
-            if (string.IsNullOrWhiteSpace(ip) || network.Containers == null) return false;
-
-            foreach (var container in network.Containers)
-            {
-                if (IsSameContainer(container.Key)) continue;
-
-                var endpointIp = NormalizeEndpointIp(isIPv6 ? container.Value.IPv6Address : container.Value.IPv4Address);
-                if (!string.IsNullOrWhiteSpace(endpointIp) && string.Equals(endpointIp, ip, StringComparison.OrdinalIgnoreCase))
-                {
-                    owner = string.IsNullOrWhiteSpace(container.Value.Name) ? container.Key : container.Value.Name;
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private bool IsSameContainer(string id)
-        {
-            return !string.IsNullOrWhiteSpace(id) &&
-                   !string.IsNullOrWhiteSpace(ContainerId) &&
-                   (id.StartsWith(ContainerId, StringComparison.OrdinalIgnoreCase) ||
-                    ContainerId.StartsWith(id, StringComparison.OrdinalIgnoreCase));
-        }
-
-        private static bool IsEndpointDriverOptionsDefinitelyUnsupported(string? driver)
-        {
-            return string.Equals(driver, "host", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(driver, "none", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static string NormalizeEndpointIp(string? endpointIp)
-        {
-            if (string.IsNullOrWhiteSpace(endpointIp)) return "";
-            return endpointIp.Split('/')[0].Trim();
-        }
-
-        private static bool IsCidrFamily(string cidr, bool isIPv6)
-        {
-            var ipPart = cidr.Split('/')[0];
-            return System.Net.IPAddress.TryParse(ipPart, out var ip) && IsIPv6Address(ip) == isIPv6;
-        }
-
-        private static bool IsIpInCidr(string ip, string cidr)
-        {
-            var parts = cidr.Split('/');
-            if (parts.Length != 2 ||
-                !System.Net.IPAddress.TryParse(ip, out var address) ||
-                !System.Net.IPAddress.TryParse(parts[0], out var network) ||
-                !int.TryParse(parts[1], out var prefixLength))
-            {
-                return false;
-            }
-
-            var addressBytes = address.GetAddressBytes();
-            var networkBytes = network.GetAddressBytes();
-            if (addressBytes.Length != networkBytes.Length) return false;
-            if (prefixLength < 0 || prefixLength > addressBytes.Length * 8) return false;
-
-            var fullBytes = prefixLength / 8;
-            var remainingBits = prefixLength % 8;
-
-            for (var i = 0; i < fullBytes; i++)
-            {
-                if (addressBytes[i] != networkBytes[i]) return false;
-            }
-
-            if (remainingBits == 0) return true;
-
-            var mask = (byte)(0xFF << (8 - remainingBits));
-            return (addressBytes[fullBytes] & mask) == (networkBytes[fullBytes] & mask);
-        }
-
-        private static bool IsIPv6Address(System.Net.IPAddress ip)
-        {
-            return ip.GetAddressBytes().Length == 16;
-        }
-
-        private static List<string> ParseList(string text)
-        {
-            return (text ?? "")
-                .Split(new[] { ',', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(item => item.Trim())
-                .Where(item => !string.IsNullOrWhiteSpace(item))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-        }
-
-        private static Dictionary<string, string> ParseKeyValueText(string text)
-        {
-            return (text ?? "")
-                .Split(new[] { ',', ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(item => item.Trim())
-                .Where(item => item.Contains('=') && !item.StartsWith("="))
-                .Select(item => item.Split(new[] { '=' }, 2))
-                .GroupBy(parts => parts[0].Trim(), StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.Last()[1].Trim(), StringComparer.OrdinalIgnoreCase);
-        }
-
-        private static string FormatKeyValueMap(Dictionary<string, string>? values)
-        {
-            if (values == null || values.Count == 0) return "None";
-            return string.Join("\n", values.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}={kv.Value}"));
-        }
-
+        internal void NotifyModified() => OnModified?.Invoke(this, EventArgs.Empty);
         #region Commands
-        public AsyncRelayCommand StartCommand { get; }
-        public AsyncRelayCommand StopCommand { get; }
-        public AsyncRelayCommand PauseCommand { get; }
-        public AsyncRelayCommand RestartCommand { get; }
-        public RelayCommand TerminalCommand { get; }
+        public ContainerOperationsViewModel ContainerOperations => _containerOperations;
+        public AsyncRelayCommand StartCommand => _containerOperations.StartCommand;
+        public AsyncRelayCommand StopCommand => _containerOperations.StopCommand;
+        public AsyncRelayCommand PauseCommand => _containerOperations.PauseCommand;
+        public AsyncRelayCommand RestartCommand => _containerOperations.RestartCommand;
+        public RelayCommand TerminalCommand => _containerOperations.TerminalCommand;
         public ICommand ToggleNetworkModeCommand { get; }
         public ICommand ToggleVolumeModeCommand { get; }
-        public ICommand OpenDetailWindowCommand { get; }
-        public ICommand RefreshLogsCommand { get; }
-        public ICommand CopyLogsCommand { get; }
-        public ICommand ExportLogsCommand { get; }
-        public ICommand CopyToContainerCommand { get; }
-        public ICommand CopyFromContainerCommand { get; }
-        public ICommand AddEnvAndRecreateCommand { get; }
-        public ICommand BackupVolumeCommand { get; }
-        public ICommand RestoreVolumeCommand { get; }
-        public ICommand RecreateVolumeCommand { get; }
-        public AsyncRelayCommand ExtractDockerfileCommand { get; }
-        public ICommand UpdateResourcesCommand { get; }
+        public ICommand OpenDetailWindowCommand => _containerOperations.OpenDetailWindowCommand;
+        public ICommand RefreshLogsCommand => _containerOperations.RefreshLogsCommand;
+        public ICommand CopyLogsCommand => _containerOperations.CopyLogsCommand;
+        public ICommand ExportLogsCommand => _containerOperations.ExportLogsCommand;
+        public ICommand CopyToContainerCommand => _containerOperations.CopyToContainerCommand;
+        public ICommand CopyFromContainerCommand => _containerOperations.CopyFromContainerCommand;
+        public ICommand AddEnvAndRecreateCommand => _containerOperations.AddEnvAndRecreateCommand;
+        public ICommand BackupVolumeCommand => _volume.BackupCommand;
+        public ICommand RestoreVolumeCommand => _volume.RestoreCommand;
+        public ICommand RecreateVolumeCommand => _volume.RecreateCommand;
+        public AsyncRelayCommand ExtractDockerfileCommand => _containerOperations.ExtractDockerfileCommand;
+        public ICommand UpdateResourcesCommand => _containerOperations.UpdateResourcesCommand;
         #endregion
 
         #region Constructor
         /// <summary>
-        /// 도커 통신에 필요한 백엔드 서비스(컨테이너, 볼륨) 및 알림(다이얼로그) 서비스를 주입받아 객체를 초기화합니다.
-        /// UI 버튼과 연결될 수많은 명령(제어, 터미널 열기, 로그 복사, 파일 업/다운로드, Dockerfile 추출 등)을 여기서 세팅합니다.
+        /// 공통 노드 상태와 타입별 기능 ViewModel을 초기화합니다.
         /// </summary>
         public NodeViewModel(IContainerService containerService, IVolumeService volumeService, IDialogService dialogService)
         {
             _containerService = containerService ?? throw new ArgumentNullException(nameof(containerService));
             _volumeService = volumeService ?? throw new ArgumentNullException(nameof(volumeService));
             _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
+            _monitoring = new ContainerMonitoringViewModel(
+                _containerService,
+                () => ContainerId,
+                () => IsRunning);
+            _monitoring.PropertyChanged += (_, e) =>
+            {
+                if (!string.IsNullOrWhiteSpace(e.PropertyName))
+                {
+                    OnPropertyChanged(e.PropertyName);
+                }
+            };
+            _containerOperations = new ContainerOperationsViewModel(this, _containerService, _dialogService);
+            _network = new ContainerNetworkViewModel(this, _dialogService);
+            _network.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(ContainerNetworkViewModel.IpMap))
+                    OnPropertyChanged(nameof(NetworkIpMap));
+                else if (e.PropertyName == nameof(ContainerNetworkViewModel.OptionsMap))
+                    OnPropertyChanged(nameof(NetworkOptionsMap));
+            };
+            _volume = new VolumeNodeViewModel(this, _volumeService, _dialogService);
+            _volume.PropertyChanged += (_, e) =>
+            {
+                if (string.IsNullOrWhiteSpace(e.PropertyName)) return;
 
-            BackupVolumeCommand = new AsyncRelayCommand(ExecuteBackupVolumeAsync, _ => Type == NodeType.Volume);
-            RestoreVolumeCommand = new AsyncRelayCommand(ExecuteRestoreVolumeAsync, _ => Type == NodeType.Volume);
-            RecreateVolumeCommand = new AsyncRelayCommand(ExecuteRecreateVolumeAsync, _ => Type == NodeType.Volume);
-
-            StartCommand = new AsyncRelayCommand(_ => ControlAction("start"), _ => Type == NodeType.Container && IsDockerConnected && !IsRunning);
-            StopCommand = new AsyncRelayCommand(_ => ControlAction("stop"), _ => Type == NodeType.Container && IsDockerConnected && IsRunning);
-            PauseCommand = new AsyncRelayCommand(_ => ControlAction("pause"), _ => Type == NodeType.Container && IsDockerConnected && (IsRunning || IsPaused));
-            RestartCommand = new AsyncRelayCommand(_ => ControlAction("restart"), _ => Type == NodeType.Container && IsDockerConnected);
-
-            UpdateResourcesCommand = new AsyncRelayCommand(ExecuteUpdateResourcesAsync, _ => Type == NodeType.Container && IsDockerConnected);
-
-            TerminalCommand = new RelayCommand(_ => OpenTerminal(), _ => Type == NodeType.Container && IsDockerConnected && IsRunning);
-            ExtractDockerfileCommand = new AsyncRelayCommand(_ => ExtractDockerfileAsync(), _ => Type == NodeType.Container && IsDockerConnected);
+                switch (e.PropertyName)
+                {
+                    case nameof(VolumeNodeViewModel.Labels):
+                        OnPropertyChanged(nameof(VolumeLabels));
+                        break;
+                    case nameof(VolumeNodeViewModel.DriverOptions):
+                        OnPropertyChanged(nameof(VolumeDriverOptions));
+                        break;
+                    case nameof(VolumeNodeViewModel.LabelsText):
+                        OnPropertyChanged(nameof(VolumeLabelsText));
+                        break;
+                    case nameof(VolumeNodeViewModel.DriverOptionsText):
+                        OnPropertyChanged(nameof(VolumeDriverOptionsText));
+                        break;
+                    case nameof(VolumeNodeViewModel.SizeText):
+                        OnPropertyChanged(nameof(VolumeSizeText));
+                        break;
+                    case nameof(VolumeNodeViewModel.RefCount):
+                        OnPropertyChanged(nameof(VolumeRefCount));
+                        break;
+                    case nameof(VolumeNodeViewModel.DockerVolumeName):
+                        OnPropertyChanged(nameof(DockerVolumeName));
+                        OnPropertyChanged(nameof(EffectiveVolumeName));
+                        break;
+                    case nameof(VolumeNodeViewModel.External):
+                        OnPropertyChanged(nameof(VolumeExternal));
+                        break;
+                }
+            };
 
             ToggleNetworkModeCommand = new RelayCommand(_ => {
                 NetworkDisplayMode = (NetworkDisplayMode + 1) % 3;
@@ -939,89 +530,17 @@ namespace DockerDiagram.ViewModels
                 VolumeDisplayMode = (VolumeDisplayMode + 1) % 2;
             });
 
-            OpenDetailWindowCommand = new AsyncRelayCommand(_ => OpenDetailWindowAsync(), _ => Type == NodeType.Container && IsDockerConnected);
-            RefreshLogsCommand = new AsyncRelayCommand(_ => LoadLogsAsync(), _ => Type == NodeType.Container && IsDockerConnected);
-
-            CopyLogsCommand = new RelayCommand(_ => {
-                if (!string.IsNullOrEmpty(ContainerLogs))
-                {
-                    Clipboard.SetText(ContainerLogs);
-                    _dialogService.ShowInfo("로그가 클립보드에 복사되었습니다.", "복사 완료");
-                }
-            });
-
-            ExportLogsCommand = new RelayCommand(_ => {
-                if (string.IsNullOrEmpty(ContainerLogs)) return;
-
-                var fileName = _dialogService.ShowSaveFileDialog("Text File|*.txt", ".txt", $"{Name}_logs.txt", "Export Logs");
-                if (!string.IsNullOrWhiteSpace(fileName))
-                {
-                    File.WriteAllText(fileName, ContainerLogs);
-                    _dialogService.ShowInfo("로그가 파일로 저장되었습니다.", "저장 완료");
-                }
-            });
-
-            CopyToContainerCommand = new AsyncRelayCommand(async _ => {
-                if (string.IsNullOrWhiteSpace(HostFilePath) || string.IsNullOrWhiteSpace(ContainerFilePath)) return;
-                try
-                {
-                    await _containerService.CopyToContainerAsync(ContainerId, HostFilePath, ContainerFilePath);
-                    _dialogService.ShowInfo("컨테이너로 파일 복사가 완료되었습니다.", "업로드 성공");
-                }
-                catch (Exception ex)
-                {
-                    _dialogService.ShowMessage($"업로드 실패: {ex.Message}");
-                }
-            });
-
-            CopyFromContainerCommand = new AsyncRelayCommand(async _ => {
-                if (string.IsNullOrWhiteSpace(HostFilePath) || string.IsNullOrWhiteSpace(ContainerFilePath)) return;
-                try
-                {
-                    await _containerService.CopyFromContainerAsync(ContainerId, ContainerFilePath, HostFilePath);
-                    _dialogService.ShowInfo("컨테이너에서 파일 다운로드가 완료되었습니다.", "다운로드 성공");
-                }
-                catch (Exception ex)
-                {
-                    _dialogService.ShowMessage($"다운로드 실패: {ex.Message}");
-                }
-            });
-
-            AddEnvAndRecreateCommand = new RelayCommand(_ => {
-                if (string.IsNullOrWhiteSpace(NewEnvInput)) return;
-                _dialogService.ShowInfo($"이 기능은 기존 설정을 바탕으로 컨테이너를 삭제하고 [{NewEnvInput}] 환경변수를 추가하여 다시 생성합니다.\n(기능 연결 필요)", "Recreate");
-            });
-
-            // =========================================================
-            // ★ [마이그레이션 완료] OxyPlot 초기화 세팅
-            // =========================================================
-
-            // 1. CPU 차트 모델 및 축 생성
-            CpuPlotModel = new PlotModel { PlotMargins = new OxyThickness(0) };
-            CpuPlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Left, Minimum = 0, Maximum = 100, IsAxisVisible = true, MajorGridlineStyle = LineStyle.Solid, MajorGridlineColor = OxyColors.LightGray });
-            CpuPlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Bottom, IsAxisVisible = false }); // X축 숨김
-
-            _cpuSeries = new LineSeries { Color = OxyColor.Parse("#28a745"), StrokeThickness = 2, MarkerType = MarkerType.None };
-            CpuPlotModel.Series.Add(_cpuSeries);
-
-            // 2. Memory 차트 모델 및 축 생성
-            MemoryPlotModel = new PlotModel { PlotMargins = new OxyThickness(0) };
-            MemoryPlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Left, Minimum = 0, IsAxisVisible = true, MajorGridlineStyle = LineStyle.Solid, MajorGridlineColor = OxyColors.LightGray });
-            MemoryPlotModel.Axes.Add(new LinearAxis { Position = AxisPosition.Bottom, IsAxisVisible = false }); // X축 숨김
-
-            _memorySeries = new LineSeries { Color = OxyColor.Parse("#007ACC"), StrokeThickness = 2, MarkerType = MarkerType.None };
-            MemoryPlotModel.Series.Add(_memorySeries);
         }
         #endregion
 
         #region Public Methods (Lifecycle & Monitoring)
         /// <summary>
-        /// 도커 엔진 API를 호출하여 이 노드(컨테이너 또는 볼륨)의 최신 상세 정보(상태, IP, 포트, 마운트 내역, 헬스 체크 등)를 가져와 UI 속성에 동기화합니다.
-        /// 패널이 열리거나, 상태 변경 이벤트가 발생할 때 호출되어 다이어그램이 항상 실제 도커 환경과 동일한 팩트(Fact)를 유지하도록 합니다.
+        /// 노드 타입에 맞는 자식 ViewModel에서 최신 Docker 상태를 불러옵니다.
         /// </summary>
         public async Task RefreshDetailsAsync()
         {
-            if (string.IsNullOrEmpty(Name)) return;
+            if (string.IsNullOrWhiteSpace(Name)) return;
+
             if (Type == NodeType.Internet)
             {
                 IsDockerConnected = true;
@@ -1031,291 +550,16 @@ namespace DockerDiagram.ViewModels
             try
             {
                 if (Type == NodeType.Container)
-                {
-                    if (string.IsNullOrEmpty(ContainerId))
-                    {
-                        IsDockerConnected = false;
-                        return;
-                    }
-
-                    var info = await _containerService.InspectContainerAsync(ContainerId);
-                    IsDockerConnected = true;
-
-                    // =====================================================================
-                    // ★ 도커 엔진(Daemon) 기준 실제 스펙 및 현재 할당값 동기화 ★
-                    // =====================================================================
-                    try
-                    {
-                        var dockerSystemInfo = await _containerService.GetSystemInfoAsync();
-                        MaxCpuCount = dockerSystemInfo.NCPU > 0 ? dockerSystemInfo.NCPU : Environment.ProcessorCount;
-                        MaxMemoryMb = dockerSystemInfo.MemTotal > 0 ? (dockerSystemInfo.MemTotal / 1048576) : 32768;
-                    }
-                    catch
-                    {
-                        MaxCpuCount = Environment.ProcessorCount;
-                        MaxMemoryMb = 32768;
-                    }
-
-                    if (info.HostConfig != null)
-                    {
-                        long currentMem = info.HostConfig.Memory;
-                        TargetMemoryMb = currentMem > 0 ? (currentMem / 1048576) : MaxMemoryMb;
-
-                        long currentCpu = info.HostConfig.NanoCPUs;
-                        TargetCpuCount = currentCpu > 0 ? (currentCpu / 1_000_000_000.0) : MaxCpuCount;
-                    }
-                    // =====================================================================
-
-                    DetailStatus = info.State.Status;
-                    IsRunning = info.State.Running;
-                    IsPaused = info.State.Paused;
-
-                    StartedAt = DateTime.TryParse(info.State.StartedAt, out var sTime) ? sTime.ToString("yyyy-MM-dd HH:mm:ss") : info.State.StartedAt;
-                    FinishedAt = DateTime.TryParse(info.State.FinishedAt, out var fTime) ? fTime.ToString("yyyy-MM-dd HH:mm:ss") : info.State.FinishedAt;
-
-                    CreatedDate = info.Created.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
-
-                    if (IsRunning && DateTime.TryParse(info.State.StartedAt, out var startTime))
-                    {
-                        var duration = DateTime.UtcNow - startTime.ToUniversalTime();
-                        Uptime = $"Up {duration.Days}d {duration.Hours}h {duration.Minutes}m";
-                    }
-                    else
-                    {
-                        Uptime = $"Created {info.Created.ToLocalTime():yy-MM-dd}";
-                    }
-
-                    if (info.State.Health != null && !string.IsNullOrEmpty(info.State.Health.Status))
-                    {
-                        string status = info.State.Health.Status.ToLower();
-                        if (status == "healthy")
-                        {
-                            HealthStatus = "Healthy 💚";
-                            HealthColor = "#28a745";
-                        }
-                        else if (status == "starting")
-                        {
-                            HealthStatus = "Starting 💛";
-                            HealthColor = "#ffc107";
-                        }
-                        else if (status == "unhealthy")
-                        {
-                            HealthStatus = "Unhealthy 💔";
-                            HealthColor = "#dc3545";
-                        }
-                        else
-                        {
-                            HealthStatus = info.State.Health.Status;
-                            HealthColor = "#555555";
-                        }
-                    }
-                    else
-                    {
-                        HealthStatus = "No Check";
-                        HealthColor = "#888888";
-                    }
-
-                    if (info.HostConfig?.RestartPolicy != null)
-                    {
-                        string policy = info.HostConfig.RestartPolicy.Name.ToString().ToLower();
-                        if (policy == "unlessstopped") policy = "unless-stopped";
-                        else if (policy == "onfailure") policy = "on-failure";
-                        RestartPolicy = policy;
-                    }
-
-                    if (info.Config?.Env != null)
-                        this.EnvironmentVariables = info.Config.Env.ToList();
-                    else
-                        this.EnvironmentVariables = new List<string>();
-
-                    var portsList = new List<string>();
-                    if (info.HostConfig?.PortBindings != null)
-                    {
-                        foreach (var kvp in info.HostConfig.PortBindings)
-                        {
-                            string containerPort = kvp.Key.Replace("/tcp", "").Replace("/udp", "");
-                            foreach (var binding in kvp.Value)
-                            {
-                                if (!string.IsNullOrEmpty(binding.HostPort))
-                                    portsList.Add($"{binding.HostPort}:{containerPort}");
-                            }
-                        }
-                    }
-                    this.PortBindings = portsList;
-
-                    var nets = new List<string>();
-                    var ips = new List<string>();
-                    NetworkDetailList.Clear();
-
-                    if (info.NetworkSettings?.Networks != null)
-                    {
-                        foreach (var net in info.NetworkSettings.Networks)
-                        {
-                            nets.Add(net.Key);
-                            string ipv4 = net.Value.IPAddress;
-                            string ipv6 = net.Value.GlobalIPv6Address;
-
-                            if (!string.IsNullOrEmpty(ipv4)) ips.Add(ipv4);
-
-                            var options = GetNetworkOptions(net.Key) ?? new ContainerNetworkOptions();
-
-                            NetworkDetailList.Add(new NetworkDetail
-                            {
-                                NetworkName = net.Key,
-                                IPv4 = string.IsNullOrEmpty(ipv4) ? "-" : ipv4,
-                                IPv6 = string.IsNullOrEmpty(ipv6) ? "-" : ipv6,
-                                StaticIPv4 = options.StaticIPv4,
-                                StaticIPv6 = options.StaticIPv6,
-                                AliasesText = string.Join(", ", options.Aliases),
-                                DriverOptionsText = string.Join(", ", options.DriverOptions.Select(kv => $"{kv.Key}={kv.Value}")),
-                                OptionsChanged = SetNetworkOptions,
-                                ApplyCommand = new AsyncRelayCommand(_ => ApplyNetworkOptionsAsync(net.Key))
-                            });
-                        }
-                    }
-                    ConnectedNetworksString = nets.Count > 0 ? string.Join(", ", nets) : "None";
-                    IpAddresses = ips.Count > 0 ? string.Join(", ", ips) : "-";
-                    IPAddress = ips.Count > 0 ? ips[0] : "-";
-
-                    var vols = new List<string>();
-
-                    if (info.Mounts != null)
-                    {
-                        _cachedMounts = info.Mounts.ToList();
-                        foreach (var m in info.Mounts)
-                        {
-                            vols.Add($"{m.Source} -> {m.Destination}");
-                        }
-                    }
-                    else
-                    {
-                        _cachedMounts = new List<Docker.DotNet.Models.MountPoint>();
-                    }
-
-                    UpdateVolumeList();
-                    MountedVolumes = vols.Count > 0 ? string.Join("\n", vols) : "None";
-
-                    if (IsRunning) StatusColor = "#28a745";
-                    else if (IsPaused) StatusColor = "#ffc107";
-                    else StatusColor = "#dc3545";
-
-                    // =========================================================
-                    // ★ [마이그레이션 완료] OxyPlot 전용 데이터 갱신 로직
-                    // =========================================================
-                    if (IsRunning)
-                    {
-                        var stats = await _containerService.GetContainerStatsAsync(ContainerId);
-
-                        // ★ [추가됨] 화면의 텍스트(Usage) 값도 실제 통계 데이터로 갱신
-                        CpuUsage = $"{stats.CpuPercentage:F1}%";
-                        MemoryUsage = $"{stats.MemoryUsedMB:F1}MB / {stats.MemoryLimitMB:F1}MB";
-
-                        // (선택적) 프로그레스 바 등 Value를 사용하는 다른 UI를 위한 데이터 갱신
-                        CpuValue = stats.CpuPercentage;
-                        MemoryValue = stats.MemoryLimitMB > 0 ? (stats.MemoryUsedMB / stats.MemoryLimitMB) * 100 : 0;
-
-                        // 새 데이터 포인트 추가
-                        _cpuSeries.Points.Add(new DataPoint(_timeIndex, stats.CpuPercentage));
-                        _memorySeries.Points.Add(new DataPoint(_timeIndex, stats.MemoryUsedMB));
-
-                        // 메모리 보호: 60개가 넘으면 제일 오래된 데이터를 잘라냅니다.
-                        if (_cpuSeries.Points.Count > 60)
-                        {
-                            _cpuSeries.Points.RemoveAt(0);
-                            _memorySeries.Points.RemoveAt(0);
-                        }
-
-                        _timeIndex++;
-
-                        // 스크롤 효과를 위해 X축 범위 갱신
-                        var cpuXAxis = CpuPlotModel.Axes.FirstOrDefault(a => a.Position == AxisPosition.Bottom);
-                        var memXAxis = MemoryPlotModel.Axes.FirstOrDefault(a => a.Position == AxisPosition.Bottom);
-                        if (cpuXAxis != null) { cpuXAxis.Minimum = _timeIndex - 60; cpuXAxis.Maximum = _timeIndex; }
-                        if (memXAxis != null) { memXAxis.Minimum = _timeIndex - 60; memXAxis.Maximum = _timeIndex; }
-
-                        // 차트를 다시 그리라고 엔진에 명령
-                        CpuPlotModel.InvalidatePlot(true);
-                        MemoryPlotModel.InvalidatePlot(true);
-                    }
-                    else
-                    {
-                        // ★ [추가됨] 컨테이너가 꺼져있을 때는 텍스트도 0으로 초기화하여 잔상 방지
-                        CpuUsage = "0.0%";
-                        MemoryUsage = "0.0MB / 0.0MB";
-                        CpuValue = 0;
-                        MemoryValue = 0;
-
-                        // 꺼져있을 때는 차트가 바닥(0)으로 자연스럽게 떨어지도록 그립니다.
-                        if (_cpuSeries.Points.Count > 0 && _cpuSeries.Points.Last().Y != 0)
-                        {
-                            _cpuSeries.Points.Add(new DataPoint(_timeIndex, 0));
-                            _memorySeries.Points.Add(new DataPoint(_timeIndex, 0));
-                            _timeIndex++;
-
-                            var cpuXAxis = CpuPlotModel.Axes.FirstOrDefault(a => a.Position == AxisPosition.Bottom);
-                            var memXAxis = MemoryPlotModel.Axes.FirstOrDefault(a => a.Position == AxisPosition.Bottom);
-                            if (cpuXAxis != null) { cpuXAxis.Minimum = _timeIndex - 60; cpuXAxis.Maximum = _timeIndex; }
-                            if (memXAxis != null) { memXAxis.Minimum = _timeIndex - 60; memXAxis.Maximum = _timeIndex; }
-
-                            CpuPlotModel.InvalidatePlot(true);
-                            MemoryPlotModel.InvalidatePlot(true);
-                        }
-                    }
-                }
+                    await _containerOperations.RefreshDetailsAsync();
                 else if (Type == NodeType.Volume)
-                {
-                    var volumeName = EffectiveVolumeName;
-                    var vol = await _volumeService.InspectVolumeAsync(volumeName);
-                    IsDockerConnected = true;
-
-                    DetailStatus = "Created";
-                    Driver = vol.Driver;
-                    Mountpoint = vol.Mountpoint;
-                    VolumeLabels = vol.Labels?.ToDictionary(kv => kv.Key, kv => kv.Value ?? string.Empty) ?? new Dictionary<string, string>();
-                    VolumeDriverOptions = vol.Options?.ToDictionary(kv => kv.Key, kv => kv.Value ?? string.Empty) ?? new Dictionary<string, string>();
-                    CreatedDate = DateTime.TryParse(vol.CreatedAt, out var cTime) ? cTime.ToString("yyyy-MM-dd HH:mm:ss") : vol.CreatedAt;
-
-                    var usageDetails = await _volumeService.GetVolumeUsageDetailsAsync(volumeName);
-                    var usedList = usageDetails.Select(u => u.ContainerName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                    UsedByContainers.Clear();
-                    VolumeUsageDetails.Clear();
-
-                    if (usedList.Count > 0)
-                    {
-                        foreach (var u in usedList) UsedByContainers.Add(u);
-                    }
-                    else
-                    {
-                        UsedByContainers.Add("None");
-                    }
-
-                    foreach (var usage in usageDetails)
-                        VolumeUsageDetails.Add(usage);
-
-                    if (_volumeService is ISystemService systemService)
-                    {
-                        var diskUsage = await systemService.GetSystemDiskUsageAsync();
-                        var volumeUsage = diskUsage.Volumes.FirstOrDefault(v => string.Equals(v.Name, volumeName, StringComparison.OrdinalIgnoreCase));
-                        VolumeSizeText = volumeUsage?.FormattedSize ?? "Unknown";
-                        VolumeRefCount = volumeUsage?.RefCount ?? usageDetails.Count;
-                    }
-                    else
-                    {
-                        VolumeSizeText = "Unknown";
-                        VolumeRefCount = usageDetails.Count;
-                    }
-
-                    IsRunning = false;
-                    IsPaused = false;
-                    StatusColor = "#E67E22";
-                }
+                    await _volume.RefreshDetailsAsync();
 
                 CommandManager.InvalidateRequerySuggested();
                 RefreshConnections();
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Refresh Error: {ex.Message}");
+                Debug.WriteLine($"Refresh Error: {ex.Message}");
                 DetailStatus = "Error";
                 IsDockerConnected = false;
                 IsRunning = false;
@@ -1335,46 +579,9 @@ namespace DockerDiagram.ViewModels
                 }
 
                 if (Type == NodeType.Container)
-                {
-                    var containers = await _containerService.GetContainersAsync();
-                    var match = containers.FirstOrDefault(c => !string.IsNullOrWhiteSpace(ContainerId) && c.Id == ContainerId)
-                                ?? containers.FirstOrDefault(c => string.Equals(c.Name, Name, StringComparison.OrdinalIgnoreCase));
-
-                    if (match == null)
-                    {
-                        _dialogService.ShowInfo($"Docker에서 '{Name}' 컨테이너를 찾지 못했습니다.", "Reconnect");
-                        IsDockerConnected = false;
-                        return false;
-                    }
-
-                    ContainerId = match.Id;
-                    Name = match.Name;
-                    ImageName = match.Image;
-                    PortInfo = match.Ports;
-                    StatusColor = match.StateColor;
-                    IsDockerConnected = true;
-                    await RefreshDetailsAsync();
-                    return true;
-                }
-
+                    return await _containerOperations.ReconnectAsync();
                 if (Type == NodeType.Volume)
-                {
-                    var volumes = await _volumeService.GetVolumesAsync();
-                    var match = volumes.FirstOrDefault(v => string.Equals(v.Name, EffectiveVolumeName, StringComparison.OrdinalIgnoreCase))
-                                ?? volumes.FirstOrDefault(v => string.Equals(v.Name, Name, StringComparison.OrdinalIgnoreCase));
-
-                    if (match == null)
-                    {
-                        _dialogService.ShowInfo($"Docker에서 '{EffectiveVolumeName}' 볼륨을 찾지 못했습니다.", "Reconnect");
-                        IsDockerConnected = false;
-                        return false;
-                    }
-
-                    DockerVolumeName = match.Name;
-                    IsDockerConnected = true;
-                    await RefreshDetailsAsync();
-                    return true;
-                }
+                    return await _volume.ReconnectAsync();
             }
             catch (Exception ex)
             {
@@ -1384,27 +591,16 @@ namespace DockerDiagram.ViewModels
 
             return false;
         }
-
-        /// <summary>
-        /// 이 컨테이너가 화면에서 선택(클릭)되었을 때 호출되며, 
-        /// 2초 주기로 도커 엔진에 리소스 사용량을 질의하는 백그라운드 모니터링 타이머를 시작합니다.
-        /// </summary>
         public void StartMonitoring()
         {
             if (Type != NodeType.Container || string.IsNullOrEmpty(ContainerId)) return;
-
-            if (_statsTimer == null)
-            {
-                _statsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-                _statsTimer.Tick += async (s, e) => await UpdateStatsAsync();
-            }
-            _statsTimer.Start();
+            _monitoring.Start();
         }
 
         /// <summary>
         /// 노드 선택이 해제되면 불필요한 백그라운드 통신을 줄이기 위해 리소스 모니터링 타이머를 정지합니다.
         /// </summary>
-        public void StopMonitoring() => _statsTimer?.Stop();
+        public void StopMonitoring() => _monitoring.Stop();
 
         /// <summary>
         /// 다이어그램 캔버스 상에서 이 노드와 선(Connector)으로 직접 연결된 
@@ -1448,91 +644,8 @@ namespace DockerDiagram.ViewModels
 
         #region Private Helper Methods (Internal Logic)
         /// <summary>
-        /// 도커 엔진으로부터 현재 컨테이너의 실시간 CPU 및 메모리 사용량을 가져와 UI 프로그레스 바와 텍스트에 동기화합니다.
+        /// Docker ID를 화면 표시 길이로 줄입니다.
         /// </summary>
-        private async Task UpdateStatsAsync()
-        {
-            if (!IsRunning) return;
-
-            try
-            {
-                var stats = await _containerService.GetContainerStatsAsync(ContainerId);
-
-                CpuUsage = $"{stats.CpuPercentage:F1}%";
-                CpuValue = stats.CpuPercentage;
-
-                MemoryUsage = $"{stats.MemoryUsedMB:F1}MB / {stats.MemoryLimitMB:F1}MB";
-
-                if (stats.MemoryLimitMB > 0)
-                {
-                    MemoryValue = (stats.MemoryUsedMB / stats.MemoryLimitMB) * 100;
-                }
-                else
-                {
-                    MemoryValue = 0;
-                }
-            }
-            catch { }
-        }
-
-        /// <summary>
-        /// 사용자가 선택한 볼륨 표시 모드(도커 Named 볼륨 또는 로컬 Bind 마운트)에 맞추어, 
-        /// 현재 컨테이너에 연결된 볼륨 목록을 필터링하고 UI 리스트에 갱신합니다.
-        /// </summary>
-        private void UpdateVolumeList()
-        {
-            MountedVolumeList.Clear();
-            if (ParentSheet == null) return;
-
-            var validVolumeNames = ParentSheet.Nodes
-                .Where(n => n.Type == NodeType.Volume)
-                .SelectMany(n => new[] { n.Name, n.EffectiveVolumeName })
-                .Where(name => !string.IsNullOrWhiteSpace(name))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var m in _cachedMounts)
-            {
-                if (VolumeDisplayMode == 0)
-                {
-                    if (m.Type == "volume" && validVolumeNames.Contains(m.Name))
-                        MountedVolumeList.Add($"{m.Name} : {m.Destination}");
-                }
-                else
-                {
-                    if (m.Type == "bind")
-                        MountedVolumeList.Add($"{m.Source} -> {m.Destination}");
-                }
-            }
-        }
-
-        /// <summary>
-        /// 시작, 정지, 일시정지, 재시작 등 사용자가 UI에서 내린 제어 명령(Action)을 
-        /// 실제 도커 백엔드 서비스로 전달하여 실행하고, 완료 직후 상태를 갱신합니다.
-        /// </summary>
-        private async Task ControlAction(string action)
-        {
-            if (string.IsNullOrEmpty(ContainerId)) return;
-
-            try
-            {
-                switch (action)
-                {
-                    case "start": await _containerService.StartContainerAsync(ContainerId); break;
-                    case "stop": await _containerService.StopContainerAsync(ContainerId); break;
-                    case "pause":
-                        if (DetailStatus == "paused") await _containerService.UnpauseContainerAsync(ContainerId);
-                        else await _containerService.PauseContainerAsync(ContainerId);
-                        break;
-                    case "restart": await _containerService.RestartContainerAsync(ContainerId); break;
-                }
-                await RefreshDetailsAsync();
-            }
-            catch (Exception ex)
-            {
-                _dialogService.ShowMessage($"동작 실패 : {ex.Message}");
-            }
-        }
-
         private static string ShortenId(string? id, int len = 12)
         {
             if (string.IsNullOrWhiteSpace(id)) return "";
@@ -1545,18 +658,7 @@ namespace DockerDiagram.ViewModels
         /// </summary>
         private void RaiseCommandStates()
         {
-            StartCommand?.RaiseCanExecuteChanged();
-            StopCommand?.RaiseCanExecuteChanged();
-            PauseCommand?.RaiseCanExecuteChanged();
-            RestartCommand?.RaiseCanExecuteChanged();
-            TerminalCommand?.RaiseCanExecuteChanged();
-            if (UpdateResourcesCommand is AsyncRelayCommand updateResourcesCommand)
-                updateResourcesCommand.RaiseCanExecuteChanged();
-            ExtractDockerfileCommand?.RaiseCanExecuteChanged();
-            if (OpenDetailWindowCommand is AsyncRelayCommand openDetailWindowCommand)
-                openDetailWindowCommand.RaiseCanExecuteChanged();
-            if (RefreshLogsCommand is AsyncRelayCommand refreshLogsCommand)
-                refreshLogsCommand.RaiseCanExecuteChanged();
+            _containerOperations?.RaiseCommandStates();
         }
 
         private void Connectors_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
@@ -1567,419 +669,12 @@ namespace DockerDiagram.ViewModels
 
         #region Feature Methods (UI Actions)
         /// <summary>
-        /// 실행 중인 컨테이너 내부에 직접 명령을 내릴 수 있도록, 호스트 PC의 터미널(cmd)을 띄워 컨테이너 셸(bash/sh)에 연결합니다.
+        /// 컨테이너 로그 스트림의 시작과 종료를 작업 ViewModel에 위임합니다.
         /// </summary>
-        private void OpenTerminal()
-        {
-            if (string.IsNullOrEmpty(ContainerId)) return;
+        public Task StartLogStreamAsync(Action<string> onLogReceived) =>
+            _containerOperations.StartLogStreamAsync(onLogReceived);
 
-            try
-            {
-                _containerService.OpenTerminal(ContainerId);
-            }
-            catch (Exception ex)
-            {
-                _dialogService.ShowMessage($"터미널 오류 : {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 이 컨테이너의 세부 정보(로그, 환경변수 상세, 파일 송수신 기능 등)를 확인하고 제어할 수 있는 전용 상세 팝업 창을 엽니다.
-        /// </summary>
-        private async Task OpenDetailWindowAsync()
-        {
-            if (Type != NodeType.Container || string.IsNullOrEmpty(ContainerId)) return;
-
-            _dialogService.ShowContainerDetail(this);
-            await LoadLogsAsync();
-        }
-
-        /// <summary>
-        /// 도커 엔진으로부터 이 컨테이너가 출력한 최근 로그(표준 출력 및 에러)를 최대 500줄까지 읽어와 UI에 표시합니다.
-        /// </summary>
-        private async Task LoadLogsAsync()
-        {
-            if (string.IsNullOrEmpty(ContainerId))
-            {
-                ContainerLogs = "Container ID is missing.";
-                return;
-            }
-
-            try
-            {
-                ContainerLogs = "Fetching logs from Docker engine...";
-                string logs = await _containerService.GetContainerLogsAsync(ContainerId, tailCount: 500);
-
-                ContainerLogs = string.IsNullOrEmpty(logs) ? "(No logs found)" : logs;
-            }
-            catch (Exception ex)
-            {
-                ContainerLogs = $"Error fetching logs: {ex.Message}";
-            }
-        }
-
-        /// <summary>
-        /// 도커 엔진을 찔러 컨테이너의 상세 설정(Inspect) 정보를 가져온 뒤, 
-        /// 해당 컨테이너를 구워냈을 법한 [Dockerfile]의 뼈대를 역추출(Reverse Engineering)하여 사용자가 저장하거나 복사할 수 있게 해줍니다.
-        /// </summary>
-        private async Task ExtractDockerfileAsync()
-        {
-            if (string.IsNullOrEmpty(ContainerId)) return;
-
-            try
-            {
-                Mouse.OverrideCursor = Cursors.Wait;
-
-                // 도커 엔진에서 컨테이너의 모든 뼈대 정보 가져오기
-                var info = await _containerService.InspectContainerAsync(ContainerId);
-                var sb = new System.Text.StringBuilder();
-
-                // 1. 베이스 이미지 (FROM)
-                sb.AppendLine($"FROM {info.Config.Image}");
-                sb.AppendLine();
-
-                // 2. 작업 디렉토리 (WORKDIR)
-                if (!string.IsNullOrWhiteSpace(info.Config.WorkingDir))
-                {
-                    sb.AppendLine($"WORKDIR {info.Config.WorkingDir}");
-                }
-
-                // 3. 환경 변수 (ENV)
-                if (info.Config.Env != null && info.Config.Env.Count > 0)
-                {
-                    foreach (var env in info.Config.Env)
-                    {
-                        sb.AppendLine($"ENV {env}");
-                    }
-                }
-
-                // 4. 노출 포트 (EXPOSE)
-                if (info.Config.ExposedPorts != null && info.Config.ExposedPorts.Count > 0)
-                {
-                    foreach (var port in info.Config.ExposedPorts.Keys)
-                    {
-                        sb.AppendLine($"EXPOSE {port.Split('/')[0]}");
-                    }
-                }
-
-                // 5. 볼륨 (VOLUME)
-                if (info.Config.Volumes != null && info.Config.Volumes.Count > 0)
-                {
-                    foreach (var vol in info.Config.Volumes.Keys)
-                    {
-                        sb.AppendLine($"VOLUME {vol}");
-                    }
-                }
-
-                // 6. 시작 명령어 (ENTRYPOINT / CMD)
-                if (info.Config.Entrypoint != null && info.Config.Entrypoint.Count > 0)
-                {
-                    var eps = string.Join("\", \"", info.Config.Entrypoint);
-                    sb.AppendLine($"ENTRYPOINT [\"{eps}\"]");
-                }
-
-                if (info.Config.Cmd != null && info.Config.Cmd.Count > 0)
-                {
-                    var cmds = string.Join("\", \"", info.Config.Cmd);
-                    sb.AppendLine($"CMD [\"{cmds}\"]");
-                }
-
-                string dockerfileContent = sb.ToString();
-
-                var dockerfilePath = _dialogService.ShowSaveFileDialog("Dockerfile|*.*|Text Files (*.txt)|*.txt", "", "Dockerfile", "추출한 Dockerfile 저장");
-                if (!string.IsNullOrWhiteSpace(dockerfilePath))
-                {
-                    File.WriteAllText(dockerfilePath, dockerfileContent);
-                    _dialogService.ShowInfo($"[{dockerfilePath}] 경로에 성공적으로 저장되었습니다.", "저장 완료");
-                }
-                else
-                {
-                    bool wantCopy = _dialogService.ShowConfirm("파일 저장을 취소하셨습니다.\n대신 내용을 클립보드(Ctrl+C)에 복사하시겠습니까?", "클립보드 복사");
-
-                    if (wantCopy)
-                    {
-                        Clipboard.SetText(dockerfileContent);
-                        _dialogService.ShowInfo("클립보드에 복사되었습니다. (Ctrl+V 로 붙여넣기 하세요)", "복사 완료");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _dialogService.ShowMessage($"추출 실패: {ex.Message}");
-            }
-            finally
-            {
-                Mouse.OverrideCursor = null;
-            }
-        }
-
-        /// <summary>
-        /// 볼륨 백업: 저장할 위치를 묻고 백그라운드에서 백업을 수행합니다.
-        /// </summary>
-        private async Task ExecuteBackupVolumeAsync(object? parameter)
-        {
-            var backupPath = _dialogService.ShowSaveFileDialog(
-                "Tar Archive (*.tar)|*.tar",
-                ".tar",
-                $"{EffectiveVolumeName}_backup_{DateTime.Now:yyyyMMdd_HHmmss}.tar",
-                $"[{EffectiveVolumeName}] 볼륨 백업 저장");
-
-            if (!string.IsNullOrWhiteSpace(backupPath))
-            {
-                DetailStatus = "Backing up...";
-                StatusColor = "#007ACC";
-
-                try
-                {
-                    await _volumeService.BackupVolumeAsync(EffectiveVolumeName, backupPath);
-                    _dialogService.ShowInfo($"볼륨 백업이 완료되었습니다.\n저장 위치: {backupPath}", "백업 성공");
-                }
-                catch (Exception ex)
-                {
-                    _dialogService.ShowError($"백업 중 오류가 발생했습니다.\n{ex.Message}", "백업 실패");
-                }
-                finally
-                {
-                    await RefreshDetailsAsync(); // 상태 원상복구
-                }
-            }
-        }
-
-        /// <summary>
-        /// 볼륨 복원: 복원할 .tar 파일을 선택받고 볼륨에 덮어씁니다.
-        /// </summary>
-        private async Task ExecuteRestoreVolumeAsync(object? parameter)
-        {
-            bool confirm = _dialogService.ShowConfirm($"[{EffectiveVolumeName}] 볼륨에 데이터를 복원하시겠습니까?\n기존 데이터가 덮어씌워질 수 있습니다.", "복원 경고");
-            if (!confirm) return;
-
-            var backupPath = _dialogService.ShowOpenFileDialog("Tar Archive (*.tar)|*.tar|All Files (*.*)|*.*", "복원할 백업 파일(.tar) 선택");
-
-            if (!string.IsNullOrWhiteSpace(backupPath))
-            {
-                DetailStatus = "Restoring...";
-                StatusColor = "#E67E22";
-
-                try
-                {
-                    await _volumeService.RestoreVolumeAsync(EffectiveVolumeName, backupPath);
-                    _dialogService.ShowInfo($"볼륨 데이터가 성공적으로 복원되었습니다.", "복원 성공");
-                }
-                catch (Exception ex)
-                {
-                    _dialogService.ShowError($"복원 중 오류가 발생했습니다.\n{ex.Message}", "복원 실패");
-                }
-                finally
-                {
-                    await RefreshDetailsAsync(); // 상태 원상복구
-                }
-            }
-        }
-
-        private async Task ExecuteRecreateVolumeAsync(object? parameter)
-        {
-            var currentOptions = new VolumeCreateOptions
-            {
-                Name = Name,
-                DockerVolumeName = DockerVolumeName,
-                Driver = string.IsNullOrWhiteSpace(Driver) || Driver == "-" ? "local" : Driver,
-                External = VolumeExternal,
-                Labels = new Dictionary<string, string>(VolumeLabels),
-                DriverOptions = new Dictionary<string, string>(VolumeDriverOptions)
-            };
-
-            if (!_dialogService.TryShowVolumeOptionsDialog(currentOptions, out var newOptions)) return;
-            string oldVolumeName = EffectiveVolumeName;
-            string newVolumeName = newOptions.EffectiveDockerVolumeName;
-
-            try
-            {
-                Mouse.OverrideCursor = Cursors.Wait;
-
-                if (newOptions.External)
-                {
-                    var existing = await _volumeService.InspectVolumeAsync(newVolumeName);
-                    Name = newOptions.Name;
-                    DockerVolumeName = newVolumeName;
-                    VolumeExternal = true;
-                    Driver = string.IsNullOrWhiteSpace(existing.Driver) ? newOptions.Driver : existing.Driver;
-                    ImageName = Driver;
-                    VolumeLabels = new Dictionary<string, string>(newOptions.Labels);
-                    VolumeDriverOptions = new Dictionary<string, string>(newOptions.DriverOptions);
-                    await RefreshDetailsAsync();
-                    return;
-                }
-
-                if (VolumeExternal)
-                {
-                    _dialogService.ShowError(
-                        $"외부 볼륨 '{oldVolumeName}'은(는) 앱이 소유한 볼륨이 아니므로 삭제/재생성하지 않습니다.\n" +
-                        "관리형 볼륨으로 바꾸려면 새 볼륨을 별도로 생성한 뒤 데이터를 직접 이전해 주세요.",
-                        "Volume Recreate");
-                    return;
-                }
-
-                var users = await _volumeService.GetContainersUsingVolumeAsync(oldVolumeName);
-                if (users.Count > 0)
-                {
-                    _dialogService.ShowError(
-                        $"볼륨 '{oldVolumeName}'은(는) 현재 컨테이너에서 사용 중이라 재생성할 수 없습니다.\n\n사용 중인 컨테이너:\n{string.Join("\n", users.Select(u => $"- {u}"))}",
-                        "Volume Recreate");
-                    return;
-                }
-
-                bool confirm = _dialogService.ShowConfirm(
-                    $"볼륨 '{oldVolumeName}'을(를) 백업한 뒤 새 옵션으로 재생성하시겠습니까?\n\n" +
-                    "진행 순서: backup -> remove -> create -> restore",
-                    "Volume Recreate");
-                if (!confirm) return;
-
-                string backupPath = Path.Combine(Path.GetTempPath(), $"DockerDiagram_volume_recreate_{Guid.NewGuid():N}.tar");
-                bool backupCreated = false;
-                bool oldRemoved = false;
-                bool newCreated = false;
-                bool recreateSucceeded = false;
-                try
-                {
-                    await _volumeService.BackupVolumeAsync(oldVolumeName, backupPath);
-                    backupCreated = File.Exists(backupPath);
-                    if (!backupCreated)
-                    {
-                        throw new InvalidOperationException("볼륨 백업 파일이 생성되지 않아 재생성을 중단했습니다.");
-                    }
-
-                    await _volumeService.RemoveVolumeAsync(oldVolumeName, force: false);
-                    oldRemoved = true;
-                    await _volumeService.CreateVolumeAsync(newOptions);
-                    newCreated = true;
-                    await _volumeService.RestoreVolumeAsync(newVolumeName, backupPath);
-                    recreateSucceeded = true;
-                }
-                catch (Exception recreateEx)
-                {
-                    if (oldRemoved && backupCreated)
-                    {
-                        try
-                        {
-                            if (newCreated)
-                            {
-                                await _volumeService.RemoveVolumeAsync(newVolumeName, force: false);
-                            }
-
-                            currentOptions.External = false;
-                            await _volumeService.CreateVolumeAsync(currentOptions);
-                            await _volumeService.RestoreVolumeAsync(oldVolumeName, backupPath);
-                            await RefreshDetailsAsync();
-
-                            _dialogService.ShowError(
-                                $"볼륨 재생성에 실패해서 원래 볼륨 '{oldVolumeName}'으로 롤백했습니다.\n\n" +
-                                $"실패 원인:\n{recreateEx.Message}",
-                                "Volume Recreate Rollback");
-                            return;
-                        }
-                        catch (Exception rollbackEx)
-                        {
-                            _dialogService.ShowError(
-                                $"볼륨 재생성과 롤백이 모두 실패했습니다.\n\n" +
-                                $"백업 파일은 삭제하지 않았습니다:\n{backupPath}\n\n" +
-                                $"재생성 실패:\n{recreateEx.Message}\n\n롤백 실패:\n{rollbackEx.Message}",
-                                "Volume Recreate Failed");
-                            return;
-                        }
-                    }
-
-                    _dialogService.ShowError(
-                        $"볼륨 재생성 중 오류가 발생했습니다.\n{recreateEx.Message}\n\n" +
-                        (backupCreated ? $"백업 파일은 삭제하지 않았습니다:\n{backupPath}" : "볼륨 삭제 전 단계에서 실패했습니다."),
-                        "Volume Recreate");
-                    return;
-                }
-                finally
-                {
-                    if (recreateSucceeded && backupCreated && File.Exists(backupPath))
-                        File.Delete(backupPath);
-                }
-
-                Name = newOptions.Name;
-                DockerVolumeName = newVolumeName;
-                VolumeExternal = false;
-                Driver = string.IsNullOrWhiteSpace(newOptions.Driver) ? "local" : newOptions.Driver;
-                ImageName = Driver;
-                VolumeLabels = new Dictionary<string, string>(newOptions.Labels);
-                VolumeDriverOptions = new Dictionary<string, string>(newOptions.DriverOptions);
-                await RefreshDetailsAsync();
-                _dialogService.ShowInfo($"볼륨 '{newVolumeName}' 재생성이 완료되었습니다.", "Volume Recreate");
-            }
-            catch (Exception ex)
-            {
-                _dialogService.ShowError($"볼륨 재생성 중 오류가 발생했습니다.\n{ex.Message}", "Volume Recreate");
-            }
-            finally
-            {
-                Mouse.OverrideCursor = null;
-            }
-        }
-
-        /// <summary>
-        /// 슬라이더에 설정된 값을 바탕으로 실행 중인 컨테이너의 리소스를 실시간 업데이트합니다.
-        /// </summary>
-        private async Task ExecuteUpdateResourcesAsync(object? parameter)
-        {
-            // 컨테이너의 고유 ID가 없으면 실행 불가
-            if (string.IsNullOrWhiteSpace(ContainerId)) return;
-
-            bool confirm = _dialogService.ShowConfirm(
-                $"컨테이너 리소스를 실시간으로 제한하시겠습니까? (재시작 없음)\n\n" +
-                $"- 목표 CPU: {TargetCpuCount:0.1} Core\n" +
-                $"- 목표 Memory: {TargetMemoryMb} MB",
-                "실시간 리소스 변경");
-
-            if (!confirm) return;
-
-            try
-            {
-                // 1단계에서 만든 백엔드 서비스 호출!
-                await _containerService.UpdateContainerResourcesAsync(ContainerId, TargetCpuCount, TargetMemoryMb);
-
-                _dialogService.ShowInfo("리소스 제한이 무중단으로 성공적으로 적용되었습니다.", "업데이트 완료");
-            }
-            catch (Exception ex)
-            {
-                _dialogService.ShowError($"리소스 업데이트 실패: {ex.Message}\n(참고: CPU 제한이 호스트 코어 수를 넘을 수 없습니다.)", "오류");
-            }
-        }
-
-        /// <summary>
-        /// UI 창에서 콜백(Action)을 넘겨주면, 도커 엔진과 파이프를 뚫고 로그를 실시간으로 쏴줍니다.
-        /// </summary>
-        public async Task StartLogStreamAsync(Action<string> onLogReceived)
-        {
-            if (string.IsNullOrEmpty(ContainerId)) return;
-
-            // 이미 열린 파이프가 있다면 안전하게 끊고 새로 엽니다.
-            _logStreamCts?.Cancel();
-            _logStreamCts = new CancellationTokenSource();
-
-            try
-            {
-                // 백엔드(DockerApiService)의 스트리밍 메서드 호출
-                await _containerService.StreamContainerLogsAsync(ContainerId, onLogReceived, _logStreamCts.Token);
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Log stream error: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 창을 닫을 때 메모리 누수를 막기 위해 파이프를 폭파합니다.
-        /// </summary>
-        public void StopLogStream()
-        {
-            _logStreamCts?.Cancel();
-            _logStreamCts?.Dispose();
-            _logStreamCts = null;
-        }
+        public void StopLogStream() => _containerOperations.StopLogStream();
         #endregion
     }
 }

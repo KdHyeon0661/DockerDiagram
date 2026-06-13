@@ -3,7 +3,7 @@
 namespace DockerDiagram.Models
 {
     /// <summary>
-    /// 도커 엔진에 연결하기 위한 접속 정보(신분증)를 담는 데이터 모델입니다.
+    /// Docker Engine 연결에 필요한 프로필 정보를 담습니다.
     /// 로컬 PC 접속뿐만 아니라 SSH 원격 접속에 필요한 네트워크 정보를 모두 포함합니다.
     /// </summary>
     public class ConnectionProfile
@@ -19,7 +19,7 @@ namespace DockerDiagram.Models
         public string? SshUsername { get; set; } // 원격 서버 SSH 로그인 계정명 (예: ubuntu, root)
         public int SshPort { get; set; } = 22; // SSH 접속 포트 (기본값 22)
 
-        public int LocalTunnelPort { get; set; } // 백그라운드에서 뚫어놓은 내 PC의 비밀 통로 포트 (예: 23750)
+        public int LocalTunnelPort { get; set; } // SSH 터널이 로컬에서 수신하는 포트
         public string? SshKeyFilePath { get; set; } // 자동 재접속을 위한 SSH 프라이빗 키(.pem) 파일 경로
 
         // =====================================

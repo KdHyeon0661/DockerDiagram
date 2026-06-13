@@ -21,7 +21,6 @@ namespace DockerDiagram.Helpers
         /// </summary>
         public static string? SaveDiagramAs(MainViewModel mainVm, IDialogService dialogService)
         {
-            // 🔥 [MVVM 수정 1] 하드코딩된 SaveFileDialog 제거 및 IDialogService 활용
             string defaultFileName = !string.IsNullOrEmpty(mainVm.CurrentFilePath)
                 ? Path.GetFileName(mainVm.CurrentFilePath)
                 : "MyDockerLayout";
@@ -188,7 +187,6 @@ namespace DockerDiagram.Helpers
             INetworkService networkService,
             IDialogService dialogService)
         {
-            // 🔥 [MVVM 수정 2] 하드코딩된 OpenFileDialog 제거 및 IDialogService 활용
             string? selectedFileName = dialogService.ShowOpenFileDialog(
                 "Docker Diagram (*.vdm)|*.vdm|JSON File (*.json)|*.json",
                 "Load Diagram");
@@ -224,7 +222,7 @@ namespace DockerDiagram.Helpers
 
                 foreach (var sheet in mainVm.AllSheets.ToList())
                 {
-                    // 🔥 [핵심 수정] 이벤트 해제 권한이 SheetManager로 이관되었으므로, SheetManager를 통해 호출
+                    // 기존 시트의 이벤트 구독을 해제합니다.
                     mainVm.SheetManager.UnsubscribeSheetEvents(sheet);
 
                     // 2. SSH 원격 접속 시트였다면 백그라운드 SSH 프로세스 종료
@@ -249,7 +247,7 @@ namespace DockerDiagram.Helpers
 
                 foreach (var sheetData in fileData.Sheets)
                 {
-                    // 1. 파일에서 저장된 프로필(신분증) 읽어오기 (없으면 로컬로 간주)
+                    // 저장된 연결 프로필이 없으면 로컬 연결로 처리합니다.
                     ConnectionProfile loadedProfile = sheetData.Profile ?? new ConnectionProfile { Name = "Local PC", Type = EndpointType.Local };
                     IDockerService targetDockerService = (IDockerService)containerService; // 기본값은 로컬 서비스
 
@@ -393,7 +391,7 @@ namespace DockerDiagram.Helpers
                         }
                     }
 
-                    mainVm.SheetManager.AddExistingSheet(sheetVm, activate: false); // 완성된 시트를 접속 탭 아래에 추가
+                    mainVm.SheetManager.AddExistingSheet(sheetVm, activate: false);
                 }
 
                 // 저장할 때 보고 있던 탭(ActiveSheet)으로 다시 포커스 이동

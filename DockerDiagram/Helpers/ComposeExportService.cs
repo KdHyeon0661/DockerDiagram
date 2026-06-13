@@ -4,23 +4,20 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using Microsoft.Win32;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
-using DockerDiagram.Helpers;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
 namespace DockerDiagram.Helpers
 {
     /// <summary>
-    /// 현재 화면(Sheet)에 그려진 도커 다이어그램을 분석하여, 
-    /// 실제 실행 가능한 docker-compose.yml 파일로 내보내는(Export) 정적 서비스 클래스입니다.
+    /// 현재 시트의 Docker 구성을 Compose YAML로 내보냅니다.
     /// </summary>
     public static class ComposeExportService
     {
         /// <summary>
-        /// 사용자에게 저장 위치를 묻는 다이얼로그를 띄우고, 다이어그램 데이터를 YAML 형식의 파일로 저장합니다.
+        /// 저장 위치를 선택하고 시트 데이터를 Compose YAML 파일로 저장합니다.
         /// </summary>
         public static void ExportToCompose(SheetViewModel sheet, IDialogService dialogService)
         {
@@ -30,20 +27,19 @@ namespace DockerDiagram.Helpers
                 return;
             }
 
-            var dlg = new SaveFileDialog
-            {
-                Filter = "Docker Compose File (*.yml)|*.yml|All Files (*.*)|*.*",
-                FileName = "docker-compose.yml",
-                Title = "Export to Docker Compose"
-            };
+            string? filePath = dialogService.ShowSaveFileDialog(
+                "Docker Compose File (*.yml)|*.yml|All Files (*.*)|*.*",
+                ".yml",
+                "docker-compose.yml",
+                "Export to Docker Compose");
 
-            if (dlg.ShowDialog() == true)
+            if (!string.IsNullOrWhiteSpace(filePath))
             {
                 try
                 {
-                    string yamlContent = GenerateYaml(sheet); // YAML 문자열 생성
-                    File.WriteAllText(dlg.FileName, yamlContent, Encoding.UTF8);
-                    dialogService.ShowInfo($"파일이 생성되었습니다!\n{dlg.FileName}", "성공");
+                    string yamlContent = GenerateYaml(sheet);
+                    File.WriteAllText(filePath, yamlContent, Encoding.UTF8);
+                    dialogService.ShowInfo($"파일이 생성되었습니다!\n{filePath}", "성공");
                 }
                 catch (Exception ex)
                 {

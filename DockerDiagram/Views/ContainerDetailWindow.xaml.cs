@@ -40,7 +40,7 @@ namespace DockerDiagram
 
             if (this.DataContext is NodeViewModel vm)
             {
-                // ★ 핵심: 통째로 갱신하던 이벤트를 지우고, 백그라운드 스트리밍 파이프를 시작합니다.
+                // 컨테이너 로그 스트리밍을 시작합니다.
                 _ = vm.StartLogStreamAsync(OnLogChunkReceived);
             }
         }
@@ -51,7 +51,7 @@ namespace DockerDiagram
 
             if (this.DataContext is NodeViewModel vm)
             {
-                // ★ 중요: 창을 닫을 때 도커와의 로그 파이프라인(Stream)을 안전하게 폭파하여 메모리 누수 방지
+                // 창이 닫히면 로그 스트리밍을 중지합니다.
                 vm.StopLogStream();
             }
         }
@@ -71,7 +71,7 @@ namespace DockerDiagram
         }
 
         // ==============================================================================
-        // ★ [신규] 백그라운드 스트림에서 로그가 쏟아져 들어올 때 호출되는 콜백 메서드
+        // 백그라운드 스트림에서 수신한 로그를 UI 컬렉션에 추가합니다.
         // ==============================================================================
         private void OnLogChunkReceived(string logChunk)
         {
@@ -110,7 +110,7 @@ namespace DockerDiagram
         }
 
         /// <summary>
-        /// 검색어가 바뀔 때마다 전체 로그를 다시 색칠합니다. (스트리밍 구조에 맞게 수정됨)
+        /// 검색어가 바뀌면 현재 로그의 강조 표시를 갱신합니다.
         /// </summary>
         private void TxtLogSearch_TextChanged(object sender, TextChangedEventArgs e)
         {

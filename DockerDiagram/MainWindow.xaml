@@ -1596,8 +1596,8 @@
                                                 <ColumnDefinition Width="45"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="cpu" FontSize="11" Foreground="#555" VerticalAlignment="Center"/>
-                                            <ProgressBar Grid.Column="1" Value="{Binding CpuValue, FallbackValue=0}" Height="6" Foreground="#28a745" Background="#EEE" BorderThickness="0" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="2" Text="{Binding CpuValue, StringFormat={}{0:0.0}%}" FontSize="11" Foreground="#28a745" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                            <ProgressBar Grid.Column="1" Value="{Binding CpuValue, Mode=OneWay, FallbackValue=0}" Height="6" Foreground="#28a745" Background="#EEE" BorderThickness="0" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding CpuValue, Mode=OneWay, StringFormat={}{0:0.0}%}" FontSize="11" Foreground="#28a745" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                         </Grid>
                                         <Grid>
                                             <Grid.ColumnDefinitions>
@@ -1606,8 +1606,8 @@
                                                 <ColumnDefinition Width="45"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="mem" FontSize="11" Foreground="#555" VerticalAlignment="Center"/>
-                                            <ProgressBar Grid.Column="1" Value="{Binding MemoryValue, FallbackValue=0}" Height="6" Foreground="#007ACC" Background="#EEE" BorderThickness="0" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="2" Text="{Binding MemoryValue, StringFormat={}{0:0.0}%}" ToolTip="{Binding MemoryUsage}" FontSize="11" Foreground="#007ACC" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                            <ProgressBar Grid.Column="1" Value="{Binding MemoryValue, Mode=OneWay, FallbackValue=0}" Height="6" Foreground="#007ACC" Background="#EEE" BorderThickness="0" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding MemoryValue, Mode=OneWay, StringFormat={}{0:0.0}%}" ToolTip="{Binding MemoryUsage, Mode=OneWay}" FontSize="11" Foreground="#007ACC" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                         </Grid>
                                     </StackPanel>
                                 </Border>

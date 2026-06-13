@@ -1,4 +1,4 @@
-﻿using DockerDiagram.Helpers; // IDialogService 사용을 위해 추가
+﻿using DockerDiagram.Helpers;
 using System.Text.RegularExpressions;
 using System.Windows;
 
@@ -47,7 +47,6 @@ namespace DockerDiagram.Views
                 return;
             }
 
-            // [수정됨] Windows 컨테이너 호환성 해결
             // 1. 리눅스 스타일 절대 경로: /app/data
             // 2. 윈도우 스타일 절대 경로: C:\app\data (대소문자 무관)
             bool isLinuxStyle = MountPath.StartsWith("/");

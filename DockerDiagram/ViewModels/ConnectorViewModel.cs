@@ -127,7 +127,7 @@ namespace DockerDiagram.ViewModels
             TargetDir = tDir;
             _dialogService = dialogService;
 
-            // ★ [핵심] 연결된 대상(노드/그룹)이 마우스 드래그로 움직이면, 
+            // 연결된 대상이 이동하면 경로를 다시 계산합니다.
             // 이 연결선도 즉각적으로 따라가면서 경로를 다시 계산하도록 '위치 변경 이벤트'에 귀를 열어둡니다.
             Source.OnPositionChanged += OnNodePositionChanged;
             Target.OnPositionChanged += OnNodePositionChanged;
@@ -142,7 +142,7 @@ namespace DockerDiagram.ViewModels
         /// </summary>
         public void UpdateConnection(IConnectableItem newSource, PortDirection newSDir, IConnectableItem newTarget, PortDirection newTDir)
         {
-            // ★ [메모리 누수 방지] 기존 대상과의 이벤트 구독(-=)을 반드시 끊어주어야 합니다.
+            // 기존 대상의 이벤트 구독을 해제합니다.
             // 이렇게 하지 않으면 옛날 노드가 움직일 때마다 이 선이 불필요하게 다시 계산되는 "좀비(Zombie)" 현상이 발생합니다.
             if (Source != null) Source.OnPositionChanged -= OnNodePositionChanged;
             if (Target != null) Target.OnPositionChanged -= OnNodePositionChanged;

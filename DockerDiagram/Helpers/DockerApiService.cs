@@ -28,9 +28,8 @@ namespace DockerDiagram.Helpers
         public ConnectionProfile CurrentProfile { get; private set; }
 
         /// <summary>
-        /// 연결 프로필(신분증)을 받아, 로컬 또는 원격 SSH 터널링 환경에 맞는 도커 클라이언트 객체를 초기화합니다.
+        /// 연결 프로필에 따라 로컬 또는 원격 Docker 클라이언트를 초기화합니다.
         /// </summary>
-        // 생성자에서 신분증(ConnectionProfile)을 받도록 변경!
         public DockerApiService(ConnectionProfile profile)
         {
             CurrentProfile = profile;
@@ -291,7 +290,7 @@ namespace DockerDiagram.Helpers
 
             foreach (var img in images)
             {
-                // ★ [수정됨] 이미지가 여러 개의 태그를 가지고 있으면 몽땅 다 개별로 띄워줍니다!
+                // 이미지의 각 repository:tag 조합을 별도 항목으로 표시합니다.
                 if (img.RepoTags != null && img.RepoTags.Count > 0)
                 {
                     foreach (var repoTag in img.RepoTags)
@@ -548,7 +547,7 @@ namespace DockerDiagram.Helpers
         public async Task<string> CreateAndStartContainerAsync(
     string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes,
     string restartPolicy, long memoryMb, double cpuCount,
-    string command = "", bool tty = false) // ★ 1. 에러 해결: 인터페이스와 똑같이 파라미터 2개 추가!
+    string command = "", bool tty = false)
         {
             if (image.Contains(":"))
             {
@@ -618,12 +617,11 @@ namespace DockerDiagram.Helpers
                         Name = (RestartPolicyKind)policyEnum
                     }
                 },
-                // ★ 2. 여기서 도커 엔진에게 TTY(터미널 유지) 설정 전달!
+                // 대화형 컨테이너는 TTY와 표준 입력을 유지합니다.
                 Tty = tty,
                 OpenStdin = tty
             };
 
-            // ★ 3. 여기서 도커 엔진에게 Command(명령어) 전달!
             if (!string.IsNullOrWhiteSpace(command))
             {
                 parameters.Cmd = command.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList();
@@ -1174,7 +1172,7 @@ namespace DockerDiagram.Helpers
                         // 원본 로그 문자열 합치기
                         string rawLogs = stdout + stderr;
 
-                        // ★ 추가됨: 날짜 포맷 예쁘게 가공하기
+                        // Docker의 UTC 시각을 로컬 표시 형식으로 변환합니다.
                         return FormatDockerLogs(rawLogs);
                     }
                 }
@@ -1195,7 +1193,7 @@ namespace DockerDiagram.Helpers
             {
                 ShowStdout = true,
                 ShowStderr = true,
-                Follow = true, // 핵심: 연결 끊지 말고 계속 쏴줘!
+                Follow = true,
                 Tail = "100",  // 맨 처음 열었을 때 최근 100줄을 쏴주고 시작
                 Timestamps = true
             };
@@ -1313,8 +1311,7 @@ namespace DockerDiagram.Helpers
                 };
             }
 
-            // ★ 핵심: IProgress<JSONMessage> 객체를 파라미터로 넘겨주면, 
-            // 다운로드되는 동안 도커 엔진이 알아서 이 객체에 현재 % 와 다운로드 용량을 쏴줍니다!
+            // Docker Engine이 전달하는 다운로드 진행률을 호출자에게 전달합니다.
             await _client.Images.CreateImageAsync(
                 new ImagesCreateParameters { FromImage = image, Tag = string.IsNullOrWhiteSpace(tag) ? "latest" : tag },
                 authConfig,
@@ -1427,7 +1424,7 @@ namespace DockerDiagram.Helpers
                 long memoryBytes = memoryMb * 1024 * 1024;
                 updateParams.Memory = memoryBytes;
 
-                // ★ 중요: 메모리를 변경할 때 도커 엔진 규칙상 Swap 메모리도 같이 지정해 주어야 에러가 나지 않습니다.
+                // 메모리 제한 변경 시 Docker 규칙에 맞춰 swap 제한도 함께 지정합니다.
                 // 여기서는 메모리와 Swap을 동일하게 주어(하드 리미트) 칼같이 제한하도록 설정합니다.
                 updateParams.MemorySwap = memoryBytes;
             }

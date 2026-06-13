@@ -241,8 +241,6 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        // --- 💡 여기서부터 생략되었던 핵심 삭제/통신 로직들입니다! ---
-
         private async Task DeleteContainerItemAsync(object? param)
         {
             if (param is DockerContainer c)

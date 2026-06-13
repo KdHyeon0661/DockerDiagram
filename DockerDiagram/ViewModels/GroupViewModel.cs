@@ -183,7 +183,7 @@ namespace DockerDiagram.ViewModels
         /// <summary>
         /// 지정된 위치와 크기, 타입(일반/네트워크)을 바탕으로 새로운 그룹 객체를 생성하고 초기화합니다.
         /// </summary>
-        // ★ [수정] 생성자에서 그룹의 타입을 확정 지어 넘겨받습니다.
+        // 그룹 종류는 생성 시 확정합니다.
         public GroupViewModel(double x, double y, double w, double h,
                               INetworkService networkService,
                               IDialogService dialogService,
@@ -321,7 +321,7 @@ namespace DockerDiagram.ViewModels
         /// 이 그룹에서 특정 노드를 빼냅니다.
         /// 만약 이 그룹이 **'네트워크' 타입**이라면, 도커 엔진과 통신하여 실제 컨테이너를 해당 네트워크 망에서 즉시 분리(Disconnect)합니다.
         /// </summary>
-        public async Task RemoveNodeAsync(NodeViewModel node, bool isRestoring = false) // 💡 Aysnc -> Async 오타 수정 완료
+        public async Task RemoveNodeAsync(NodeViewModel node, bool isRestoring = false)
         {
             if (ContainedNodes.Contains(node))
             {
@@ -589,7 +589,7 @@ namespace DockerDiagram.ViewModels
                 }
             }
 
-            // 혹시 선이 연결 안 돼서 큐에 못 들어갔던 독립적인 노드들 추가
+            // 연결되지 않은 독립 노드도 결과에 포함합니다.
             foreach (var c in containers) { if (!order.Contains(c)) order.Add(c); }
             return order;
         }

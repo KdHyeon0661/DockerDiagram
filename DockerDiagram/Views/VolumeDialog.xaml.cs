@@ -7,7 +7,7 @@ using System.Windows;
 namespace DockerDiagram.Views
 {
     /// <summary>
-    /// 다이어그램 캔버스에서 새로운 도커 볼륨(Volume)을 생성하거나 외부 볼륨을 참조하기 위한 팝업 창입니다.
+    /// 새 Docker 볼륨을 생성하거나 외부 볼륨을 참조하기 위한 옵션을 입력받는 대화상자입니다.
     /// </summary>
     public partial class VolumeDialog : Window
     {
@@ -51,7 +51,7 @@ namespace DockerDiagram.Views
         {
             if (string.IsNullOrWhiteSpace(VolumeName))
             {
-                _dialogService.ShowError("볼륨 명을 입력하세요.", "입력 오류");
+                _dialogService.ShowError("볼륨 이름을 입력하세요.", "입력 오류");
                 return;
             }
 
@@ -68,7 +68,9 @@ namespace DockerDiagram.Views
                 int index = line.IndexOf('=');
                 if (index <= 0)
                 {
-                    _dialogService.ShowError($"{title} 항목은 key=value 형식이어야 합니다.\n문제 항목: {line}", "입력 오류");
+                    _dialogService.ShowError(
+                        $"{title} 항목은 key=value 형식이어야 합니다.\n문제 항목: {line}",
+                        "입력 오류");
                     return false;
                 }
             }

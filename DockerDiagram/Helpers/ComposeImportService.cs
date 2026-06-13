@@ -27,7 +27,6 @@ namespace DockerDiagram.Helpers
             IDialogService dialogService,
             IComposeService composeService)
         {
-            // 🔥 [MVVM 수정 1] UI(OpenFileDialog) 종속성 제거 및 IDialogService 활용
             string? selectedFileName = dialogService.ShowOpenFileDialog(
                 "Docker Compose File (*.yml;*.yaml)|*.yml;*.yaml|All Files (*.*)|*.*",
                 "Import from Docker Compose");
@@ -56,9 +55,7 @@ namespace DockerDiagram.Helpers
                 // 탭(Sheet) 이름을 Compose 파일명으로 설정하여 시각적 인지 향상
                 string sheetName = $"Compose ({Path.GetFileName(selectedFileName)})";
 
-                // =================================================================
-                // 🔥 [보안 및 유연성 수정] 현재 활성화된 시트의 프로필(신분증)과 도커 서비스를 상속받음
-                // =================================================================
+                // 현재 활성 시트의 연결 프로필과 Docker 서비스를 사용합니다.
                 ConnectionProfile targetProfile;
                 IDockerService targetDockerService;
 
@@ -290,7 +287,7 @@ namespace DockerDiagram.Helpers
                     }
                 }
 
-                // 네트워크 그룹에 속하지 못한 깍두기 노드들 배치
+                // 네트워크 그룹에 속하지 않은 노드를 별도 배치합니다.
                 if (unassignedNodes.Count > 0)
                 {
                     currentGroupY += maxGroupHeightInRow + 50;
@@ -309,7 +306,6 @@ namespace DockerDiagram.Helpers
                 // =================================================================
                 // 4단계: 실제 도커 엔진에 배포(docker compose up)할지 묻는 프로세스
                 // =================================================================
-                // 🔥 [MVVM 수정 2] 하드코딩된 MessageBox 제거 및 IDialogService 활용
                 bool isYes = dialogService.ShowConfirm(
                     $"[{sheetName}] 화면 구성을 완료했습니다.\n이 구성대로 실제 도커 엔진에 컨테이너들을 배포(실행)하시겠습니까?",
                     "실제 도커 배포");

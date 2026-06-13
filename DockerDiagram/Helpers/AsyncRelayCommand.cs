@@ -9,7 +9,7 @@ namespace DockerDiagram.Helpers
 {
     /// <summary>
     /// 비동기 작업(Task)을 안전하게 실행하기 위한 커맨드 클래스입니다.
-    /// 작업이 끝날 때까지 자동으로 버튼을 비활성화하여 중복 실행(더블 클릭)을 완벽하게 방지합니다.
+    /// 작업 실행 중에는 명령을 비활성화하여 중복 실행을 방지합니다.
     /// </summary>
     public class AsyncRelayCommand : ICommand
     {

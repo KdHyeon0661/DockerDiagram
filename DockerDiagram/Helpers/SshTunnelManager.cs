@@ -57,7 +57,7 @@ namespace DockerDiagram.Helpers
                 if (process == null) throw new Exception("SSH 프로세스를 시작할 수 없습니다.");
 
                 var tcs = new TaskCompletionSource<bool>();
-                bool isPrompting = false; // ★ 사용자가 응답 대기 중인지 체크하는 플래그
+                bool isPrompting = false;
 
                 _ = Task.Run(async () =>
                 {
@@ -80,9 +80,9 @@ namespace DockerDiagram.Helpers
                                 // 1. 호스트 키 검증 프롬프트 포착
                                 if (currentOutput.Contains("yes/no") || currentOutput.Contains("continue connecting"))
                                 {
-                                    isPrompting = true; // ★ 타이머 일시 정지
+                                    isPrompting = true;
 
-                                    // 비동기 Invoke로 UI 스레드 데드락 완벽 방지
+                                    // 호스트 키 확인은 UI 스레드에서 실행합니다.
                                     bool isTrusted = await Application.Current.Dispatcher.InvokeAsync(() =>
                                         dialogService.ShowHostKeyConfirm(hostIp, currentOutput.Trim())
                                     );
@@ -92,7 +92,7 @@ namespace DockerDiagram.Helpers
                                         process.StandardInput.WriteLine("yes");
                                         process.StandardInput.Flush();
                                         sb.Clear();
-                                        isPrompting = false; // ★ 타이머 재개
+                                        isPrompting = false;
                                     }
                                     else
                                     {
@@ -119,7 +119,7 @@ namespace DockerDiagram.Helpers
                     }
                 });
 
-                // ★ 개선된 타이머 로직: 사용자가 창을 띄우고 있는 시간은 카운트하지 않음
+                // 사용자 확인창이 열린 동안에는 연결 시간 제한을 진행하지 않습니다.
                 int waitTimeMs = 0;
                 while (waitTimeMs < 3000) // 3초간 프로세스 생존 및 예외 발생 여부 검증
                 {

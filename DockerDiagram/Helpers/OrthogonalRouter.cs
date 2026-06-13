@@ -48,7 +48,7 @@ namespace DockerDiagram.Helpers
             List<Point> pathPoints = FindPathAStar(startNode, endNode, sourceRect, targetRect, startDir, isSourceGroup, isTargetGroup);
 
             // 4단계: 계산된 A* 경로 조립 및 다듬기
-            finalPath.Add(start); // 진짜 시작점 추가
+            finalPath.Add(start);
 
             if (pathPoints.Count > 0)
             {
@@ -74,7 +74,7 @@ namespace DockerDiagram.Helpers
 
             if (finalPath.Last() != end)
             {
-                finalPath.Add(end); // 진짜 끝점 추가
+                finalPath.Add(end);
             }
 
             // 대각선 방지 및 불필요한 일직선상 중복 좌표들을 제거하여 반환

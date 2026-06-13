@@ -73,10 +73,10 @@ namespace DockerDiagram.Views
                 string keyPath = txtKeyPath.Text.Trim();
                 string profileName = txtName.Text.Trim();
 
-                // [STEP 1] SSH 터널 뚫기 (이미 뚫려있으면 기존 포트 재사용)
+                // 기존 터널이 있으면 로컬 포트를 재사용합니다.
                 int localPort = await SshTunnelManager.GetOrStartTunnelAsync(ip, sshPort, user, keyPath, _dialogService);
 
-                // [STEP 2] 해당 터널로 접속하는 신분증(Profile) 생성
+                // 생성된 터널을 사용하는 연결 프로필
                 var remoteProfile = new ConnectionProfile
                 {
                     Name = profileName,
@@ -84,15 +84,13 @@ namespace DockerDiagram.Views
                     HostIp = ip,
                     SshUsername = user,
                     SshPort = sshPort,
-                    LocalTunnelPort = localPort, // 터널 매니저가 할당해준 로컬 포트
+                    LocalTunnelPort = localPort,
 
-                    // =================================================================
-                    // ★ [추가] 나중에 앱을 다시 켰을 때 알아서 접속할 수 있게 키 경로 저장!
-                    // =================================================================
+                    // 다음 실행에서 재연결할 수 있도록 개인 키 경로를 저장합니다.
                     SshKeyFilePath = keyPath
                 };
 
-                // [STEP 3] 원격 전용 DockerApiService 생성
+                // 원격 연결 전용 Docker 서비스
                 txtStatus.Text = "도커 엔진 확인 중...";
                 var remoteDockerService = new DockerApiService(remoteProfile);
 
@@ -101,7 +99,7 @@ namespace DockerDiagram.Views
 
                 if (isAlive)
                 {
-                    // [STEP 5] 성공! MainViewModel에 새 원격 접속 탭을 추가
+                    // 연결된 원격 호스트의 워크스페이스를 추가합니다.
 
                     // 앱 전역 서비스 리스트에 등록 (나중에 앱 끌 때 한꺼번에 닫기 위함)
                     App.ActiveDockerServices.Add(remoteDockerService);
