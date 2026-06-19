@@ -66,7 +66,10 @@ namespace DockerDiagram.Models
         public Dictionary<string, string> VolumeLabels { get; set; } = new Dictionary<string, string>(); // 볼륨 라벨
         public Dictionary<string, string> VolumeDriverOptions { get; set; } = new Dictionary<string, string>(); // 볼륨 드라이버 옵션
         public string RestartPolicy { get; set; } = "no"; // 재시작 정책 (no, always 등)
+        public string ComposeProjectName { get; set; } = string.Empty;
         public string ComposeServiceName { get; set; } = string.Empty; // 원본 compose service 키
+        public int ComposeContainerNumber { get; set; }
+        public string ComposeLayoutInstanceId { get; set; } = string.Empty;
         public string ComposeRawServiceYaml { get; set; } = string.Empty; // 원본 service YAML
         public string ComposeRawVolumeYaml { get; set; } = string.Empty; // 원본 volume YAML
     }
@@ -105,6 +108,7 @@ namespace DockerDiagram.Models
         public bool EnableIPv6 { get; set; }
         public bool External { get; set; }
         public string ComposeNetworkName { get; set; } = string.Empty;
+        public string ComposeLayoutInstanceId { get; set; } = string.Empty;
         public string ComposeRawNetworkYaml { get; set; } = string.Empty;
         public Dictionary<string, string> Labels { get; set; } = new();
         public Dictionary<string, string> DriverOptions { get; set; } = new();

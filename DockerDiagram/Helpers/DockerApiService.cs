@@ -243,6 +243,7 @@ namespace DockerDiagram.Helpers
             var result = new List<DockerContainer>();
             foreach (var c in containers)
             {
+                var labels = CopyLabels(c.Labels);
                 string portStr = "";
                 if (c.Ports != null)
                 {
@@ -267,10 +268,21 @@ namespace DockerDiagram.Helpers
                 result.Add(new DockerContainer
                 {
                     Id = c.ID,
-                    Name = c.Names[0].TrimStart('/'),
+                    Name = c.Names?.FirstOrDefault()?.TrimStart('/') ?? c.ID,
                     Image = c.Image,
                     State = c.State,
                     Ports = portStr,
+                    Labels = labels,
+                    ComposeProjectName = GetLabel(labels, "com.docker.compose.project"),
+                    ComposeResourceName = GetLabel(labels, "com.docker.compose.service"),
+                    ComposeServiceName = GetLabel(labels, "com.docker.compose.service"),
+                    ComposeContainerNumber = ParseComposeContainerNumber(
+                        GetLabel(labels, "com.docker.compose.container-number")),
+                    IsComposeOneOff = bool.TryParse(
+                        GetLabel(labels, "com.docker.compose.oneoff"),
+                        out bool oneOff) && oneOff,
+                    ComposeWorkingDirectory = GetLabel(labels, "com.docker.compose.project.working_dir"),
+                    ComposeConfigFiles = GetLabel(labels, "com.docker.compose.project.config_files")
                 });
             }
             return result;
@@ -333,10 +345,17 @@ namespace DockerDiagram.Helpers
         public async Task<List<DockerVolume>> GetVolumesAsync()
         {
             var volumes = await _client.Volumes.ListAsync();
-            return volumes.Volumes.Select(v => new DockerVolume
+            return volumes.Volumes.Select(v =>
             {
-                Name = v.Name,
-                Id = v.Name,
+                var labels = CopyLabels(v.Labels);
+                return new DockerVolume
+                {
+                    Name = v.Name,
+                    Id = v.Name,
+                    Labels = labels,
+                    ComposeProjectName = GetLabel(labels, "com.docker.compose.project"),
+                    ComposeResourceName = GetLabel(labels, "com.docker.compose.volume")
+                };
             }).ToList();
         }
 
@@ -350,12 +369,36 @@ namespace DockerDiagram.Helpers
         public async Task<List<DockerNetworkGroup>> GetNetworksAsync() // 반환 타입 변경!
         {
             var networks = await _client.Networks.ListNetworksAsync();
-            return networks.Select(n => new DockerNetworkGroup // 객체 생성 변경!
+            return networks.Select(n =>
             {
-                Name = n.Name,
-                Id = n.ID,
-                Driver = n.Driver
+                var labels = CopyLabels(n.Labels);
+                return new DockerNetworkGroup
+                {
+                    Name = n.Name,
+                    Id = n.ID,
+                    Driver = n.Driver,
+                    Labels = labels,
+                    ComposeProjectName = GetLabel(labels, "com.docker.compose.project"),
+                    ComposeResourceName = GetLabel(labels, "com.docker.compose.network")
+                };
             }).ToList();
+        }
+
+        private static Dictionary<string, string> CopyLabels(IDictionary<string, string>? labels)
+        {
+            return labels == null
+                ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(labels, StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static string GetLabel(IReadOnlyDictionary<string, string> labels, string key)
+        {
+            return labels.TryGetValue(key, out string? value) ? value ?? string.Empty : string.Empty;
+        }
+
+        private static int ParseComposeContainerNumber(string value)
+        {
+            return int.TryParse(value, out int number) && number > 0 ? number : 0;
         }
 
         // ---------------------------------------------------------
@@ -547,14 +590,9 @@ namespace DockerDiagram.Helpers
         public async Task<string> CreateAndStartContainerAsync(
     string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes,
     string restartPolicy, long memoryMb, double cpuCount,
-    string command = "", bool tty = false)
+    string command = "", bool tty = false, string networkName = "")
         {
-            if (image.Contains(":"))
-            {
-                int lastColon = image.LastIndexOf(':');
-                tag = image.Substring(lastColon + 1);
-                image = image.Substring(0, lastColon);
-            }
+            (image, tag) = DockerImageReferenceParser.Split(image, tag);
             string fullImageName = $"{image}:{tag}";
 
             string safeContainerName = System.Text.RegularExpressions.Regex.Replace(name, "[^a-zA-Z0-9_.-]", "-");
@@ -615,7 +653,8 @@ namespace DockerDiagram.Helpers
                     RestartPolicy = new RestartPolicy
                     {
                         Name = (RestartPolicyKind)policyEnum
-                    }
+                    },
+                    NetworkMode = string.IsNullOrWhiteSpace(networkName) ? null : networkName
                 },
                 // 대화형 컨테이너는 TTY와 표준 입력을 유지합니다.
                 Tty = tty,
@@ -624,12 +663,83 @@ namespace DockerDiagram.Helpers
 
             if (!string.IsNullOrWhiteSpace(command))
             {
-                parameters.Cmd = command.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                parameters.Cmd = ParseCommandArguments(command);
             }
 
             var response = await _client.Containers.CreateContainerAsync(parameters);
-            await _client.Containers.StartContainerAsync(response.ID, new ContainerStartParameters());
-            return response.ID;
+            try
+            {
+                await _client.Containers.StartContainerAsync(response.ID, new ContainerStartParameters());
+                return response.ID;
+            }
+            catch
+            {
+                try
+                {
+                    await _client.Containers.RemoveContainerAsync(
+                        response.ID,
+                        new ContainerRemoveParameters { Force = true, RemoveVolumes = false });
+                }
+                catch
+                {
+                }
+                throw;
+            }
+        }
+
+        private static IList<string> ParseCommandArguments(string command)
+        {
+            var arguments = new List<string>();
+            var current = new System.Text.StringBuilder();
+            char? quote = null;
+
+            for (int i = 0; i < command.Length; i++)
+            {
+                char ch = command[i];
+
+                if (quote.HasValue)
+                {
+                    if (ch == quote.Value)
+                    {
+                        quote = null;
+                    }
+                    else if (ch == '\\' && quote == '"' && i + 1 < command.Length && command[i + 1] == '"')
+                    {
+                        current.Append('"');
+                        i++;
+                    }
+                    else
+                    {
+                        current.Append(ch);
+                    }
+                    continue;
+                }
+
+                if (ch is '"' or '\'')
+                {
+                    quote = ch;
+                }
+                else if (char.IsWhiteSpace(ch))
+                {
+                    if (current.Length > 0)
+                    {
+                        arguments.Add(current.ToString());
+                        current.Clear();
+                    }
+                }
+                else
+                {
+                    current.Append(ch);
+                }
+            }
+
+            if (quote.HasValue)
+                throw new ArgumentException("명령어의 따옴표가 닫히지 않았습니다.", nameof(command));
+
+            if (current.Length > 0)
+                arguments.Add(current.ToString());
+
+            return arguments;
         }
 
         /// <summary>
@@ -1291,6 +1401,42 @@ namespace DockerDiagram.Helpers
 
             var results = await _client.Images.SearchImagesAsync(parameters);
             return results.ToList();
+        }
+
+        public async Task<ContainerImageMetadata?> GetImageMetadataAsync(
+            string imageReference,
+            string? username = null,
+            string? password = null,
+            string? serverAddress = null,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var inspect = await _client.Images.InspectImageAsync(imageReference, cancellationToken);
+                return new ContainerImageMetadata
+                {
+                    ImageReference = imageReference,
+                    Source = "Docker Engine",
+                    Environment = inspect.Config?.Env?.ToList() ?? [],
+                    ExposedPorts = inspect.Config?.ExposedPorts?.Keys.ToList() ?? [],
+                    Volumes = inspect.Config?.Volumes?.Keys.ToList() ?? [],
+                    Entrypoint = inspect.Config?.Entrypoint?.ToList() ?? [],
+                    Command = inspect.Config?.Cmd?.ToList() ?? []
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                return await RegistryImageMetadataReader.ReadAsync(
+                    imageReference,
+                    username,
+                    password,
+                    serverAddress,
+                    cancellationToken);
+            }
         }
 
         /// <summary>

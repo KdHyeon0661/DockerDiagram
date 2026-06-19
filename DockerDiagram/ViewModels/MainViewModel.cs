@@ -98,6 +98,198 @@ namespace DockerDiagram.ViewModels
 
         public Task OnDockerStartedAsync() => _dockerSync.OnDockerStartedAsync();
 
+        public async Task PlaceComposeProjectAsync(DockerComposeProject project, double x, double y)
+        {
+            if (ActiveSheet == null || project.Containers.Count == 0) return;
+
+            SheetViewModel sheet = ActiveSheet;
+            var historyBefore = CaptureDiagramState(sheet);
+
+            try
+            {
+                Mouse.OverrideCursor = Cursors.Wait;
+                var placementService = new ComposeProjectPlacementService(sheet.DockerService, _dialogService);
+                ComposeProjectPlacementResult result = await placementService.PlaceAsync(sheet, project, x, y);
+
+                IsModified = true;
+                RecordAdditionsFromSnapshot(
+                    sheet,
+                    historyBefore,
+                    $"Place Compose project {project.Name}",
+                    affectsDocker: false);
+
+                if (result.Warnings.Count > 0)
+                {
+                    string details = string.Join("\n", result.Warnings.Take(5));
+                    if (result.Warnings.Count > 5) details += $"\n... 외 {result.Warnings.Count - 5}개";
+                    _dialogService.ShowInfo(
+                        $"프로젝트 배치는 완료했지만 일부 컨테이너의 상세 정보를 읽지 못했습니다.\n\n{details}",
+                        "Compose 프로젝트 배치");
+                }
+            }
+            catch (Exception ex)
+            {
+                foreach (ConnectorViewModel connector in sheet.Connectors.Where(connector => !historyBefore.Connectors.Contains(connector)).ToList())
+                    sheet.Connectors.Remove(connector);
+                foreach (GroupViewModel group in sheet.Groups.Where(group => !historyBefore.Groups.Contains(group)).ToList())
+                    sheet.Groups.Remove(group);
+                foreach (NodeViewModel node in sheet.Nodes.Where(node => !historyBefore.Nodes.Contains(node)).ToList())
+                    sheet.Nodes.Remove(node);
+
+                _dialogService.ShowError($"Compose 프로젝트를 배치하지 못했습니다:\n{ex.Message}", "Compose 프로젝트 배치");
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+        }
+
+        public bool HasSelectedComposeLayout()
+        {
+            if (ActiveSheet == null) return false;
+            return !string.IsNullOrWhiteSpace(ActiveSheet.SelectedNode?.ComposeLayoutInstanceId) ||
+                   !string.IsNullOrWhiteSpace(ActiveSheet.SelectedGroup?.ComposeLayoutInstanceId);
+        }
+
+        public Task RearrangeSelectedComposeAsync(ComposeLayoutOptions options)
+        {
+            if (ActiveSheet == null) return Task.CompletedTask;
+
+            SheetViewModel sheet = ActiveSheet;
+            string layoutInstanceId = sheet.SelectedNode?.ComposeLayoutInstanceId ??
+                                      sheet.SelectedGroup?.ComposeLayoutInstanceId ??
+                                      string.Empty;
+            if (string.IsNullOrWhiteSpace(layoutInstanceId))
+            {
+                _dialogService.ShowInfo("Compose로 배치된 노드나 네트워크를 먼저 선택해 주세요.", "Compose 재정렬");
+                return Task.CompletedTask;
+            }
+
+            var nodes = sheet.Nodes
+                .Where(node => string.Equals(node.ComposeLayoutInstanceId, layoutInstanceId, StringComparison.Ordinal))
+                .ToList();
+            var groups = sheet.Groups
+                .Where(group => string.Equals(group.ComposeLayoutInstanceId, layoutInstanceId, StringComparison.Ordinal))
+                .ToList();
+            if (nodes.Count == 0) return Task.CompletedTask;
+
+            var serviceNodes = nodes
+                .Where(node => node.Type == NodeType.Container)
+                .ToDictionary(node => node.Id, node => node, StringComparer.OrdinalIgnoreCase);
+            var dependencyMap = serviceNodes.Keys.ToDictionary(
+                key => key,
+                _ => new List<string>(),
+                StringComparer.OrdinalIgnoreCase);
+            var serviceNodeSet = new HashSet<NodeViewModel>(serviceNodes.Values, ReferenceEqualityComparer.Instance);
+
+            foreach (ConnectorViewModel connector in sheet.Connectors.Where(connector => connector.RelationType == RelationType.Dependency))
+            {
+                if (connector.Source is not NodeViewModel source || connector.Target is not NodeViewModel target) continue;
+                if (!serviceNodeSet.Contains(source) || !serviceNodeSet.Contains(target)) continue;
+                dependencyMap[target.Id].Add(source.Id);
+            }
+
+            static Dictionary<NodeViewModel, Rect> CaptureNodeRects(IEnumerable<NodeViewModel> source)
+            {
+                var result = new Dictionary<NodeViewModel, Rect>(ReferenceEqualityComparer.Instance);
+                foreach (NodeViewModel node in source)
+                    result[node] = new Rect(node.X, node.Y, node.Width, node.Height);
+                return result;
+            }
+
+            static Dictionary<GroupViewModel, Rect> CaptureGroupRects(IEnumerable<GroupViewModel> source)
+            {
+                var result = new Dictionary<GroupViewModel, Rect>(ReferenceEqualityComparer.Instance);
+                foreach (GroupViewModel group in source)
+                    result[group] = new Rect(group.X, group.Y, group.Width, group.Height);
+                return result;
+            }
+
+            var beforeNodes = CaptureNodeRects(nodes);
+            var beforeGroups = CaptureGroupRects(groups);
+            double originX = nodes.Min(node => node.X);
+            double originY = nodes.Min(node => node.Y);
+
+            ComposeDiagramLayoutService.Arrange(
+                sheet,
+                serviceNodes,
+                dependencyMap,
+                originX,
+                originY,
+                nodes.Where(node => node.Type == NodeType.Volume).ToList(),
+                groups,
+                options);
+
+            var afterNodes = CaptureNodeRects(nodes);
+            var afterGroups = CaptureGroupRects(groups);
+
+            RecordComposeLayoutChange(
+                sheet,
+                beforeNodes,
+                afterNodes,
+                beforeGroups,
+                afterGroups,
+                "Rearrange Compose project");
+            IsModified = true;
+            return Task.CompletedTask;
+        }
+
+        public async Task ApplyStackTemplateAsync(
+            StackTemplateDefinition template,
+            StackTemplateDeploymentOptions options,
+            double x,
+            double y)
+        {
+            if (ActiveSheet == null) return;
+
+            var sheet = ActiveSheet;
+            var deploymentService = new StackTemplateDeploymentService(sheet.DockerService, _dialogService);
+            StackTemplateApplication? application = null;
+
+            try
+            {
+                Mouse.OverrideCursor = Cursors.Wait;
+                application = await deploymentService.ApplyAsync(template, options, sheet, x, y);
+                IsModified = true;
+
+                var historyApplication = application;
+                History.RecordExecuted(new DelegateHistoryCommand(
+                    $"Create stack template: {template.Name}",
+                    affectsDocker: options.DeployToDocker,
+                    undo: async () =>
+                    {
+                        await deploymentService.RemoveAsync(historyApplication, sheet, options.DeployToDocker);
+                        IsModified = true;
+                        if (ReferenceEquals(ActiveSheet, sheet))
+                            await Explorer.SyncWithDockerEngineAsync();
+                    },
+                    redo: async () =>
+                    {
+                        historyApplication = await deploymentService.ApplyAsync(template, options, sheet, x, y);
+                        IsModified = true;
+                        if (ReferenceEquals(ActiveSheet, sheet))
+                            await Explorer.SyncWithDockerEngineAsync();
+                    }));
+
+                await Explorer.SyncWithDockerEngineAsync();
+                _dialogService.ShowInfo(
+                    options.DeployToDocker
+                        ? $"'{template.Name}' 스택을 생성하고 실행했습니다."
+                        : $"'{template.Name}' 스택을 다이어그램에 추가했습니다.",
+                    "Stack Template");
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError(
+                    $"'{template.Name}' 템플릿 적용에 실패했습니다.\n\n{ex.Message}",
+                    "Stack Template");
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+        }
+
         public void Dispose()
         {
             if (_disposed) return;
@@ -349,12 +541,7 @@ namespace DockerDiagram.ViewModels
                 if (!isBindMount) namedVolumesToDraw.Add(vol);
             }
 
-            if (image.Contains(":"))
-            {
-                int lastColon = image.LastIndexOf(':');
-                tag = image.Substring(lastColon + 1);
-                image = image.Substring(0, lastColon);
-            }
+            (image, tag) = DockerImageReferenceParser.Split(image, tag);
 
             GroupViewModel? targetGroup = null;
 
@@ -926,6 +1113,15 @@ namespace DockerDiagram.ViewModels
 
         public void RecordGroupRectChange(GroupViewModel group, Rect before, Rect after, string description) =>
             _diagramHistory.RecordGroupRectChange(group, before, after, description);
+
+        public void RecordComposeLayoutChange(
+            SheetViewModel sheet,
+            IReadOnlyDictionary<NodeViewModel, Rect> beforeNodes,
+            IReadOnlyDictionary<NodeViewModel, Rect> afterNodes,
+            IReadOnlyDictionary<GroupViewModel, Rect> beforeGroups,
+            IReadOnlyDictionary<GroupViewModel, Rect> afterGroups,
+            string description) =>
+            _diagramHistory.RecordLayoutChange(sheet, beforeNodes, afterNodes, beforeGroups, afterGroups, description);
 
         public IHistoryCommand CreateConnectorDeleteCommand(SheetViewModel sheet, ConnectorViewModel connector) =>
             _diagramHistory.CreateConnectorDeleteCommand(sheet, connector);

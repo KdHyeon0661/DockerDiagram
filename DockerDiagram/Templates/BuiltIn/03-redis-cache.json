@@ -1,0 +1,52 @@
+{
+  "id": "redis-cache",
+  "name": "Redis Cache",
+  "description": "Persistent Redis cache with optional RedisInsight",
+  "category": "Cache",
+  "defaultProjectName": "cache",
+  "accentColor": "#D82C20",
+  "variables": [
+    { "key": "REDIS_PORT", "label": "Redis port", "type": "port", "defaultValue": "6379" },
+    { "key": "REDIS_PASSWORD", "label": "Redis password", "type": "password", "defaultValue": "" },
+    { "key": "INCLUDE_INSIGHT", "label": "Include RedisInsight", "type": "bool", "defaultValue": "true" },
+    { "key": "INSIGHT_PORT", "label": "RedisInsight port", "type": "port", "defaultValue": "5540" }
+  ],
+  "networks": [
+    { "key": "cache", "name": "${PROJECT}-network", "driver": "bridge", "x": 0, "y": 0, "width": 520, "height": 280 }
+  ],
+  "volumes": [
+    { "key": "redis-data", "name": "${PROJECT}-redis-data", "driver": "local", "x": 40, "y": 330 },
+    { "key": "insight-data", "name": "${PROJECT}-insight-data", "driver": "local", "enabledWhen": "INCLUDE_INSIGHT", "x": 300, "y": 330 }
+  ],
+  "containers": [
+    {
+      "key": "redis",
+      "name": "${PROJECT}-redis",
+      "image": "redis:7-alpine",
+      "ports": [ "${REDIS_PORT}:6379" ],
+      "volumeMounts": [
+        { "volume": "redis-data", "target": "/data" }
+      ],
+      "networks": [ "cache" ],
+      "command": "redis-server --appendonly yes --requirepass \"${REDIS_PASSWORD}\"",
+      "x": 40,
+      "y": 100
+    },
+    {
+      "key": "insight",
+      "name": "${PROJECT}-redisinsight",
+      "image": "redis/redisinsight:latest",
+      "ports": [ "${INSIGHT_PORT}:5540" ],
+      "volumeMounts": [
+        { "volume": "insight-data", "target": "/data" }
+      ],
+      "networks": [ "cache" ],
+      "enabledWhen": "INCLUDE_INSIGHT",
+      "x": 300,
+      "y": 100
+    }
+  ],
+  "dependencies": [
+    { "source": "insight", "target": "redis" }
+  ]
+}

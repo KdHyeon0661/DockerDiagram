@@ -19,9 +19,10 @@
         <Style x:Key="SearchTextBoxStyle" TargetType="TextBox">
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Background" Value="White"/>
-            <Setter Property="BorderBrush" Value="#DDD"/>
+            <Setter Property="BorderBrush" Value="#D7DCE2"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="3"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Padding" Value="8,0"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
@@ -29,12 +30,12 @@
                             <Border Background="{TemplateBinding Background}" 
                                     BorderBrush="{TemplateBinding BorderBrush}" 
                                     BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="3"/>
-                            <ScrollViewer x:Name="PART_ContentHost" Margin="5,0,0,0" VerticalAlignment="Center"/>
+                                    CornerRadius="4"/>
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="8,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="Placeholder" 
                                    Text="{TemplateBinding Tag}" 
-                                   Foreground="#AAA" 
-                                   Margin="7,0,0,0"
+                                   Foreground="#8A929D" 
+                                   Margin="9,0,0,0"
                                    VerticalAlignment="Center"
                                    IsHitTestVisible="False"
                                    Visibility="Collapsed"/>
@@ -42,6 +43,143 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="Text" Value="">
                                 <Setter TargetName="Placeholder" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter Property="BorderBrush" Value="#6A9FD4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SidebarExpanderHeaderStyle" TargetType="ToggleButton">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="HeaderBackground"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4"
+                                Padding="8,8">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="16"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter VerticalAlignment="Center"
+                                                  HorizontalAlignment="Stretch"/>
+                                <Path x:Name="Chevron"
+                                      Grid.Column="1"
+                                      Data="M3,1 L7,5 L3,9"
+                                      Stroke="#68717D"
+                                      StrokeThickness="1.5"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      RenderTransformOrigin="0.5,0.5">
+                                    <Path.RenderTransform>
+                                        <RotateTransform Angle="0"/>
+                                    </Path.RenderTransform>
+                                </Path>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="HeaderBackground" Property="Background" Value="#E9EDF2"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="HeaderBackground" Property="Background" Value="#E6EDF5"/>
+                                <Setter TargetName="Chevron" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <RotateTransform Angle="90"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SidebarExpanderStyle" TargetType="Expander">
+            <Setter Property="Margin" Value="0,1"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Expander">
+                        <StackPanel>
+                            <ToggleButton Content="{TemplateBinding Header}"
+                                          IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                                          Style="{StaticResource SidebarExpanderHeaderStyle}"/>
+                            <Border x:Name="ExpandSite"
+                                    Visibility="Collapsed"
+                                    Padding="0,3,0,8">
+                                <ContentPresenter/>
+                            </Border>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsExpanded" Value="True">
+                                <Setter TargetName="ExpandSite" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ResourceListItemStyle" TargetType="ListBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="4,1"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="RowBackground"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4"
+                                Padding="4,3">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="RowBackground" Property="Background" Value="#E9EDF2"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="RowBackground" Property="Background" Value="#DCE9F6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ResourceDeleteButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="26"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Foreground" Value="#A94A52"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="ToolTip" Value="Remove"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBackground"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBackground" Property="Background" Value="#F8E2E4"/>
+                                <Setter Property="Foreground" Value="#C5303C"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -168,7 +306,7 @@
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <Border Grid.Column="0" Grid.Row="0" Background="#f0f0f0" BorderBrush="#ccc" BorderThickness="0,0,1,0" Padding="10" Panel.ZIndex="10">
+        <Border Grid.Column="0" Grid.Row="0" Background="#F4F6F8" BorderBrush="#D5D9DE" BorderThickness="0,0,1,0" Padding="10" Panel.ZIndex="10">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -177,7 +315,7 @@
                 </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0">
-                    <TextBlock Text="Basic Templates" FontWeight="Bold" Margin="0,0,0,10" Foreground="#555"/>
+                    <TextBlock Text="Create" FontWeight="SemiBold" FontSize="13" Margin="2,0,0,10" Foreground="#343A43"/>
 
                     <Border Background="White" BorderBrush="#ccc" BorderThickness="1" CornerRadius="5" Height="40" Margin="0,0,0,5" Cursor="Hand" Tag="Container" 
                     PreviewMouseLeftButtonDown="Tool_PreviewMouseLeftButtonDown" PreviewMouseMove="Tool_PreviewMouseMove" PreviewMouseLeftButtonUp="Tool_PreviewMouseLeftButtonUp">
@@ -219,33 +357,165 @@
                             <TextBlock Text="New Group" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Border>
+
+                    <Expander IsExpanded="True" Style="{StaticResource SidebarExpanderStyle}" Margin="0,8,0,0">
+                        <Expander.Header>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="22"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Path Data="{StaticResource ContainerIcon}" Fill="#3F6F95" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="Stack Templates" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                    <TextBlock Text="{Binding Explorer.StackTemplates.Count}" FontSize="10" Foreground="#59636F"/>
+                                </Border>
+                            </Grid>
+                        </Expander.Header>
+                        <ListBox ItemsSource="{Binding Explorer.StackTemplates}"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 MaxHeight="220"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 ItemContainerStyle="{StaticResource ResourceListItemStyle}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="Transparent"
+                                            Cursor="Hand"
+                                            Padding="3,4"
+                                            PreviewMouseLeftButtonDown="StackTemplate_PreviewMouseLeftButtonDown"
+                                            PreviewMouseLeftButtonUp="StackTemplate_PreviewMouseLeftButtonUp"
+                                            MouseMove="StackTemplate_MouseMove">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="4"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Background="{Binding AccentColor}" CornerRadius="2" Margin="0,1,0,1"/>
+                                            <StackPanel Grid.Column="1" Margin="9,0,0,0">
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="#303842" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding ResourceSummary}" FontSize="10" Foreground="#7B8591" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Expander>
                 </StackPanel>
 
-                <Separator Grid.Row="1" Margin="0,15,0,15" Background="#CCC"/>
+                <Separator Grid.Row="1" Margin="0,14,0,12" Background="#D5D9DE"/>
 
                 <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderThickness="0">
                     <StackPanel>
-                        <TextBlock Text="{Binding Explorer.LastSyncTime}" FontSize="11" Foreground="#888" HorizontalAlignment="Right" Margin="0,0,2,5"/>
+                        <Grid Margin="2,0,2,6">
+                            <TextBlock Text="Docker Resources" FontWeight="SemiBold" FontSize="13" Foreground="#343A43"/>
+                            <TextBlock Text="{Binding Explorer.LastSyncTime}" FontSize="10" Foreground="#8A929D" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                        </Grid>
 
-                        <Expander Header="Existing Containers" IsExpanded="True" Margin="0,0,0,5" Background="White" BorderBrush="#ccc" BorderThickness="1">
+                        <Expander IsExpanded="True" Style="{StaticResource SidebarExpanderStyle}">
+                            <Expander.Header>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="22"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Path Data="{StaticResource ContainerIcon}" Fill="#4D7C6F" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="Compose Projects" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                    <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                        <TextBlock Text="{Binding Explorer.ComposeProjects.Count}" FontSize="10" Foreground="#59636F"/>
+                                    </Border>
+                                </Grid>
+                            </Expander.Header>
+                            <ItemsControl ItemsSource="{Binding Explorer.ComposeProjects}" Margin="4,1,2,5">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Expander Margin="0,1" Padding="0" Background="Transparent">
+                                            <Expander.Header>
+                                                <Grid ToolTip="{Binding WorkingDirectory}"
+                                                      Cursor="Hand"
+                                                      PreviewMouseLeftButtonDown="ComposeProject_PreviewMouseLeftButtonDown"
+                                                      MouseMove="ComposeProject_MouseMove">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="#36434A" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Grid.Column="1" Text="{Binding ResourceCount}" FontSize="10" Foreground="#7A858D" Margin="8,0,4,0"/>
+                                                </Grid>
+                                            </Expander.Header>
+                                            <StackPanel Margin="18,2,0,5">
+                                                <TextBlock Text="Containers" FontSize="10" FontWeight="SemiBold" Foreground="#287BAE" Margin="0,2,0,1"/>
+                                                <ItemsControl ItemsSource="{Binding Containers}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid Margin="0,1">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Text="{Binding ComposeServiceName}" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"/>
+                                                                <TextBlock Grid.Column="1" FontSize="10" Foreground="#7A858D" Margin="6,0,3,0">
+                                                                    <Run Text="#"/><Run Text="{Binding ComposeContainerNumber}"/><Run Text="  "/><Run Text="{Binding State}"/>
+                                                                </TextBlock>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
+                                                <TextBlock Text="Volumes" FontSize="10" FontWeight="SemiBold" Foreground="#D9822B" Margin="0,5,0,1"/>
+                                                <ItemsControl ItemsSource="{Binding Volumes}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding Name}" FontSize="11" Margin="0,1" TextTrimming="CharacterEllipsis" ToolTip="{Binding ComposeResourceName}"/>
+                                                    </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
+                                                <TextBlock Text="Networks" FontSize="10" FontWeight="SemiBold" Foreground="#8D5BA6" Margin="0,5,0,1"/>
+                                                <ItemsControl ItemsSource="{Binding Networks}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding Name}" FontSize="11" Margin="0,1" TextTrimming="CharacterEllipsis" ToolTip="{Binding ComposeResourceName}"/>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </Expander>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Expander>
+
+                        <Expander IsExpanded="True" Style="{StaticResource SidebarExpanderStyle}">
+                            <Expander.Header>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="22"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Path Data="{StaticResource ContainerIcon}" Fill="#287BAE" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="Containers" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                    <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                        <TextBlock Text="{Binding Explorer.ExistingContainers.Count}" FontSize="10" Foreground="#59636F"/>
+                                    </Border>
+                                </Grid>
+                            </Expander.Header>
                             <StackPanel>
-                                <TextBox Text="{Binding Explorer.ContainerSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search..." Margin="5"/>
-                                <ListBox ItemsSource="{Binding Explorer.ExistingContainers}" BorderThickness="0" MaxHeight="250" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                    <ListBox.ItemContainerStyle>
-                                        <Style TargetType="ListBoxItem">
-                                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                                            <Setter Property="Padding" Value="0"/>
-                                        </Style>
-                                    </ListBox.ItemContainerStyle>
+                                <TextBox Text="{Binding Explorer.ContainerSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search containers" Margin="4,2,4,5"/>
+                                <ListBox ItemsSource="{Binding Explorer.ExistingContainers}" BorderThickness="0" Background="Transparent" MaxHeight="250" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                         ItemContainerStyle="{StaticResource ResourceListItemStyle}">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
-                                            <DockPanel Margin="0,2" LastChildFill="True">
-                                                <Button DockPanel.Dock="Right" Content="✕" Foreground="#dc3545" Background="Transparent" BorderThickness="0"
+                                            <DockPanel LastChildFill="True">
+                                                <Button DockPanel.Dock="Right" Content="×" Style="{StaticResource ResourceDeleteButtonStyle}"
                                             Command="{Binding DataContext.Explorer.DeleteContainerItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                            CommandParameter="{Binding}"
-                                            Cursor="Hand" Padding="8,0" Margin="5,0,0,0"/>
+                                            CommandParameter="{Binding}"/>
 
-                                                <Border Padding="5" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove">
+                                                <Border Padding="5,3" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove">
                                                     <StackPanel Orientation="Horizontal">
                                                         <Ellipse Width="8" Height="8" Margin="0,0,8,0" VerticalAlignment="Center">
                                                             <Ellipse.Style>
@@ -272,25 +542,33 @@
                             </StackPanel>
                         </Expander>
 
-                        <Expander Header="Volumes" IsExpanded="False" Margin="0,0,0,5" Background="White" BorderBrush="#ccc" BorderThickness="1">
+                        <Expander IsExpanded="False" Style="{StaticResource SidebarExpanderStyle}">
+                            <Expander.Header>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="22"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Path Data="{StaticResource DatabaseIcon}" Fill="#D9822B" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="Volumes" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                    <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                        <TextBlock Text="{Binding Explorer.ExistingVolumes.Count}" FontSize="10" Foreground="#59636F"/>
+                                    </Border>
+                                </Grid>
+                            </Expander.Header>
                             <StackPanel>
-                                <TextBox Text="{Binding Explorer.VolumeSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search..." Margin="5"/>
-                                <ListBox ItemsSource="{Binding Explorer.ExistingVolumes}" BorderThickness="0" MaxHeight="200" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                    <ListBox.ItemContainerStyle>
-                                        <Style TargetType="ListBoxItem">
-                                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                                            <Setter Property="Padding" Value="0"/>
-                                        </Style>
-                                    </ListBox.ItemContainerStyle>
+                                <TextBox Text="{Binding Explorer.VolumeSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search volumes" Margin="4,2,4,5"/>
+                                <ListBox ItemsSource="{Binding Explorer.ExistingVolumes}" BorderThickness="0" Background="Transparent" MaxHeight="200" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                         ItemContainerStyle="{StaticResource ResourceListItemStyle}">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
-                                            <DockPanel Margin="0,2" LastChildFill="True">
-                                                <Button DockPanel.Dock="Right" Content="✕" Foreground="#dc3545" Background="Transparent" BorderThickness="0"
+                                            <DockPanel LastChildFill="True">
+                                                <Button DockPanel.Dock="Right" Content="×" Style="{StaticResource ResourceDeleteButtonStyle}"
                                             Command="{Binding DataContext.Explorer.DeleteVolumeItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                            CommandParameter="{Binding}"
-                                            Cursor="Hand" Padding="8,0" Margin="5,0,0,0"/>
+                                            CommandParameter="{Binding}"/>
 
-                                                <Border Padding="5" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove">
+                                                <Border Padding="5,3" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove">
                                                     <StackPanel Orientation="Horizontal">
                                                         <Path Data="{StaticResource DatabaseIcon}" Fill="#E67E22" Width="14" Height="14" Stretch="Uniform" Margin="0,0,8,0"/>
                                                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" VerticalAlignment="Center"/>
@@ -303,25 +581,33 @@
                             </StackPanel>
                         </Expander>
 
-                        <Expander Header="Networks" IsExpanded="False" Margin="0,0,0,5" Background="White" BorderBrush="#ccc" BorderThickness="1">
+                        <Expander IsExpanded="False" Style="{StaticResource SidebarExpanderStyle}">
+                            <Expander.Header>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="22"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Path Data="{StaticResource CloudIcon}" Fill="#8D5BA6" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="Networks" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                    <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                        <TextBlock Text="{Binding Explorer.ExistingNetworks.Count}" FontSize="10" Foreground="#59636F"/>
+                                    </Border>
+                                </Grid>
+                            </Expander.Header>
                             <StackPanel>
-                                <TextBox Text="{Binding Explorer.NetworkSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search..." Margin="5"/>
-                                <ListBox ItemsSource="{Binding Explorer.ExistingNetworks}" BorderThickness="0" MaxHeight="200" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                    <ListBox.ItemContainerStyle>
-                                        <Style TargetType="ListBoxItem">
-                                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                                            <Setter Property="Padding" Value="0"/>
-                                        </Style>
-                                    </ListBox.ItemContainerStyle>
+                                <TextBox Text="{Binding Explorer.NetworkSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search networks" Margin="4,2,4,5"/>
+                                <ListBox ItemsSource="{Binding Explorer.ExistingNetworks}" BorderThickness="0" Background="Transparent" MaxHeight="200" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                         ItemContainerStyle="{StaticResource ResourceListItemStyle}">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
-                                            <DockPanel Margin="0,2" LastChildFill="True">
-                                                <Button DockPanel.Dock="Right" Content="✕" Foreground="#dc3545" Background="Transparent" BorderThickness="0"
+                                            <DockPanel LastChildFill="True">
+                                                <Button DockPanel.Dock="Right" Content="×"
                                             Command="{Binding DataContext.Explorer.DeleteNetworkItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                            CommandParameter="{Binding}"
-                                            Cursor="Hand" Padding="8,0" Margin="5,0,0,0">
+                                            CommandParameter="{Binding}">
                                                     <Button.Style>
-                                                        <Style TargetType="Button">
+                                                        <Style TargetType="Button" BasedOn="{StaticResource ResourceDeleteButtonStyle}">
                                                             <Setter Property="Visibility" Value="Visible"/>
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding Name}" Value="bridge">
@@ -338,7 +624,7 @@
                                                     </Button.Style>
                                                 </Button>
 
-                                                <Border Padding="5" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove">
+                                                <Border Padding="5,3" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove">
                                                     <StackPanel Orientation="Horizontal">
                                                         <Path Data="{StaticResource CloudIcon}" Fill="#9B59B6" Width="14" Height="14" Stretch="Uniform" Margin="0,0,8,0"/>
                                                         <StackPanel VerticalAlignment="Center">
@@ -1035,6 +1321,21 @@
                                 </Button.ContentTemplate>
                             </Button>
 
+                            <Button Command="{Binding Toolbox.RearrangeComposeCommand}" Style="{StaticResource MenuItemStyle}" ToolTip="선택한 Compose 묶음 다시 정렬">
+                                <Button.ContentTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="25"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="↔" HorizontalAlignment="Center" Foreground="#4D7C6F"/>
+                                            <TextBlock Grid.Column="1" Text="Arrange Compose..."/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </Button.ContentTemplate>
+                            </Button>
+
                             <Separator Margin="0,2,0,2" Background="#DDDDDD"/>
 
                             <Button Click="ManageImages_Click" Style="{StaticResource MenuItemStyle}" ToolTip="도커 이미지 관리">
@@ -1573,6 +1874,13 @@
                                         <StackPanel Grid.Column="1" Margin="12,0,0,0">
                                             <TextBlock Text="{Binding ImageName}" FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                                             <TextBlock Text="{Binding DetailStatus}" FontSize="11" FontWeight="Bold" Foreground="{Binding StatusColor}"/>
+                                            <ProgressBar Height="4"
+                                                         Margin="0,4,0,0"
+                                                         IsIndeterminate="True"
+                                                         Foreground="{Binding StatusColor}"
+                                                         Background="#E9ECEF"
+                                                         BorderThickness="0"
+                                                         Visibility="{Binding IsCreating, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                         </StackPanel>
                                     </Grid>
                                 </Border>

@@ -23,6 +23,7 @@ namespace DockerDiagram.Helpers
         void ShowContainerDetail(object dataContext);
         bool TryShowMountDialog(out string mountPath, out string owner);
         bool TryShowArrangeDialog(out int columns);
+        bool TryShowComposeLayoutDialog(ComposeLayoutOptions initialOptions, out ComposeLayoutOptions options);
         bool TryShowImageTagDialog(string sourceImage, string repository, string tag, out string newRepository, out string newTag, out bool force);
         bool TryShowImagePushDialog(string repository, string tag, out string newRepository, out string newTag, out string username, out string password, out string serverAddress);
     }

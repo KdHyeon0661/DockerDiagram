@@ -122,7 +122,10 @@ namespace DockerDiagram.ViewModels
         }
         public string ImageName { get; set; } = string.Empty;
         public string PortInfo { get; set; } = string.Empty;
+        public string ComposeProjectName { get; set; } = string.Empty;
         public string ComposeServiceName { get; set; } = string.Empty;
+        public int ComposeContainerNumber { get; set; }
+        public string ComposeLayoutInstanceId { get; set; } = string.Empty;
         public string ComposeRawServiceYaml { get; set; } = string.Empty;
         public string ComposeRawVolumeYaml { get; set; } = string.Empty;
         public VolumeNodeViewModel Volume => _volume;

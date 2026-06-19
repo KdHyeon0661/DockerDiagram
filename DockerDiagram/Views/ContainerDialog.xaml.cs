@@ -4,8 +4,12 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using DockerDiagram.Helpers;
+using DockerDiagram.Models;
 using System.Linq;
 using System;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Threading;
 
 namespace DockerDiagram.Views
 {
@@ -17,6 +21,13 @@ namespace DockerDiagram.Views
     public partial class ContainerDialog : Window
     {
         private readonly IDialogService _dialogService;
+        private readonly IImageService? _imageService;
+        private readonly Dictionary<string, Control> _profileInputs =
+            new(StringComparer.OrdinalIgnoreCase);
+        private readonly DispatcherTimer _imageLookupTimer;
+        private ContainerImageProfile? _activeImageProfile;
+        private ContainerImageMetadata? _imageMetadata;
+        private CancellationTokenSource? _imageLookupCancellation;
 
         // =====================================
         // [공통] 현재 사용자가 선택한 생성 방식 (0: UI, 1: CLI, 2: Dockerfile)
@@ -47,24 +58,12 @@ namespace DockerDiagram.Views
 
         public List<string> Ports
         {
-            get
-            {
-                var list = new List<string>();
-                foreach (var line in txtPorts.Text.Split('\n'))
-                    if (!string.IsNullOrWhiteSpace(line)) list.Add(line.Trim());
-                return list;
-            }
+            get => ReadNonEmptyLines(txtPorts.Text);
         }
 
         public List<string> EnvVars
         {
-            get
-            {
-                var list = new List<string>();
-                foreach (var line in txtEnv.Text.Split('\n'))
-                    if (!string.IsNullOrWhiteSpace(line)) list.Add(line.Trim());
-                return list;
-            }
+            get => ReadNonEmptyLines(txtEnv.Text);
         }
 
         public string RestartPolicy => (cmbRestart.SelectedItem as ComboBoxItem)?.Content.ToString() ?? "no";
@@ -79,6 +78,7 @@ namespace DockerDiagram.Views
                 {
                     if (item != null) list.Add(item.ToString() ?? "");
                 }
+
                 return list;
             }
         }
@@ -100,11 +100,290 @@ namespace DockerDiagram.Views
         /// <summary>
         /// 컨테이너 생성 대화상자를 초기화하고 내부에서 사용할 다이얼로그 서비스를 연결합니다.
         /// </summary>
-        public ContainerDialog(IDialogService dialogService)
+        public ContainerDialog(IDialogService dialogService, IImageService? imageService = null)
         {
             InitializeComponent();
             _dialogService = dialogService;
+            _imageService = imageService;
+            _imageLookupTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(800)
+            };
+            _imageLookupTimer.Tick += ImageLookupTimer_Tick;
+            Closed += (_, _) =>
+            {
+                _imageLookupTimer.Stop();
+                _imageLookupCancellation?.Cancel();
+                _imageLookupCancellation?.Dispose();
+            };
+            UpdateImageProfile();
             txtName.Focus();
+        }
+
+        private void ImageName_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (tabImageSetup == null)
+                return;
+
+            UpdateImageProfile();
+            ClearImageMetadata();
+            _imageLookupTimer.Stop();
+
+            if (_imageService != null && IsLookupCandidate(ImageName))
+                _imageLookupTimer.Start();
+        }
+
+        private async void ImageLookupTimer_Tick(object? sender, EventArgs e)
+        {
+            _imageLookupTimer.Stop();
+            await InspectImageAsync();
+        }
+
+        private async void InspectImage_Click(object sender, RoutedEventArgs e)
+        {
+            _imageLookupTimer.Stop();
+            await InspectImageAsync();
+        }
+
+        private async Task InspectImageAsync()
+        {
+            if (_imageService == null)
+            {
+                txtImageLookupStatus.Text = "현재 Docker 연결에서는 이미지 조회를 사용할 수 없습니다.";
+                return;
+            }
+
+            string imageReference = ImageName;
+            if (!IsLookupCandidate(imageReference))
+            {
+                txtImageLookupStatus.Text = "조회할 이미지 이름을 입력하세요.";
+                return;
+            }
+
+            _imageLookupCancellation?.Cancel();
+            _imageLookupCancellation?.Dispose();
+            var lookupCancellation = new CancellationTokenSource();
+            _imageLookupCancellation = lookupCancellation;
+            CancellationToken cancellationToken = lookupCancellation.Token;
+
+            btnInspectImage.IsEnabled = false;
+            txtImageLookupStatus.Text = $"'{imageReference}' 설정을 조회하는 중...";
+
+            try
+            {
+                ContainerImageMetadata? metadata = await _imageService.GetImageMetadataAsync(
+                    imageReference,
+                    RegUser,
+                    RegPass,
+                    RegServer,
+                    cancellationToken);
+
+                if (cancellationToken.IsCancellationRequested ||
+                    !ImageName.Equals(imageReference, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                _imageMetadata = metadata;
+                if (metadata == null)
+                {
+                    txtImageLookupStatus.Text = "표준 이미지 설정을 찾지 못했습니다. 기존 탭에서 직접 설정할 수 있습니다.";
+                }
+                else
+                {
+                    txtImageLookupStatus.Text =
+                        $"{metadata.Source}에서 포트 {metadata.ExposedPorts.Count}개, " +
+                        $"볼륨 {metadata.Volumes.Count}개를 찾았습니다.";
+                }
+
+                RefreshSetupPresentation();
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    _imageMetadata = null;
+                    txtImageLookupStatus.Text =
+                        $"자동 조회하지 못했습니다. 직접 설정은 계속 사용할 수 있습니다. ({GetShortError(ex)})";
+                    RefreshSetupPresentation();
+                }
+            }
+            finally
+            {
+                if (ReferenceEquals(_imageLookupCancellation, lookupCancellation))
+                    btnInspectImage.IsEnabled = true;
+            }
+        }
+
+        private void UpdateImageProfile()
+        {
+            var profile = ContainerImageProfileCatalog.Find(txtImage.Text);
+            if (string.Equals(
+                    profile?.Id,
+                    _activeImageProfile?.Id,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _activeImageProfile = profile;
+            _profileInputs.Clear();
+            pnlProfileFields.Children.Clear();
+
+            bool hasProfile = profile != null;
+            profileHeader.Visibility = hasProfile ? Visibility.Visible : Visibility.Collapsed;
+            profileFormScroll.Visibility = hasProfile ? Visibility.Visible : Visibility.Collapsed;
+            pnlNoImageProfile.Visibility = hasProfile ? Visibility.Collapsed : Visibility.Visible;
+            tabImageSetup.Header = "Initial Setup";
+
+            if (!hasProfile)
+            {
+                RefreshSetupPresentation();
+                return;
+            }
+
+            txtProfileCategory.Text = string.IsNullOrWhiteSpace(profile!.Category)
+                ? "Container profile"
+                : profile.Category;
+            txtProfileName.Text = $"{profile.DisplayName} initial configuration";
+            txtProfileDescription.Text = profile.Description;
+            txtProfileNotes.Text = profile.Notes.Count == 0
+                ? string.Empty
+                : string.Join(Environment.NewLine, profile.Notes.Select(note => "- " + note));
+            chkApplyProfilePorts.Visibility = profile.Fields.Any(field =>
+                !string.IsNullOrWhiteSpace(field.ContainerPort))
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            chkApplyProfileVolumes.Visibility = profile.Volumes.Count > 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            txtProfileCommandHint.Text = string.IsNullOrWhiteSpace(profile.CommandTemplate)
+                ? string.Empty
+                : "Command 탭을 비워 두면 이 이미지의 권장 시작 명령이 자동 적용됩니다.";
+
+            foreach (var field in profile.Fields)
+                AddProfileField(field);
+
+            RefreshSetupPresentation();
+        }
+
+        private void RefreshSetupPresentation()
+        {
+            bool hasProfile = _activeImageProfile != null;
+            bool hasMetadata = _imageMetadata != null;
+            pnlProfileOptions.Visibility = hasProfile || hasMetadata
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            metadataSummaryBorder.Visibility = hasMetadata
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            btnApplyImageSuggestions.IsEnabled = hasProfile || hasMetadata;
+
+            if (!hasMetadata)
+            {
+                txtMetadataSummary.Text = string.Empty;
+                return;
+            }
+
+            string ports = _imageMetadata!.ExposedPorts.Count > 0
+                ? string.Join(", ", _imageMetadata.ExposedPorts)
+                : "none";
+            string volumes = _imageMetadata.Volumes.Count > 0
+                ? string.Join(", ", _imageMetadata.Volumes)
+                : "none";
+            string entrypoint = _imageMetadata.Entrypoint.Count > 0
+                ? string.Join(" ", _imageMetadata.Entrypoint)
+                : "default";
+            string command = _imageMetadata.Command.Count > 0
+                ? string.Join(" ", _imageMetadata.Command)
+                : "default";
+
+            txtMetadataSummary.Text =
+                $"Ports: {ports}\nVolumes: {volumes}\n" +
+                $"Default environment: {_imageMetadata.Environment.Count} entries (already included in image)\n" +
+                $"Entrypoint: {entrypoint}\nCommand: {command}";
+        }
+
+        private void ClearImageMetadata()
+        {
+            _imageLookupCancellation?.Cancel();
+            _imageMetadata = null;
+            txtImageLookupStatus.Text = string.IsNullOrWhiteSpace(ImageName)
+                ? "이미지를 입력하면 포트와 볼륨 설정을 조회합니다."
+                : "입력을 마치면 자동으로 조회합니다.";
+            RefreshSetupPresentation();
+        }
+
+        private void AddProfileField(ContainerImageProfileField field)
+        {
+            if (field.Type.Equals("bool", StringComparison.OrdinalIgnoreCase))
+            {
+                var checkBox = new CheckBox
+                {
+                    Content = field.Label,
+                    IsChecked = field.DefaultValue.Equals("true", StringComparison.OrdinalIgnoreCase),
+                    Margin = new Thickness(0, 5, 0, 10),
+                    Tag = field
+                };
+                pnlProfileFields.Children.Add(checkBox);
+                _profileInputs[field.Key] = checkBox;
+                return;
+            }
+
+            pnlProfileFields.Children.Add(new TextBlock
+            {
+                Text = field.Label,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = System.Windows.Media.Brushes.DarkSlateGray,
+                Margin = new Thickness(0, 2, 0, 4)
+            });
+
+            Control input;
+            if (field.Type.Equals("password", StringComparison.OrdinalIgnoreCase))
+            {
+                input = new PasswordBox
+                {
+                    Password = field.DefaultValue,
+                    Padding = new Thickness(6),
+                    Margin = new Thickness(0, 0, 0, 5),
+                    Tag = field
+                };
+            }
+            else
+            {
+                var textBox = new TextBox
+                {
+                    Text = field.DefaultValue,
+                    Padding = new Thickness(6),
+                    Margin = new Thickness(0, 0, 0, 5),
+                    Tag = field
+                };
+                if (field.Type.Equals("port", StringComparison.OrdinalIgnoreCase))
+                    textBox.PreviewTextInput += NumberValidationTextBox;
+                input = textBox;
+            }
+
+            pnlProfileFields.Children.Add(input);
+            _profileInputs[field.Key] = input;
+
+            if (!string.IsNullOrWhiteSpace(field.HelpText))
+            {
+                pnlProfileFields.Children.Add(new TextBlock
+                {
+                    Text = field.HelpText,
+                    FontSize = 10,
+                    Foreground = System.Windows.Media.Brushes.Gray,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 0, 0, 9)
+                });
+            }
+            else
+            {
+                input.Margin = new Thickness(0, 0, 0, 10);
+            }
         }
 
         /// <summary>
@@ -139,19 +418,19 @@ namespace DockerDiagram.Views
                     return;
                 }
 
+                if (!ValidateManualEnvironmentVariables())
+                    return;
+
                 ResultBindMounts.Clear();
                 ResultNamedVolumes.Clear();
-                foreach (var item in lstVolumes.Items)
+                foreach (string volumeString in Volumes)
                 {
-                    if (item is string volumeString)
-                    {
-                        bool isWindowsPath = Regex.IsMatch(volumeString, @"^[a-zA-Z]:[\\/]");
-                        bool isLinuxPath = volumeString.StartsWith("/");
-                        bool isRelativePath = volumeString.StartsWith("./") || volumeString.StartsWith("../");
+                    bool isWindowsPath = Regex.IsMatch(volumeString, @"^[a-zA-Z]:[\\/]");
+                    bool isLinuxPath = volumeString.StartsWith("/");
+                    bool isRelativePath = volumeString.StartsWith("./") || volumeString.StartsWith("../");
 
-                        if (isWindowsPath || isLinuxPath || isRelativePath) ResultBindMounts.Add(volumeString);
-                        else ResultNamedVolumes.Add(volumeString);
-                    }
+                    if (isWindowsPath || isLinuxPath || isRelativePath) ResultBindMounts.Add(volumeString);
+                    else ResultNamedVolumes.Add(volumeString);
                 }
             }
             else if (SelectedCreationMode == 1) // CLI 방식
@@ -172,6 +451,250 @@ namespace DockerDiagram.Views
             }
 
             DialogResult = true;
+        }
+
+        private void ApplyImageSuggestions_Click(object sender, RoutedEventArgs e)
+        {
+            var ports = ReadNonEmptyLines(txtPorts.Text);
+            var environments = ReadNonEmptyLines(txtEnv.Text);
+            var volumes = lstVolumes.Items.Cast<object>()
+                .Select(item => item?.ToString() ?? string.Empty)
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .ToList();
+
+            if (_activeImageProfile != null)
+            {
+                foreach (var profileField in _activeImageProfile.Fields)
+                {
+                    string value = profileField.Type.Equals("bool", StringComparison.OrdinalIgnoreCase)
+                        ? (GetProfileBoolValue(profileField.Key)
+                            ? profileField.TrueValue
+                            : profileField.FalseValue)
+                        : GetProfileValue(profileField.Key);
+
+                    if (!string.IsNullOrWhiteSpace(profileField.EnvironmentVariable) &&
+                        !string.IsNullOrWhiteSpace(value))
+                    {
+                        AddEnvironmentIfMissing(
+                            environments,
+                            profileField.EnvironmentVariable,
+                            value);
+                    }
+
+                    if (chkApplyProfilePorts.IsChecked == true &&
+                        !string.IsNullOrWhiteSpace(profileField.ContainerPort) &&
+                        int.TryParse(value, out int port) &&
+                        port is >= 1 and <= 65535)
+                    {
+                        AddPortIfMissing(ports, $"{port}:{profileField.ContainerPort}");
+                    }
+                }
+
+                if (chkApplyProfileVolumes.IsChecked == true)
+                {
+                    string containerName = SanitizeDockerName(
+                        string.IsNullOrWhiteSpace(ContainerName)
+                            ? _activeImageProfile.Id
+                            : ContainerName);
+                    foreach (var volume in _activeImageProfile.Volumes)
+                    {
+                        AddVolumeIfMissing(
+                            volumes,
+                            $"{containerName}-{volume.NameSuffix}:{volume.ContainerPath}");
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(txtCommand.Text) &&
+                    CanResolveProfileCommand())
+                {
+                    txtCommand.Text = ResolveProfileTemplate(_activeImageProfile.CommandTemplate);
+                }
+            }
+
+            if (_imageMetadata != null)
+            {
+                if (chkApplyProfilePorts.IsChecked == true)
+                {
+                    foreach (string exposedPort in _imageMetadata.ExposedPorts)
+                    {
+                        string containerPort = exposedPort.Split('/')[0];
+                        if (int.TryParse(containerPort, out int port))
+                            AddPortIfMissing(ports, $"{port}:{exposedPort}");
+                    }
+                }
+
+                if (chkApplyProfileVolumes.IsChecked == true)
+                {
+                    string containerName = SanitizeDockerName(
+                        string.IsNullOrWhiteSpace(ContainerName) ? "container" : ContainerName);
+                    int index = 1;
+                    foreach (string target in _imageMetadata.Volumes)
+                    {
+                        string suffix = GetVolumeNameSuffix(target, index++);
+                        AddVolumeIfMissing(
+                            volumes,
+                            $"{containerName}-{suffix}:{target}");
+                    }
+                }
+            }
+
+            txtPorts.Text = string.Join(Environment.NewLine, ports);
+            txtEnv.Text = string.Join(Environment.NewLine, environments);
+            lstVolumes.Items.Clear();
+            foreach (string volume in volumes)
+                lstVolumes.Items.Add(volume);
+
+            txtImageLookupStatus.Text =
+                "제안 내용을 설정 탭에 적용했습니다. 생성 전에 자유롭게 수정할 수 있습니다.";
+        }
+
+        private bool ValidateManualEnvironmentVariables()
+        {
+            foreach (string line in ReadNonEmptyLines(txtEnv.Text))
+            {
+                int separator = line.IndexOf('=');
+                if (separator <= 0 ||
+                    !Regex.IsMatch(line[..separator].Trim(), @"^[A-Za-z_][A-Za-z0-9_.-]*$"))
+                {
+                    _dialogService.ShowInfo(
+                        $"환경변수는 KEY=VALUE 형식이어야 합니다.\n입력값: {line}",
+                        "환경변수 오류");
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private string GetProfileValue(string key)
+        {
+            if (!_profileInputs.TryGetValue(key, out Control? input))
+                return string.Empty;
+
+            return input switch
+            {
+                TextBox textBox => textBox.Text.Trim(),
+                PasswordBox passwordBox => passwordBox.Password,
+                CheckBox checkBox => checkBox.IsChecked == true ? "true" : "false",
+                _ => string.Empty
+            };
+        }
+
+        private bool GetProfileBoolValue(string key) =>
+            _profileInputs.TryGetValue(key, out Control? input) &&
+            input is CheckBox checkBox &&
+            checkBox.IsChecked == true;
+
+        private string ResolveProfileTemplate(string template)
+        {
+            if (_activeImageProfile == null || string.IsNullOrWhiteSpace(template))
+                return string.Empty;
+
+            string result = template;
+            foreach (var field in _activeImageProfile.Fields)
+            {
+                string escapedValue = GetProfileValue(field.Key).Replace("\"", "\\\"");
+                result = result.Replace(
+                    "${" + field.Key + "}",
+                    escapedValue,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            return result;
+        }
+
+        private bool CanResolveProfileCommand()
+        {
+            if (_activeImageProfile == null ||
+                string.IsNullOrWhiteSpace(_activeImageProfile.CommandTemplate))
+            {
+                return false;
+            }
+
+            return _activeImageProfile.Fields
+                .Where(profileField => _activeImageProfile.CommandTemplate.Contains(
+                    "${" + profileField.Key + "}",
+                    StringComparison.OrdinalIgnoreCase))
+                .All(profileField => !string.IsNullOrWhiteSpace(GetProfileValue(profileField.Key)));
+        }
+
+        private static List<string> ReadNonEmptyLines(string text) =>
+            text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .Where(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith('#'))
+                .ToList();
+
+        private static string GetContainerPort(string mapping)
+        {
+            string[] parts = mapping.Split(':');
+            string port = parts.Length > 1 ? parts[^1] : parts[0];
+            int protocolIndex = port.IndexOf('/');
+            return protocolIndex >= 0 ? port[..protocolIndex] : port;
+        }
+
+        private static string GetVolumeTarget(string mapping)
+        {
+            if (Regex.IsMatch(mapping, @"^[a-zA-Z]:[\\/]"))
+            {
+                int separator = mapping.IndexOf(':', 2);
+                return separator >= 0 ? mapping[(separator + 1)..].Split(':')[0] : string.Empty;
+            }
+
+            string[] parts = mapping.Split(':');
+            return parts.Length > 1 ? parts[1] : string.Empty;
+        }
+
+        private static string SanitizeDockerName(string value)
+        {
+            string sanitized = Regex.Replace(value.Trim(), @"[^A-Za-z0-9_.-]", "-");
+            return string.IsNullOrWhiteSpace(sanitized) ? "container" : sanitized;
+        }
+
+        private static void AddEnvironmentIfMissing(
+            ICollection<string> environments,
+            string key,
+            string value)
+        {
+            bool exists = environments.Any(line =>
+                line.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase));
+            if (!exists)
+                environments.Add($"{key}={value}");
+        }
+
+        private static void AddPortIfMissing(ICollection<string> ports, string mapping)
+        {
+            string containerPort = GetContainerPort(mapping);
+            bool exists = ports.Any(port =>
+                GetContainerPort(port).Equals(containerPort, StringComparison.OrdinalIgnoreCase));
+            if (!exists)
+                ports.Add(mapping);
+        }
+
+        private static void AddVolumeIfMissing(ICollection<string> volumes, string mapping)
+        {
+            string target = GetVolumeTarget(mapping);
+            bool exists = volumes.Any(volume =>
+                GetVolumeTarget(volume).Equals(target, StringComparison.OrdinalIgnoreCase));
+            if (!exists)
+                volumes.Add(mapping);
+        }
+
+        private static string GetVolumeNameSuffix(string target, int index)
+        {
+            string segment = target.TrimEnd('/')
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .LastOrDefault() ?? $"data-{index}";
+            string suffix = Regex.Replace(segment.ToLowerInvariant(), @"[^a-z0-9_.-]", "-");
+            return string.IsNullOrWhiteSpace(suffix) ? $"data-{index}" : suffix;
+        }
+
+        private static bool IsLookupCandidate(string imageReference) =>
+            imageReference.Length >= 2 &&
+            !imageReference.Any(char.IsWhiteSpace);
+
+        private static string GetShortError(Exception exception)
+        {
+            string message = exception.Message.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            return message.Length <= 90 ? message : message[..90] + "...";
         }
 
         /// <summary>

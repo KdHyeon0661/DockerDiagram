@@ -21,6 +21,8 @@ namespace DockerDiagram.ViewModels
         public ICommand SystemPruneCommand { get; }
         public ICommand ImportComposeCommand { get; }
         public ICommand ExportComposeCommand { get; }
+        public ICommand RearrangeComposeCommand { get; }
+        private ComposeLayoutOptions _composeLayoutOptions = new();
 
         public ToolboxViewModel(MainViewModel mainVm, IDockerService defaultDockerService, IDialogService dialogService, IComposeService composeService)
         {
@@ -54,6 +56,19 @@ namespace DockerDiagram.ViewModels
                     _dialogService,
                     _composeService
                 );
+            });
+
+            RearrangeComposeCommand = new AsyncRelayCommand(async _ =>
+            {
+                if (!_mainVm.HasSelectedComposeLayout())
+                {
+                    _dialogService.ShowInfo("Compose로 배치된 노드나 네트워크를 먼저 선택해 주세요.", "Compose 재정렬");
+                    return;
+                }
+
+                if (!_dialogService.TryShowComposeLayoutDialog(_composeLayoutOptions, out ComposeLayoutOptions options)) return;
+                _composeLayoutOptions = options.Clone();
+                await _mainVm.RearrangeSelectedComposeAsync(options);
             });
         }
 

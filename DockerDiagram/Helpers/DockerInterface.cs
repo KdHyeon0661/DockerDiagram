@@ -33,7 +33,7 @@ namespace DockerDiagram.Helpers
         Task<string> CommitContainerAsync(string containerId, string repository, string tag, string comment, string author, bool pause);
         Task ExportContainerAsync(string containerId, string tarFilePath);
 
-        Task<string> CreateAndStartContainerAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, string command = "", bool tty = false);
+        Task<string> CreateAndStartContainerAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, string command = "", bool tty = false, string networkName = "");
         Task UpdateContainerResourcesAsync(string containerId, double cpuCount, long memoryMb);
 
         Task CopyFromContainerAsync(string containerId, string containerPath, string hostPath);
@@ -103,6 +103,12 @@ namespace DockerDiagram.Helpers
         Task LoadImageFromTarAsync(string tarFilePath);
         Task BuildImageAsync(string targetImageName, string buildContextPath, string dockerfilePath, IProgress<JSONMessage>? progress = null);
         Task<List<ImageSearchResponse>> SearchImagesAsync(string term, int limit = 20);
+        Task<ContainerImageMetadata?> GetImageMetadataAsync(
+            string imageReference,
+            string? username = null,
+            string? password = null,
+            string? serverAddress = null,
+            CancellationToken cancellationToken = default);
         Task PullImageWithProgressAsync(string image, string tag, IProgress<JSONMessage> progress, string? username = null, string? password = null, string? serverAddress = null);
     }
 }

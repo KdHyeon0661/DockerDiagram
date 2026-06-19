@@ -1,0 +1,62 @@
+{
+  "id": "wordpress-mysql",
+  "name": "WordPress + MySQL",
+  "description": "WordPress site with MySQL and persistent data volumes",
+  "category": "CMS",
+  "defaultProjectName": "blog",
+  "accentColor": "#21759B",
+  "variables": [
+    { "key": "WEB_PORT", "label": "Web port", "type": "port", "defaultValue": "8080" },
+    { "key": "DB_NAME", "label": "Database name", "type": "text", "defaultValue": "wordpress" },
+    { "key": "DB_USER", "label": "Database user", "type": "text", "defaultValue": "wordpress" },
+    { "key": "DB_PASSWORD", "label": "Database password", "type": "password", "defaultValue": "" },
+    { "key": "DB_ROOT_PASSWORD", "label": "MySQL root password", "type": "password", "defaultValue": "" }
+  ],
+  "networks": [
+    { "key": "web", "name": "${PROJECT}-network", "driver": "bridge", "x": 0, "y": 0, "width": 520, "height": 280 }
+  ],
+  "volumes": [
+    { "key": "wordpress-data", "name": "${PROJECT}-wordpress-data", "driver": "local", "x": 40, "y": 330 },
+    { "key": "mysql-data", "name": "${PROJECT}-mysql-data", "driver": "local", "x": 300, "y": 330 }
+  ],
+  "containers": [
+    {
+      "key": "wordpress",
+      "name": "${PROJECT}-wordpress",
+      "image": "wordpress:latest",
+      "ports": [ "${WEB_PORT}:80" ],
+      "environment": {
+        "WORDPRESS_DB_HOST": "${PROJECT}-mysql:3306",
+        "WORDPRESS_DB_NAME": "${DB_NAME}",
+        "WORDPRESS_DB_USER": "${DB_USER}",
+        "WORDPRESS_DB_PASSWORD": "${DB_PASSWORD}"
+      },
+      "volumeMounts": [
+        { "volume": "wordpress-data", "target": "/var/www/html" }
+      ],
+      "networks": [ "web" ],
+      "x": 40,
+      "y": 100
+    },
+    {
+      "key": "mysql",
+      "name": "${PROJECT}-mysql",
+      "image": "mysql:8.4",
+      "environment": {
+        "MYSQL_DATABASE": "${DB_NAME}",
+        "MYSQL_USER": "${DB_USER}",
+        "MYSQL_PASSWORD": "${DB_PASSWORD}",
+        "MYSQL_ROOT_PASSWORD": "${DB_ROOT_PASSWORD}"
+      },
+      "volumeMounts": [
+        { "volume": "mysql-data", "target": "/var/lib/mysql" }
+      ],
+      "networks": [ "web" ],
+      "x": 300,
+      "y": 100
+    }
+  ],
+  "dependencies": [
+    { "source": "wordpress", "target": "mysql" }
+  ]
+}

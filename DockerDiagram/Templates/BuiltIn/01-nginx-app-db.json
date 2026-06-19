@@ -1,0 +1,72 @@
+{
+  "id": "nginx-app-db",
+  "name": "Nginx + App + DB",
+  "description": "Nginx reverse proxy, application service, PostgreSQL database",
+  "category": "Web",
+  "defaultProjectName": "webstack",
+  "accentColor": "#287BAE",
+  "variables": [
+    { "key": "WEB_PORT", "label": "Web port", "type": "port", "defaultValue": "8080" },
+    { "key": "APP_IMAGE", "label": "App image", "type": "image", "defaultValue": "python:3.12-alpine" },
+    { "key": "APP_PORT", "label": "App port", "type": "port", "defaultValue": "8000" },
+    { "key": "APP_COMMAND", "label": "App start command", "type": "text", "defaultValue": "python -m http.server ${APP_PORT}" },
+    { "key": "DB_NAME", "label": "Database name", "type": "text", "defaultValue": "app" },
+    { "key": "DB_USER", "label": "Database user", "type": "text", "defaultValue": "app" },
+    { "key": "DB_PASSWORD", "label": "Database password", "type": "password", "defaultValue": "" }
+  ],
+  "networks": [
+    { "key": "frontend", "name": "${PROJECT}-frontend", "driver": "bridge", "x": 0, "y": 0, "width": 500, "height": 280 },
+    { "key": "backend", "name": "${PROJECT}-backend", "driver": "bridge", "x": 240, "y": 0, "width": 500, "height": 280 }
+  ],
+  "volumes": [
+    { "key": "db-data", "name": "${PROJECT}-db-data", "driver": "local", "x": 500, "y": 330 }
+  ],
+  "containers": [
+    {
+      "key": "nginx",
+      "name": "${PROJECT}-nginx",
+      "image": "nginx:alpine",
+      "ports": [ "${WEB_PORT}:80" ],
+      "networks": [ "frontend" ],
+      "command": "/bin/sh -c \"printf 'events {} http { server { listen 80; location / { proxy_pass http://${PROJECT}-app:${APP_PORT}; proxy_set_header Host $host; } } }' > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'\"",
+      "x": 40,
+      "y": 100
+    },
+    {
+      "key": "app",
+      "name": "${PROJECT}-app",
+      "image": "${APP_IMAGE}",
+      "environment": {
+        "DB_HOST": "${PROJECT}-db",
+        "DB_PORT": "5432",
+        "DB_NAME": "${DB_NAME}",
+        "DB_USER": "${DB_USER}",
+        "DB_PASSWORD": "${DB_PASSWORD}"
+      },
+      "networks": [ "frontend", "backend" ],
+      "command": "${APP_COMMAND}",
+      "x": 290,
+      "y": 100
+    },
+    {
+      "key": "db",
+      "name": "${PROJECT}-db",
+      "image": "postgres:16-alpine",
+      "environment": {
+        "POSTGRES_DB": "${DB_NAME}",
+        "POSTGRES_USER": "${DB_USER}",
+        "POSTGRES_PASSWORD": "${DB_PASSWORD}"
+      },
+      "volumeMounts": [
+        { "volume": "db-data", "target": "/var/lib/postgresql/data" }
+      ],
+      "networks": [ "backend" ],
+      "x": 540,
+      "y": 100
+    }
+  ],
+  "dependencies": [
+    { "source": "nginx", "target": "app" },
+    { "source": "app", "target": "db" }
+  ]
+}

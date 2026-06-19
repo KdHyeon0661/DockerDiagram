@@ -30,5 +30,13 @@
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
   </ItemGroup>
+	<ItemGroup>
+		<Content Include="Templates\BuiltIn\*.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
 
+		<EmbeddedResource Include="Templates\BuiltIn\*.json">
+			<LogicalName>DockerDiagram.Templates.BuiltIn.%(Filename)%(Extension)</LogicalName>
+		</EmbeddedResource>
+	</ItemGroup>
 </Project>

@@ -159,6 +159,8 @@ namespace DockerDiagram.ViewModels
 
             CalculateRoute(); // 교체된 타겟을 기준으로 경로 재계산
         }
+
+        public void RefreshRoute() => CalculateRoute();
         #endregion
 
         #region Private Routing Methods
@@ -319,6 +321,11 @@ namespace DockerDiagram.ViewModels
         #region Event Handlers
         private void OnNodePositionChanged(object? sender, EventArgs e)
         {
+            if ((Source as ConnectableItemViewModel)?.ParentSheet?.IsLayoutUpdating == true ||
+                (Target as ConnectableItemViewModel)?.ParentSheet?.IsLayoutUpdating == true)
+            {
+                return;
+            }
             CalculateRoute();
         }
         #endregion

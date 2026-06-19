@@ -76,6 +76,7 @@ namespace DockerDiagram.Helpers
                 {
                     ComposeRawYaml = yamlContent
                 };
+                string layoutInstanceId = Guid.NewGuid().ToString("N");
                 // =================================================================
 
                 var currentContainerSvc = (IContainerService)targetDockerService;
@@ -83,8 +84,6 @@ namespace DockerDiagram.Helpers
                 var currentNetworkSvc = (INetworkService)targetDockerService;
 
                 var nodeMap = new Dictionary<string, NodeViewModel>();
-                var groupMap = new Dictionary<string, GroupViewModel>();
-
                 // =================================================================
                 // 1단계: YAML의 Volumes와 Services를 분석하여 시각적 노드 객체 생성
                 // =================================================================
@@ -98,7 +97,8 @@ namespace DockerDiagram.Helpers
                             Name = vol.Key,
                             Type = NodeType.Volume,
                             Width = 160,
-                            Height = 80
+                            Height = 80,
+                            ComposeLayoutInstanceId = layoutInstanceId
                         };
                         ApplyComposeVolumeSettings(nodeMap[vol.Key], rawComposeRoot, vol.Key);
                         newSheet.Nodes.Add(nodeMap[vol.Key]);
@@ -121,6 +121,7 @@ namespace DockerDiagram.Helpers
                         RestartPolicy = svc.Value.Restart ?? "no",
                         PortBindings = portBindings,
                         EnvironmentVariables = envVars,
+                        ComposeLayoutInstanceId = layoutInstanceId,
                         ComposeServiceName = svc.Key,
                         ComposeRawServiceYaml = ComposeYamlHelper.GetServiceYaml(rawComposeRoot, svc.Key)
                     };
@@ -131,8 +132,7 @@ namespace DockerDiagram.Helpers
                 // 2단계: 네트워크 분류 및 의존성/볼륨 선 긋기 로직
                 // =================================================================
                 var visualGroupMap = new Dictionary<string, List<NodeViewModel>>();
-                var unassignedNodes = new List<NodeViewModel>();
-                var volumeToNetMap = new Dictionary<NodeViewModel, string>();
+                var dependencyMap = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
                 if (composeData.Networks != null)
                 {
@@ -145,7 +145,6 @@ namespace DockerDiagram.Helpers
                     if (!nodeMap.TryGetValue(svc.Key, out var sourceContainer)) continue;
 
                     var serviceNetworks = ComposeYamlHelper.ToNetworkNames(svc.Value.Networks);
-                    string? primaryNet = serviceNetworks.FirstOrDefault();
 
                     if (serviceNetworks.Count > 0)
                     {
@@ -163,9 +162,11 @@ namespace DockerDiagram.Helpers
                     }
                     else
                     {
-                        unassignedNodes.Add(sourceContainer);
+                        const string defaultNetworkName = "default";
+                        if (!visualGroupMap.ContainsKey(defaultNetworkName))
+                            visualGroupMap[defaultNetworkName] = new List<NodeViewModel>();
+                        visualGroupMap[defaultNetworkName].Add(sourceContainer);
                     }
-
                     // 볼륨 마운트 선 연결
                     var volumeMounts = ComposeYamlHelper.ToVolumeMounts(svc.Value.Volumes);
                     if (volumeMounts.Count > 0)
@@ -183,7 +184,8 @@ namespace DockerDiagram.Helpers
                                     Name = volName,
                                     Type = NodeType.Volume,
                                     Width = 160,
-                                    Height = 80
+                                    Height = 80,
+                                    ComposeLayoutInstanceId = layoutInstanceId
                                 };
                                 ApplyComposeVolumeSettings(targetVolume, rawComposeRoot, volName);
                                 nodeMap[volName] = targetVolume;
@@ -192,31 +194,25 @@ namespace DockerDiagram.Helpers
 
                             if (!newSheet.Connectors.Any(c => c.Source == sourceContainer && c.Target == targetVolume))
                             {
-                                newSheet.Connectors.Add(new ConnectorViewModel(sourceContainer, targetVolume, PortDirection.Bottom, PortDirection.Top, dialogService)
+                                newSheet.Connectors.Add(new ConnectorViewModel(sourceContainer, targetVolume, PortDirection.Right, PortDirection.Left, dialogService)
                                 {
                                     RelationType = RelationType.VolumeMount,
                                     MountPath = mountPath
                                 });
-
-                                // 볼륨을 네트워크 그룹 안에 포함시키기 위한 처리
-                                if (primaryNet != null && !volumeToNetMap.ContainsKey(targetVolume))
-                                {
-                                    volumeToNetMap[targetVolume] = primaryNet;
-                                    visualGroupMap[primaryNet].Add(targetVolume);
-                                }
                             }
                         }
                     }
 
                     // 의존성(depends_on) 선 연결
                     var dependsOn = ComposeYamlHelper.ToDependsOnServiceNames(svc.Value.DependsOn);
+                    dependencyMap[svc.Key] = dependsOn;
                     if (dependsOn.Count > 0)
                     {
                         foreach (var dep in dependsOn)
                         {
                             if (nodeMap.TryGetValue(dep, out var targetContainer))
                             {
-                                newSheet.Connectors.Add(new ConnectorViewModel(targetContainer, sourceContainer, PortDirection.Bottom, PortDirection.Top, dialogService)
+                                newSheet.Connectors.Add(new ConnectorViewModel(targetContainer, sourceContainer, PortDirection.Right, PortDirection.Left, dialogService)
                                 {
                                     RelationType = RelationType.Dependency
                                 });
@@ -225,81 +221,32 @@ namespace DockerDiagram.Helpers
                     }
                 }
 
-                // 남은 볼륨 노드 처리
-                foreach (var volNode in nodeMap.Values.Where(n => n.Type == NodeType.Volume))
-                {
-                    if (!volumeToNetMap.ContainsKey(volNode)) unassignedNodes.Add(volNode);
-                }
-
                 // =================================================================
-                // 3단계: 화면 상의 2열(2xN) 자동 배치 알고리즘
+                // 3단계: depends_on 기반 상단 정렬 트리와 네트워크 영역 배치
                 // =================================================================
-                double currentGroupX = 50;
-                double currentGroupY = 50;
-                double maxGroupHeightInRow = 0;
-
                 foreach (var kvp in visualGroupMap)
                 {
                     string netName = kvp.Key;
                     var nodesInGroup = kvp.Value;
 
-                    int cols = 2;
-                    int rows = Math.Max(1, (int)Math.Ceiling(nodesInGroup.Count / (double)cols));
-
-                    // 노드 규격이 160x80으로 커졌으므로, 그룹이 품어줄 수 있도록 셀 크기도 살짝 넉넉하게 180x110 그대로 유지합니다.
-                    double cellWidth = 180, cellHeight = 110;
-                    double gWidth = (cols * cellWidth) + 40;
-                    double gHeight = (rows * cellHeight) + 60;
-
-                    var groupVm = new GroupViewModel(currentGroupX, currentGroupY, gWidth, gHeight, currentNetworkSvc, dialogService, netName, GroupType.Network)
+                    var groupVm = new GroupViewModel(50, 50, 220, 150, currentNetworkSvc, dialogService, netName, GroupType.Network)
                     {
                         Id = Guid.NewGuid().ToString(),
+                        ComposeLayoutInstanceId = layoutInstanceId,
                         ParentSheet = newSheet // 그룹이 소속된 시트를 명시적으로 할당
                     };
                     ApplyComposeNetworkSettings(groupVm, rawComposeRoot, netName);
 
                     newSheet.Groups.Add(groupVm);
-                    groupMap[netName] = groupVm;
-
-                    // 그룹 내 노드들을 격자(Grid) 형태로 예쁘게 배치
-                    for (int i = 0; i < nodesInGroup.Count; i++)
-                    {
-                        var node = nodesInGroup[i];
-                        int r = i / cols;
-                        int c = i % cols;
-
-                        node.X = currentGroupX + 20 + (c * cellWidth);
-                        node.Y = currentGroupY + 50 + (r * cellHeight);
-
+                    foreach (NodeViewModel node in nodesInGroup.Distinct())
                         await groupVm.AddNodeAsync(node, isRestoring: true);
-                    }
-
-                    // 다음 그룹 배치를 위해 X좌표 이동
-                    currentGroupX += gWidth + 50;
-                    if (gHeight > maxGroupHeightInRow) maxGroupHeightInRow = gHeight;
-
-                    // 화면 가로 끝에 도달하면 다음 줄로 이동 (줄바꿈)
-                    if (currentGroupX > 1200)
-                    {
-                        currentGroupX = 50;
-                        currentGroupY += maxGroupHeightInRow + 50;
-                        maxGroupHeightInRow = 0;
-                    }
                 }
 
-                // 네트워크 그룹에 속하지 않은 노드를 별도 배치합니다.
-                if (unassignedNodes.Count > 0)
-                {
-                    currentGroupY += maxGroupHeightInRow + 50;
-                    currentGroupX = 50;
-
-                    for (int i = 0; i < unassignedNodes.Count; i++)
-                    {
-                        var node = unassignedNodes[i];
-                        node.X = currentGroupX + ((i % 4) * 180); // 셀 너비 180 간격
-                        node.Y = currentGroupY + ((i / 4) * 110); // 셀 높이 110 간격
-                    }
-                }
+                var serviceNodeMap = composeData.Services.Keys.ToDictionary(
+                    serviceName => serviceName,
+                    serviceName => nodeMap[serviceName],
+                    StringComparer.OrdinalIgnoreCase);
+                ComposeDiagramLayoutService.Arrange(newSheet, serviceNodeMap, dependencyMap, 50, 50);
 
                 mainVm.SheetManager.AddExistingSheet(newSheet);
 
@@ -326,19 +273,34 @@ namespace DockerDiagram.Helpers
                             // 배포 대상이 원격일 수도 있으므로, 동적으로 결정된 targetDockerService를 사용
                             var containerSvc = (IContainerService)targetDockerService;
                             var allContainers = await containerSvc.GetContainersAsync();
+                            string composeProjectName = DetectComposeProjectName(
+                                allContainers,
+                                selectedFileName,
+                                composeData);
+
+                            if (!string.IsNullOrWhiteSpace(composeProjectName) &&
+                                newSheet.Groups.FirstOrDefault(group =>
+                                    group.Type == GroupType.Network &&
+                                    string.Equals(group.Title, "default", StringComparison.OrdinalIgnoreCase)) is GroupViewModel defaultNetwork)
+                            {
+                                defaultNetwork.ComposeNetworkName = $"{composeProjectName}_default";
+                            }
 
                             // 배포된 컨테이너들의 실제 ID를 매핑하여 상세 정보를 다시 불러옴
                             foreach (var node in containerNodes)
                             {
-                                var matched = allContainers.FirstOrDefault(c =>
-                                    c.Name == $"/{node.Name}" ||
-                                    c.Name.Contains($"-{node.Name}-") ||
-                                    c.Name.Contains($"_{node.Name}_") ||
-                                    c.Name.EndsWith(node.Name));
+                                var matched = FindComposeContainer(
+                                    allContainers,
+                                    composeProjectName,
+                                    node.ComposeServiceName,
+                                    node.Name);
 
                                 if (matched != null)
                                 {
                                     node.ContainerId = matched.Id;
+                                    node.ComposeProjectName = matched.ComposeProjectName;
+                                    node.ComposeServiceName = matched.ComposeServiceName;
+                                    node.ComposeContainerNumber = matched.ComposeContainerNumber;
                                     await node.RefreshDetailsAsync(); // 실시간 상태(CPU, 메모리 등) 갱신
                                 }
                             }
@@ -365,6 +327,93 @@ namespace DockerDiagram.Helpers
             {
                 dialogService.ShowMessage($"불러오기 실패: {ex.Message}");
             }
+        }
+
+        private static string DetectComposeProjectName(
+            IReadOnlyCollection<DockerContainer> containers,
+            string composeFilePath,
+            ComposeFileModel composeData)
+        {
+            var configMatches = containers
+                .Where(container => container.IsComposeManaged)
+                .Where(container => ComposeConfigContainsFile(container, composeFilePath))
+                .Select(container => container.ComposeProjectName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (configMatches.Count == 1)
+                return configMatches[0];
+
+            if (!string.IsNullOrWhiteSpace(composeData.Name))
+            {
+                string? namedProject = containers
+                    .Where(container => container.IsComposeManaged)
+                    .Select(container => container.ComposeProjectName)
+                    .FirstOrDefault(project => project.Equals(composeData.Name, StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrWhiteSpace(namedProject))
+                    return namedProject;
+            }
+
+            var serviceNames = composeData.Services.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var rankedProjects = containers
+                .Where(container => container.IsComposeManaged && serviceNames.Contains(container.ComposeServiceName))
+                .GroupBy(container => container.ComposeProjectName, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new { Name = group.Key, Count = group.Count() })
+                .OrderByDescending(project => project.Count)
+                .ToList();
+
+            return rankedProjects.Count == 1 ||
+                   (rankedProjects.Count > 1 && rankedProjects[0].Count > rankedProjects[1].Count)
+                ? rankedProjects[0].Name
+                : string.Empty;
+        }
+
+        private static bool ComposeConfigContainsFile(DockerContainer container, string composeFilePath)
+        {
+            if (string.IsNullOrWhiteSpace(container.ComposeConfigFiles))
+                return false;
+
+            string expectedPath = Path.GetFullPath(composeFilePath);
+            foreach (string configFile in container.ComposeConfigFiles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                string candidatePath = configFile;
+                if (!Path.IsPathRooted(candidatePath) && !string.IsNullOrWhiteSpace(container.ComposeWorkingDirectory))
+                    candidatePath = Path.Combine(container.ComposeWorkingDirectory, candidatePath);
+
+                try
+                {
+                    if (Path.GetFullPath(candidatePath).Equals(expectedPath, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+                catch
+                {
+                    // 잘못된 경로 라벨은 다른 매칭 방법으로 폴백합니다.
+                }
+            }
+
+            return false;
+        }
+
+        private static DockerContainer? FindComposeContainer(
+            IReadOnlyCollection<DockerContainer> containers,
+            string projectName,
+            string serviceName,
+            string fallbackNodeName)
+        {
+            var labeledMatches = containers
+                .Where(container => container.IsComposeManaged)
+                .Where(container => string.IsNullOrWhiteSpace(projectName) ||
+                                    container.ComposeProjectName.Equals(projectName, StringComparison.OrdinalIgnoreCase))
+                .Where(container => container.ComposeServiceName.Equals(serviceName, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(container => container.ComposeContainerNumber)
+                .ToList();
+            if (labeledMatches.Count > 0)
+                return labeledMatches[0];
+
+            return containers.FirstOrDefault(container =>
+                container.Name.Equals(fallbackNodeName, StringComparison.OrdinalIgnoreCase) ||
+                container.Name.Contains($"-{fallbackNodeName}-", StringComparison.OrdinalIgnoreCase) ||
+                container.Name.Contains($"_{fallbackNodeName}_", StringComparison.OrdinalIgnoreCase) ||
+                container.Name.EndsWith(fallbackNodeName, StringComparison.OrdinalIgnoreCase));
         }
 
         private static void ApplyComposeNetworkSettings(GroupViewModel group, Dictionary<object, object>? rawComposeRoot, string networkName)

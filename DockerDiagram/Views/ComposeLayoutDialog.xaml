@@ -1,0 +1,51 @@
+<Window x:Class="DockerDiagram.Views.ComposeLayoutDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Compose Layout" Width="420" Height="330"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" WindowStyle="ToolWindow">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Direction" FontWeight="SemiBold" Foreground="#343A43" Margin="0,0,0,8"/>
+        <UniformGrid Grid.Row="1" Rows="1" Columns="2" Margin="0,0,0,18">
+            <RadioButton x:Name="LeftToRightRadio" Content="Left to right" GroupName="Direction" IsChecked="True" Margin="0,0,12,0"/>
+            <RadioButton x:Name="TopToBottomRadio" Content="Top to bottom" GroupName="Direction"/>
+        </UniformGrid>
+
+        <Grid Grid.Row="2" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="130"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="46"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Horizontal gap" VerticalAlignment="Center"/>
+            <Slider x:Name="HorizontalGapSlider" Grid.Column="1" Minimum="50" Maximum="220" TickFrequency="10" IsSnapToTickEnabled="True" Value="90"/>
+            <TextBlock Grid.Column="2" Text="{Binding ElementName=HorizontalGapSlider, Path=Value, StringFormat={}{0:0}}" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+
+        <Grid Grid.Row="3" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="130"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="46"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Vertical gap" VerticalAlignment="Center"/>
+            <Slider x:Name="VerticalGapSlider" Grid.Column="1" Minimum="20" Maximum="140" TickFrequency="5" IsSnapToTickEnabled="True" Value="35"/>
+            <TextBlock Grid.Column="2" Text="{Binding ElementName=VerticalGapSlider, Path=Value, StringFormat={}{0:0}}" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+
+        <CheckBox x:Name="AdaptiveSpacingCheckBox" Grid.Row="4" Content="Increase spacing for large projects" IsChecked="True" VerticalAlignment="Top"/>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Apply" IsDefault="True" Click="Apply_Click" Width="84" Height="30" Margin="0,0,8,0" Background="#287BAE" Foreground="White" BorderThickness="0"/>
+            <Button Content="Cancel" IsCancel="True" Width="84" Height="30"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -78,6 +78,7 @@ namespace DockerDiagram.Helpers
     /// </summary>
     public class ComposeFileModel
     {
+        public string? Name { get; set; }
         public Dictionary<string, ComposeService> Services { get; set; } = new(); // compose 파일의 'services' 블록
         public Dictionary<string, ComposeNetwork>? Networks { get; set; } // compose 파일의 'networks' 블록
         public Dictionary<string, object>? Volumes { get; set; } // compose 파일의 'volumes' 블록

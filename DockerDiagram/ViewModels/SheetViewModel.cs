@@ -13,6 +13,39 @@ namespace DockerDiagram.ViewModels
     /// </summary>
     public class SheetViewModel : ViewModelBase
     {
+        private int _layoutUpdateDepth;
+        public bool IsLayoutUpdating => _layoutUpdateDepth > 0;
+
+        public IDisposable BeginLayoutUpdate()
+        {
+            _layoutUpdateDepth++;
+            return new LayoutUpdateScope(this);
+        }
+
+        private void EndLayoutUpdate()
+        {
+            if (_layoutUpdateDepth == 0) return;
+            _layoutUpdateDepth--;
+            if (_layoutUpdateDepth == 0)
+            {
+                foreach (ConnectorViewModel connector in Connectors)
+                    connector.RefreshRoute();
+            }
+        }
+
+        private sealed class LayoutUpdateScope : IDisposable
+        {
+            private SheetViewModel? _owner;
+
+            public LayoutUpdateScope(SheetViewModel owner) => _owner = owner;
+
+            public void Dispose()
+            {
+                _owner?.EndLayoutUpdate();
+                _owner = null;
+            }
+        }
+
         #region Fields & Services
         private readonly IContainerService _containerService;
         private readonly IVolumeService _volumeService;
@@ -154,6 +187,9 @@ namespace DockerDiagram.ViewModels
                 nodeVm.ImageName = container.Image;
                 nodeVm.StatusColor = container.StateColor;
                 nodeVm.ContainerId = container.Id;
+                nodeVm.ComposeProjectName = container.ComposeProjectName;
+                nodeVm.ComposeServiceName = container.ComposeServiceName;
+                nodeVm.ComposeContainerNumber = container.ComposeContainerNumber;
                 nodeVm.IsDockerConnected = !string.IsNullOrWhiteSpace(container.Id);
             }
             else if (nodeModel is DockerVolume volume)

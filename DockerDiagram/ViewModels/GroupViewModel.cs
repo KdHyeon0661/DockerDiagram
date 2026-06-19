@@ -50,6 +50,7 @@ namespace DockerDiagram.ViewModels
         public bool EnableIPv6 { get; set; }
         public bool External { get; set; }
         public string ComposeNetworkName { get; set; } = "";
+        public string ComposeLayoutInstanceId { get; set; } = "";
         public string ComposeRawNetworkYaml { get; set; } = "";
         public Dictionary<string, string> Labels { get; set; } = new();
         public Dictionary<string, string> DriverOptions { get; set; } = new();

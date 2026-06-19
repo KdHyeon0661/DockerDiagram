@@ -16,8 +16,8 @@ namespace DockerDiagram.Helpers
     public sealed class DiagramHistoryService
     {
         public sealed record DiagramState(
-            HashSet<string> NodeIds,
-            HashSet<string> GroupIds,
+            HashSet<NodeViewModel> Nodes,
+            HashSet<GroupViewModel> Groups,
             HashSet<ConnectorViewModel> Connectors);
 
         private readonly Func<IDockerService> _getActiveService;
@@ -51,8 +51,8 @@ namespace DockerDiagram.Helpers
         public DiagramState CaptureState(SheetViewModel sheet)
         {
             return new DiagramState(
-                sheet.Nodes.Select(n => n.Id).ToHashSet(),
-                sheet.Groups.Select(g => g.Id).ToHashSet(),
+                new HashSet<NodeViewModel>(sheet.Nodes, ReferenceEqualityComparer.Instance),
+                new HashSet<GroupViewModel>(sheet.Groups, ReferenceEqualityComparer.Instance),
                 sheet.Connectors.ToHashSet());
         }
 
@@ -64,8 +64,8 @@ namespace DockerDiagram.Helpers
         {
             if (_history.IsReplaying) return;
 
-            var addedNodes = sheet.Nodes.Where(n => !before.NodeIds.Contains(n.Id)).ToList();
-            var addedGroups = sheet.Groups.Where(g => !before.GroupIds.Contains(g.Id)).ToList();
+            var addedNodes = sheet.Nodes.Where(n => !before.Nodes.Contains(n)).ToList();
+            var addedGroups = sheet.Groups.Where(g => !before.Groups.Contains(g)).ToList();
             var addedConnectors = sheet.Connectors.Where(c => !before.Connectors.Contains(c)).ToList();
 
             if (addedNodes.Count == 0 && addedGroups.Count == 0 && addedConnectors.Count == 0) return;
@@ -150,6 +150,46 @@ namespace DockerDiagram.Helpers
                     return Task.CompletedTask;
                 },
                 mergeKey: $"{group.Id}:{description}"));
+        }
+
+        public void RecordLayoutChange(
+            SheetViewModel sheet,
+            IReadOnlyDictionary<NodeViewModel, Rect> beforeNodes,
+            IReadOnlyDictionary<NodeViewModel, Rect> afterNodes,
+            IReadOnlyDictionary<GroupViewModel, Rect> beforeGroups,
+            IReadOnlyDictionary<GroupViewModel, Rect> afterGroups,
+            string description)
+        {
+            if (_history.IsReplaying) return;
+
+            bool nodeChanged = beforeNodes.Any(pair => afterNodes.TryGetValue(pair.Key, out Rect after) && !RectEquals(pair.Value, after));
+            bool groupChanged = beforeGroups.Any(pair => afterGroups.TryGetValue(pair.Key, out Rect after) && !RectEquals(pair.Value, after));
+            if (!nodeChanged && !groupChanged) return;
+
+            void Apply(
+                IReadOnlyDictionary<NodeViewModel, Rect> nodeRects,
+                IReadOnlyDictionary<GroupViewModel, Rect> groupRects)
+            {
+                using IDisposable layoutUpdate = sheet.BeginLayoutUpdate();
+                foreach (var pair in nodeRects) ApplyNodeRect(pair.Key, pair.Value);
+                foreach (var pair in groupRects) ApplyGroupRect(pair.Key, pair.Value);
+                sheet.UpdateGroupLayering();
+                _markModified();
+            }
+
+            _history.RecordExecuted(new DelegateHistoryCommand(
+                description,
+                affectsDocker: false,
+                undo: () =>
+                {
+                    Apply(beforeNodes, beforeGroups);
+                    return Task.CompletedTask;
+                },
+                redo: () =>
+                {
+                    Apply(afterNodes, afterGroups);
+                    return Task.CompletedTask;
+                }));
         }
 
         public IHistoryCommand CreateConnectorDeleteCommand(SheetViewModel sheet, ConnectorViewModel connector)

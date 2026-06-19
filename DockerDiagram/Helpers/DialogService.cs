@@ -143,6 +143,23 @@ namespace DockerDiagram.Helpers
             return false;
         }
 
+        public bool TryShowComposeLayoutDialog(ComposeLayoutOptions initialOptions, out ComposeLayoutOptions options)
+        {
+            var dialog = new DockerDiagram.Views.ComposeLayoutDialog(initialOptions)
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                options = dialog.Options;
+                return true;
+            }
+
+            options = initialOptions;
+            return false;
+        }
+
         public bool TryShowImageTagDialog(
             string sourceImage,
             string repository,

@@ -23,10 +23,12 @@ namespace DockerDiagram.ViewModels
 
         // --- 1. 데이터 컬렉션 ---
         public ObservableCollection<TemplateItem> Templates { get; } = new();
+        public ObservableCollection<StackTemplateDefinition> StackTemplates { get; } = new();
         public ObservableCollection<DockerContainer> ExistingContainers { get; } = new();
         public ObservableCollection<DockerVolume> ExistingVolumes { get; } = new();
         public ObservableCollection<DockerNetworkGroup> ExistingNetworks { get; } = new();
         public ObservableCollection<DockerImage> LocalImages { get; } = new();
+        public ObservableCollection<DockerComposeProject> ComposeProjects { get; } = new();
         public ObservableCollection<ImageSearchResponse> HubSearchResults { get; } = new();
 
         // --- 2. 검색 및 상태 필드 ---
@@ -95,6 +97,8 @@ namespace DockerDiagram.ViewModels
             PullImageCommand = new AsyncRelayCommand(ExecutePullImageAsync);
 
             RefreshTemplates();
+            foreach (var template in StackTemplateCatalog.LoadBuiltIn())
+                StackTemplates.Add(template);
         }
 
         // --- 5. 비즈니스 로직 ---
@@ -124,6 +128,7 @@ namespace DockerDiagram.ViewModels
                 _rawNetworks = await ((INetworkService)service).GetNetworksAsync();
                 _rawImages = await ((IImageService)service).GetImagesAsync();
 
+                UpdateComposeProjects();
                 UpdateAvailableItems();
                 UpdateDiagramConnectionStates();
                 LastSyncTime = $"Last updated: {DateTime.Now:HH:mm:ss}";
@@ -195,6 +200,51 @@ namespace DockerDiagram.ViewModels
             SyncCollection(LocalImages, filteredImages, i => i.Id);
         }
 
+        private void UpdateComposeProjects()
+        {
+            var projectNames = _rawContainers.Cast<DockerResource>()
+                .Concat(_rawVolumes)
+                .Concat(_rawNetworks)
+                .Where(resource => resource.IsComposeManaged)
+                .Select(resource => resource.ComposeProjectName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            ComposeProjects.Clear();
+            foreach (string projectName in projectNames)
+            {
+                var containers = _rawContainers
+                    .Where(container => container.ComposeProjectName.Equals(projectName, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(container => container.ComposeServiceName, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(container => container.ComposeContainerNumber)
+                    .ToList();
+                var volumes = _rawVolumes
+                    .Where(volume => volume.ComposeProjectName.Equals(projectName, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(volume => volume.ComposeResourceName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var networks = _rawNetworks
+                    .Where(network => network.ComposeProjectName.Equals(projectName, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(network => network.ComposeResourceName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var projectSource = containers.Cast<DockerResource>()
+                    .Concat(volumes)
+                    .Concat(networks)
+                    .FirstOrDefault(resource => !string.IsNullOrWhiteSpace(resource.ComposeWorkingDirectory))
+                    ?? containers.Cast<DockerResource>().Concat(volumes).Concat(networks).First();
+
+                ComposeProjects.Add(new DockerComposeProject
+                {
+                    Name = projectName,
+                    WorkingDirectory = projectSource.ComposeWorkingDirectory,
+                    ConfigFiles = projectSource.ComposeConfigFiles,
+                    Containers = containers,
+                    Volumes = volumes,
+                    Networks = networks
+                });
+            }
+        }
+
         public void UpdateDiagramConnectionStates()
         {
             if (_mainVm.Sheets == null) return;
@@ -223,6 +273,19 @@ namespace DockerDiagram.ViewModels
             {
                 foreach (var node in sheet.Nodes)
                 {
+                    if (node.Type == NodeType.Container &&
+                        (string.IsNullOrWhiteSpace(node.ContainerId) || !containerIds.Contains(node.ContainerId)))
+                    {
+                        var composeMatch = FindComposeContainer(node);
+                        if (composeMatch != null)
+                        {
+                            node.ContainerId = composeMatch.Id;
+                            node.ComposeProjectName = composeMatch.ComposeProjectName;
+                            node.ComposeServiceName = composeMatch.ComposeServiceName;
+                            node.ComposeContainerNumber = composeMatch.ComposeContainerNumber;
+                        }
+                    }
+
                     node.IsDockerConnected = node.Type switch
                     {
                         NodeType.Container => !string.IsNullOrWhiteSpace(node.ContainerId) && containerIds.Contains(node.ContainerId),
@@ -239,6 +302,37 @@ namespace DockerDiagram.ViewModels
                                               networkNames.Contains(group.Title);
                 }
             }
+        }
+
+        private DockerContainer? FindComposeContainer(NodeViewModel node)
+        {
+            if (string.IsNullOrWhiteSpace(node.ComposeServiceName))
+                return null;
+
+            var candidates = _rawContainers
+                .Where(container => container.IsComposeManaged)
+                .Where(container => container.ComposeServiceName.Equals(
+                    node.ComposeServiceName,
+                    StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrWhiteSpace(node.ComposeProjectName))
+            {
+                candidates = candidates.Where(container => container.ComposeProjectName.Equals(
+                    node.ComposeProjectName,
+                    StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (node.ComposeContainerNumber > 0)
+            {
+                candidates = candidates.Where(container =>
+                    container.ComposeContainerNumber == node.ComposeContainerNumber);
+            }
+
+            var matches = candidates
+                .OrderBy(container => container.ComposeContainerNumber)
+                .Take(2)
+                .ToList();
+            return matches.Count == 1 ? matches[0] : null;
         }
 
         private async Task DeleteContainerItemAsync(object? param)
@@ -533,9 +627,26 @@ namespace DockerDiagram.ViewModels
                 }
             }
 
+            var newItemMapByKey = newItems.ToDictionary(keySelector);
+            foreach (var item in uiCollection)
+            {
+                if (!newItemMapByKey.TryGetValue(keySelector(item), out var newItem) ||
+                    item is not DockerResource oldResource ||
+                    newItem is not DockerResource newResource)
+                {
+                    continue;
+                }
+
+                oldResource.ComposeProjectName = newResource.ComposeProjectName;
+                oldResource.ComposeResourceName = newResource.ComposeResourceName;
+                oldResource.ComposeWorkingDirectory = newResource.ComposeWorkingDirectory;
+                oldResource.ComposeConfigFiles = newResource.ComposeConfigFiles;
+                oldResource.Labels = new Dictionary<string, string>(newResource.Labels, StringComparer.OrdinalIgnoreCase);
+            }
+
             if (typeof(T) == typeof(DockerContainer))
             {
-                var newItemMap = newItems.ToDictionary(keySelector);
+                var newItemMap = newItemMapByKey;
                 foreach (var item in uiCollection)
                 {
                     if (newItemMap.TryGetValue(keySelector(item), out var newItem))
@@ -544,6 +655,9 @@ namespace DockerDiagram.ViewModels
                         var newContainer = newItem as DockerContainer;
                         if (oldContainer != null && newContainer != null)
                         {
+                            oldContainer.ComposeServiceName = newContainer.ComposeServiceName;
+                            oldContainer.ComposeContainerNumber = newContainer.ComposeContainerNumber;
+                            oldContainer.IsComposeOneOff = newContainer.IsComposeOneOff;
                             if (oldContainer.State != newContainer.State)
                             {
                                 oldContainer.State = newContainer.State;

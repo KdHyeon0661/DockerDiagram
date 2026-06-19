@@ -1,0 +1,66 @@
+{
+  "id": "monitoring-stack",
+  "name": "Monitoring Stack",
+  "description": "Prometheus and Grafana with optional Node Exporter",
+  "category": "Observability",
+  "defaultProjectName": "monitoring",
+  "accentColor": "#F46800",
+  "variables": [
+    { "key": "PROMETHEUS_PORT", "label": "Prometheus port", "type": "port", "defaultValue": "9090" },
+    { "key": "GRAFANA_PORT", "label": "Grafana port", "type": "port", "defaultValue": "3000" },
+    { "key": "GRAFANA_PASSWORD", "label": "Grafana admin password", "type": "password", "defaultValue": "" },
+    { "key": "INCLUDE_NODE_EXPORTER", "label": "Include Node Exporter", "type": "bool", "defaultValue": "true" },
+    { "key": "NODE_EXPORTER_PORT", "label": "Node Exporter port", "type": "port", "defaultValue": "9100" }
+  ],
+  "networks": [
+    { "key": "monitoring", "name": "${PROJECT}-network", "driver": "bridge", "x": 0, "y": 0, "width": 740, "height": 280 }
+  ],
+  "volumes": [
+    { "key": "prometheus-data", "name": "${PROJECT}-prometheus-data", "driver": "local", "x": 40, "y": 330 },
+    { "key": "grafana-data", "name": "${PROJECT}-grafana-data", "driver": "local", "x": 300, "y": 330 }
+  ],
+  "containers": [
+    {
+      "key": "prometheus",
+      "name": "${PROJECT}-prometheus",
+      "image": "prom/prometheus:latest",
+      "ports": [ "${PROMETHEUS_PORT}:9090" ],
+      "volumeMounts": [
+        { "volume": "prometheus-data", "target": "/prometheus" }
+      ],
+      "networks": [ "monitoring" ],
+      "x": 40,
+      "y": 100
+    },
+    {
+      "key": "grafana",
+      "name": "${PROJECT}-grafana",
+      "image": "grafana/grafana:latest",
+      "ports": [ "${GRAFANA_PORT}:3000" ],
+      "environment": {
+        "GF_SECURITY_ADMIN_USER": "admin",
+        "GF_SECURITY_ADMIN_PASSWORD": "${GRAFANA_PASSWORD}"
+      },
+      "volumeMounts": [
+        { "volume": "grafana-data", "target": "/var/lib/grafana" }
+      ],
+      "networks": [ "monitoring" ],
+      "x": 300,
+      "y": 100
+    },
+    {
+      "key": "node-exporter",
+      "name": "${PROJECT}-node-exporter",
+      "image": "prom/node-exporter:latest",
+      "ports": [ "${NODE_EXPORTER_PORT}:9100" ],
+      "networks": [ "monitoring" ],
+      "enabledWhen": "INCLUDE_NODE_EXPORTER",
+      "x": 540,
+      "y": 100
+    }
+  ],
+  "dependencies": [
+    { "source": "grafana", "target": "prometheus" },
+    { "source": "prometheus", "target": "node-exporter" }
+  ]
+}

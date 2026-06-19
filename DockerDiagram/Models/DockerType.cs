@@ -16,6 +16,23 @@ namespace DockerDiagram.Models
 
         private string _stateColor = "#FFFFFF";
         public string StateColor { get => _stateColor; set => SetProperty(ref _stateColor, value); } // 상태를 나타내는 UI 색상 (예: running=초록, exited=빨강)
+
+        private string _composeProjectName = string.Empty;
+        public string ComposeProjectName
+        {
+            get => _composeProjectName;
+            set
+            {
+                if (SetProperty(ref _composeProjectName, value))
+                    OnPropertyChanged(nameof(IsComposeManaged));
+            }
+        }
+
+        public string ComposeResourceName { get; set; } = string.Empty;
+        public string ComposeWorkingDirectory { get; set; } = string.Empty;
+        public string ComposeConfigFiles { get; set; } = string.Empty;
+        public Dictionary<string, string> Labels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public bool IsComposeManaged => !string.IsNullOrWhiteSpace(ComposeProjectName);
     }
 
     /// <summary>
@@ -41,6 +58,10 @@ namespace DockerDiagram.Models
 
         private string _ports = string.Empty;
         public string Ports { get => _ports; set => SetProperty(ref _ports, value); } // 호스트와 연결된 포트 매핑 정보
+
+        public string ComposeServiceName { get; set; } = string.Empty;
+        public int ComposeContainerNumber { get; set; }
+        public bool IsComposeOneOff { get; set; }
 
         public override NodeType Type => NodeType.Container; // override로 구현
     }
@@ -88,5 +109,16 @@ namespace DockerDiagram.Models
         public string Driver { get => _driver; set => SetProperty(ref _driver, value); }
 
         public override GroupType Type => GroupType.Network; // override로 구현
+    }
+
+    public sealed class DockerComposeProject
+    {
+        public string Name { get; init; } = string.Empty;
+        public string WorkingDirectory { get; init; } = string.Empty;
+        public string ConfigFiles { get; init; } = string.Empty;
+        public List<DockerContainer> Containers { get; init; } = [];
+        public List<DockerVolume> Volumes { get; init; } = [];
+        public List<DockerNetworkGroup> Networks { get; init; } = [];
+        public int ResourceCount => Containers.Count + Volumes.Count + Networks.Count;
     }
 }

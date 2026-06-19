@@ -24,6 +24,8 @@ namespace DockerDiagram
         // 사이드바에서 아이템을 캔버스로 끌어올 때(Drag & Drop) 사용하는 시작점 및 드래그 상태
         private Point _toolStartPoint;
         private bool _isToolDragging = false;
+        private bool _isStackTemplateDragging = false;
+        private bool _isComposeProjectDragging = false;
 
         // 캔버스 내 일반 그리기(드래그) 시작 좌표
         private Point _startPoint;
@@ -1754,7 +1756,7 @@ namespace DockerDiagram
 
                         if (type == NodeType.Container)
                         {
-                            var dlg = new Views.ContainerDialog(_dialogService);
+                            var dlg = new Views.ContainerDialog(_dialogService, vm.ActiveSheet?.DockerService);
                             dlg.Owner = this;
 
                             if (dlg.ShowDialog() == true)
@@ -1767,14 +1769,14 @@ namespace DockerDiagram
                                     if (dlg.SelectedCreationMode == 0) // 1. [🎛️ 직접 설정 (UI)] 탭
                                     {
                                         // 이미지 이름과 태그(:)를 안전하게 분리
-                                        string fullImage = dlg.ImageName.Contains(":") ? dlg.ImageName : dlg.ImageName + ":latest";
-                                        var parts = fullImage.Split(new[] { ':' }, 2);
+                                        var imageReference = DockerImageReferenceParser.Split(dlg.ImageName);
 
                                         await vm.CreateNewContainerNodeAsync(
-                                            dlg.ContainerName, parts[0], parts.Length > 1 ? parts[1] : "latest",
+                                            dlg.ContainerName, imageReference.Repository, imageReference.Tag,
                                             dlg.Ports, dlg.EnvVars,
                                             dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount, defaultX, defaultY,
-                                            dlg.SelectedNetwork, dlg.Command, dlg.IsInteractive);
+                                            dlg.SelectedNetwork, dlg.Command, dlg.IsInteractive,
+                                            dlg.RegUser, dlg.RegPass, dlg.RegServer);
                                     }
                                     else if (dlg.SelectedCreationMode == 1) // 2. [💻 명령어로 생성 (CLI)] 탭
                                     {
@@ -1832,6 +1834,20 @@ namespace DockerDiagram
 
             bool needsLayerUpdate = false; // 레이어 업데이트 필요 여부 체크
 
+            if (e.Data.GetDataPresent("ComposeProjectObject") &&
+                e.Data.GetData("ComposeProjectObject") is DockerComposeProject composeProject)
+            {
+                await vm.PlaceComposeProjectAsync(composeProject, snapX, snapY);
+                return;
+            }
+
+            if (e.Data.GetDataPresent("StackTemplateObject") &&
+                e.Data.GetData("StackTemplateObject") is StackTemplateDefinition stackTemplate)
+            {
+                await ShowStackTemplateDialogAndApplyAsync(stackTemplate, snapX, snapY);
+                return;
+            }
+
             // [CASE A] 모든 노드 리소스 처리 (DockerResource로 받기)
             if (e.Data.GetDataPresent("DockerContainerObject"))
             {
@@ -1842,7 +1858,7 @@ namespace DockerDiagram
                 {
                     if (d is DockerContainer container)
                     {
-                        var dlg = new Views.ContainerDialog(_dialogService);
+                        var dlg = new Views.ContainerDialog(_dialogService, vm.ActiveSheet?.DockerService);
                         dlg.Owner = this;
                         if (container.Image != "New Container") dlg.ImageName = container.Image;
 
@@ -1855,12 +1871,12 @@ namespace DockerDiagram
                                 // 선택한 생성 방식에 맞는 입력을 처리합니다.
                                 if (dlg.SelectedCreationMode == 0) // 1. [🎛️ 직접 설정 (UI)] 탭
                                 {
-                                    string fullImage = dlg.ImageName.Contains(":") ? dlg.ImageName : dlg.ImageName + ":latest";
-                                    var parts = fullImage.Split(new[] { ':' }, 2);
+                                    var imageReference = DockerImageReferenceParser.Split(dlg.ImageName);
 
-                                    await vm.CreateNewContainerNodeAsync(dlg.ContainerName, parts[0], parts.Length > 1 ? parts[1] : "latest",
+                                    await vm.CreateNewContainerNodeAsync(dlg.ContainerName, imageReference.Repository, imageReference.Tag,
                                         dlg.Ports, dlg.EnvVars, dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount, snapX, snapY,
-                                        dlg.SelectedNetwork, dlg.Command, dlg.IsInteractive);
+                                        dlg.SelectedNetwork, dlg.Command, dlg.IsInteractive,
+                                        dlg.RegUser, dlg.RegPass, dlg.RegServer);
                                 }
                                 else if (dlg.SelectedCreationMode == 1) // 2. [💻 명령어로 생성 (CLI)] 탭
                                 {
@@ -1923,7 +1939,7 @@ namespace DockerDiagram
                 }
             }
 
-            if (needsLayerUpdate)
+            if (needsLayerUpdate && vm.ActiveSheet != null)
             {
                 vm.ActiveSheet.UpdateGroupLayering();
             }
@@ -2006,6 +2022,37 @@ namespace DockerDiagram
             _isToolDragging = false;
         }
 
+        private void ComposeProject_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            _toolStartPoint = e.GetPosition(null);
+            _isComposeProjectDragging = false;
+        }
+
+        private void ComposeProject_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (e.LeftButton != MouseButtonState.Pressed || _isComposeProjectDragging) return;
+
+            Point current = e.GetPosition(null);
+            if (Math.Abs(current.X - _toolStartPoint.X) <= SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(current.Y - _toolStartPoint.Y) <= SystemParameters.MinimumVerticalDragDistance)
+            {
+                return;
+            }
+
+            if (sender is FrameworkElement element &&
+                element.DataContext is DockerComposeProject project)
+            {
+                _isComposeProjectDragging = true;
+                DragDrop.DoDragDrop(
+                    element,
+                    new DataObject("ComposeProjectObject", project),
+                    DragDropEffects.Copy);
+                Dispatcher.BeginInvoke(
+                    System.Windows.Threading.DispatcherPriority.Input,
+                    new Action(() => _isComposeProjectDragging = false));
+            }
+        }
+
         /// <summary>
         /// 템플릿 항목 드래그 시작 전 클릭 지점을 기록합니다.
         /// </summary>
@@ -2013,6 +2060,87 @@ namespace DockerDiagram
         {
             _toolStartPoint = e.GetPosition(null);
             _isToolDragging = false;
+        }
+
+        private void StackTemplate_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            _toolStartPoint = e.GetPosition(null);
+            _isStackTemplateDragging = false;
+        }
+
+        private void StackTemplate_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (e.LeftButton != MouseButtonState.Pressed || _isStackTemplateDragging) return;
+
+            Point current = e.GetPosition(null);
+            if (Math.Abs(current.X - _toolStartPoint.X) <= SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(current.Y - _toolStartPoint.Y) <= SystemParameters.MinimumVerticalDragDistance)
+            {
+                return;
+            }
+
+            if (sender is FrameworkElement element &&
+                element.DataContext is StackTemplateDefinition template)
+            {
+                _isStackTemplateDragging = true;
+                DragDrop.DoDragDrop(
+                    element,
+                    new DataObject("StackTemplateObject", template),
+                    DragDropEffects.Copy);
+                Dispatcher.BeginInvoke(
+                    System.Windows.Threading.DispatcherPriority.Input,
+                    new Action(() => _isStackTemplateDragging = false));
+            }
+        }
+
+        private async void StackTemplate_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (_isStackTemplateDragging)
+            {
+                _isStackTemplateDragging = false;
+                return;
+            }
+
+            if (sender is not FrameworkElement element ||
+                element.DataContext is not StackTemplateDefinition template)
+            {
+                return;
+            }
+
+            Point screenCenter = new(
+                Math.Max(120, ViewportCanvas.ActualWidth / 2),
+                Math.Max(100, ViewportCanvas.ActualHeight / 2));
+            Point worldCenter = ZoomPanGrid.RenderTransform.Inverse?.Transform(screenCenter) ?? screenCenter;
+            double x = Math.Round((worldCenter.X - 320) / 10.0) * 10.0;
+            double y = Math.Round((worldCenter.Y - 180) / 10.0) * 10.0;
+
+            await ShowStackTemplateDialogAndApplyAsync(
+                template,
+                Math.Max(20, x),
+                Math.Max(20, y));
+        }
+
+        private async Task ShowStackTemplateDialogAndApplyAsync(
+            StackTemplateDefinition template,
+            double x,
+            double y)
+        {
+            string suggestedProjectName = template.DefaultProjectName;
+            if (ViewModel.ActiveSheet != null)
+            {
+                suggestedProjectName = await StackTemplateDeploymentService.SuggestProjectNameAsync(
+                    template,
+                    ViewModel.ActiveSheet,
+                    ViewModel.ActiveSheet.DockerService);
+            }
+
+            var dialog = new Views.StackTemplateDialog(template, suggestedProjectName)
+            {
+                Owner = this
+            };
+
+            if (dialog.ShowDialog() != true) return;
+            await ViewModel.ApplyStackTemplateAsync(template, dialog.DeploymentOptions, x, y);
         }
 
         /// <summary>

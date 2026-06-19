@@ -105,7 +105,10 @@ namespace DockerDiagram.Helpers
                             VolumeLabels = new Dictionary<string, string>(nodeVm.VolumeLabels),
                             VolumeDriverOptions = new Dictionary<string, string>(nodeVm.VolumeDriverOptions),
                             RestartPolicy = nodeVm.RestartPolicy ?? "no",
+                            ComposeProjectName = nodeVm.ComposeProjectName,
                             ComposeServiceName = nodeVm.ComposeServiceName,
+                            ComposeContainerNumber = nodeVm.ComposeContainerNumber,
+                            ComposeLayoutInstanceId = nodeVm.ComposeLayoutInstanceId,
                             ComposeRawServiceYaml = nodeVm.ComposeRawServiceYaml,
                             ComposeRawVolumeYaml = nodeVm.ComposeRawVolumeYaml
                         });
@@ -149,6 +152,7 @@ namespace DockerDiagram.Helpers
                             EnableIPv6 = group.EnableIPv6,
                             External = group.External,
                             ComposeNetworkName = group.ComposeNetworkName,
+                            ComposeLayoutInstanceId = group.ComposeLayoutInstanceId,
                             ComposeRawNetworkYaml = group.ComposeRawNetworkYaml,
                             Labels = new Dictionary<string, string>(group.Labels),
                             DriverOptions = new Dictionary<string, string>(group.DriverOptions),
@@ -316,7 +320,10 @@ namespace DockerDiagram.Helpers
                             VolumeLabels = nodeData.VolumeLabels ?? new Dictionary<string, string>(),
                             VolumeDriverOptions = nodeData.VolumeDriverOptions ?? new Dictionary<string, string>(),
                             RestartPolicy = nodeData.RestartPolicy ?? "no",
+                            ComposeProjectName = nodeData.ComposeProjectName ?? string.Empty,
                             ComposeServiceName = nodeData.ComposeServiceName ?? string.Empty,
+                            ComposeContainerNumber = nodeData.ComposeContainerNumber,
+                            ComposeLayoutInstanceId = nodeData.ComposeLayoutInstanceId ?? string.Empty,
                             ComposeRawServiceYaml = nodeData.ComposeRawServiceYaml ?? string.Empty,
                             ComposeRawVolumeYaml = nodeData.ComposeRawVolumeYaml ?? string.Empty,
                             StatusColor = "#808080" // 초기 색상은 회색(Unkown)으로 고정, 이후 실시간 갱신됨
@@ -353,6 +360,7 @@ namespace DockerDiagram.Helpers
                             EnableIPv6 = groupData.EnableIPv6,
                             External = groupData.External,
                             ComposeNetworkName = groupData.ComposeNetworkName ?? string.Empty,
+                            ComposeLayoutInstanceId = groupData.ComposeLayoutInstanceId ?? string.Empty,
                             ComposeRawNetworkYaml = groupData.ComposeRawNetworkYaml ?? string.Empty,
                             Labels = groupData.Labels ?? new Dictionary<string, string>(),
                             DriverOptions = groupData.DriverOptions ?? new Dictionary<string, string>(),
