@@ -13,7 +13,7 @@ namespace DockerDiagram
 {
     public partial class ContainerDetailWindow : Window
     {
-        private DispatcherTimer _timer;
+        private readonly DispatcherTimer _timer;
 
         private readonly ObservableCollection<TextBlock> _logItems = new ObservableCollection<TextBlock>();
         private readonly List<string> _rawLogLines = new List<string>();
