@@ -411,7 +411,7 @@
                 <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" BorderThickness="0">
                     <StackPanel>
                         <Grid Margin="2,0,2,6">
-                            <TextBlock Text="Docker Resources" FontWeight="SemiBold" FontSize="13" Foreground="#343A43"/>
+                            <TextBlock Text="{Binding Explorer.ResourceHeader}" FontWeight="SemiBold" FontSize="13" Foreground="#343A43"/>
                             <TextBlock Text="{Binding Explorer.LastSyncTime}" FontSize="10" Foreground="#8A929D" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                         </Grid>
 
@@ -424,7 +424,7 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <Path Data="{StaticResource ContainerIcon}" Fill="#4D7C6F" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="1" Text="Compose Projects" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="Projects" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
                                     <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
                                         <TextBlock Text="{Binding Explorer.ComposeProjects.Count}" FontSize="10" Foreground="#59636F"/>
                                     </Border>
@@ -442,9 +442,13 @@
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="*"/>
                                                         <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="#36434A" TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock Grid.Column="1" Text="{Binding ResourceCount}" FontSize="10" Foreground="#7A858D" Margin="8,0,4,0"/>
+                                                    <Border Grid.Column="1" Background="#E7EEF4" CornerRadius="7" Padding="5,1" Margin="8,0,0,0">
+                                                        <TextBlock Text="{Binding SourceLabel}" FontSize="9" Foreground="#59636F"/>
+                                                    </Border>
+                                                    <TextBlock Grid.Column="2" Text="{Binding ResourceCount}" FontSize="10" Foreground="#7A858D" Margin="8,0,4,0"/>
                                                 </Grid>
                                             </Expander.Header>
                                             <StackPanel Margin="18,2,0,5">
@@ -490,6 +494,228 @@
                             </ItemsControl>
                         </Expander>
 
+                        <Expander IsExpanded="True" Style="{StaticResource SidebarExpanderStyle}"
+                                  Visibility="{Binding Explorer.IsSwarmRuntime, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Expander.Header>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="22"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Path Data="{StaticResource CloudIcon}" Fill="#4D7C6F" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="Swarm Nodes" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                    <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                        <TextBlock Text="{Binding Explorer.SwarmNodes.Count}" FontSize="10" Foreground="#59636F"/>
+                                    </Border>
+                                </Grid>
+                            </Expander.Header>
+                            <ListBox ItemsSource="{Binding Explorer.SwarmNodes}" BorderThickness="0" Background="Transparent" MaxHeight="180" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     ItemContainerStyle="{StaticResource ResourceListItemStyle}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Padding="5,4" Background="Transparent" ToolTip="{Binding Id}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="14"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Ellipse Width="8" Height="8" Fill="{Binding StateColor}" VerticalAlignment="Center"/>
+                                                <StackPanel Grid.Column="1" Margin="8,0,8,0">
+                                                    <TextBlock Text="{Binding Hostname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock FontSize="10" Foreground="#7A858D" TextTrimming="CharacterEllipsis">
+                                                        <Run Text="{Binding RoleLabel}"/>
+                                                        <Run Text=" · "/>
+                                                        <Run Text="{Binding Availability}"/>
+                                                        <Run Text=" · "/>
+                                                        <Run Text="{Binding Address}"/>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding Status}" FontSize="10" FontWeight="SemiBold" Foreground="{Binding StateColor}" VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Expander>
+
+                        <Expander IsExpanded="True" Style="{StaticResource SidebarExpanderStyle}"
+                                  Visibility="{Binding Explorer.IsKubernetesRuntime, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Expander.Header>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="22"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Path Data="{StaticResource CloudIcon}" Fill="#326CE5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="Kubernetes Nodes" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                    <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                        <TextBlock Text="{Binding Explorer.KubernetesNodes.Count}" FontSize="10" Foreground="#59636F"/>
+                                    </Border>
+                                </Grid>
+                            </Expander.Header>
+                            <ListBox ItemsSource="{Binding Explorer.KubernetesNodes}" BorderThickness="0" Background="Transparent" MaxHeight="180" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     ItemContainerStyle="{StaticResource ResourceListItemStyle}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Padding="5,4" Background="Transparent" ToolTip="{Binding OsImage}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="14"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Ellipse Width="8" Height="8" Fill="{Binding StateColor}" VerticalAlignment="Center"/>
+                                                <StackPanel Grid.Column="1" Margin="8,0,8,0">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock FontSize="10" Foreground="#7A858D" TextTrimming="CharacterEllipsis">
+                                                        <Run Text="{Binding RoleLabel}"/>
+                                                        <Run Text=" · "/>
+                                                        <Run Text="{Binding Version}"/>
+                                                        <Run Text=" · "/>
+                                                        <Run Text="{Binding InternalIp}"/>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="2" Text="{Binding Status}" FontSize="10" FontWeight="SemiBold" Foreground="{Binding StateColor}" VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Expander>
+
+                        <Expander IsExpanded="True" Style="{StaticResource SidebarExpanderStyle}"
+                                  Visibility="{Binding Explorer.IsKubernetesRuntime, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Expander.Header>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="22"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Path Data="{StaticResource ContainerIcon}" Fill="#326CE5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="Kubernetes Resources" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                    <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                        <TextBlock Text="{Binding Explorer.KubernetesResourceCount}" FontSize="10" Foreground="#59636F"/>
+                                    </Border>
+                                </Grid>
+                            </Expander.Header>
+                            <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <StackPanel Margin="4,2,2,5">
+                                    <TextBlock Text="Deployments" FontSize="10" FontWeight="SemiBold" Foreground="#326CE5" Margin="0,2,0,1"/>
+                                    <ItemsControl ItemsSource="{Binding Explorer.KubernetesDeployments}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Padding="5,3" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove" ToolTip="{Binding Ports}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Ellipse Width="8" Height="8" Fill="{Binding StateColor}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                            <TextBlock Text="{Binding Ports}" FontSize="10" Foreground="#7A858D" TextTrimming="CharacterEllipsis"/>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <TextBlock Text="ReplicaSets" FontSize="10" FontWeight="SemiBold" Foreground="#326CE5" Margin="0,6,0,1"/>
+                                    <ItemsControl ItemsSource="{Binding Explorer.KubernetesReplicaSets}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Padding="5,3" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove" ToolTip="{Binding Ports}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Ellipse Width="8" Height="8" Fill="{Binding StateColor}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                            <TextBlock Text="{Binding Ports}" FontSize="10" Foreground="#7A858D" TextTrimming="CharacterEllipsis"/>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <TextBlock Text="Services" FontSize="10" FontWeight="SemiBold" Foreground="#326CE5" Margin="0,6,0,1"/>
+                                    <ItemsControl ItemsSource="{Binding Explorer.KubernetesServices}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Padding="5,3" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove" ToolTip="{Binding Ports}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Ellipse Width="8" Height="8" Fill="{Binding StateColor}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                            <TextBlock Text="{Binding Ports}" FontSize="10" Foreground="#7A858D" TextTrimming="CharacterEllipsis"/>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <TextBlock Text="ConfigMaps / Secrets" FontSize="10" FontWeight="SemiBold" Foreground="#326CE5" Margin="0,6,0,1"/>
+                                    <ItemsControl ItemsSource="{Binding Explorer.KubernetesConfigMaps}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Padding="5,3" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove" ToolTip="{Binding Ports}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Ellipse Width="8" Height="8" Fill="{Binding StateColor}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <ItemsControl ItemsSource="{Binding Explorer.KubernetesSecrets}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Padding="5,3" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove" ToolTip="{Binding Ports}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Ellipse Width="8" Height="8" Fill="{Binding StateColor}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <TextBlock Text="Ingresses / PVCs" FontSize="10" FontWeight="SemiBold" Foreground="#326CE5" Margin="0,6,0,1"/>
+                                    <ItemsControl ItemsSource="{Binding Explorer.KubernetesIngresses}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Padding="5,3" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove" ToolTip="{Binding Ports}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Ellipse Width="8" Height="8" Fill="{Binding StateColor}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                            <TextBlock Text="{Binding Ports}" FontSize="10" Foreground="#7A858D" TextTrimming="CharacterEllipsis"/>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <ItemsControl ItemsSource="{Binding Explorer.KubernetesPersistentVolumeClaims}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Padding="5,3" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove" ToolTip="{Binding Ports}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Ellipse Width="8" Height="8" Fill="{Binding StateColor}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                            <TextBlock Text="{Binding Ports}" FontSize="10" Foreground="#7A858D" TextTrimming="CharacterEllipsis"/>
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Expander>
+
                         <Expander IsExpanded="True" Style="{StaticResource SidebarExpanderStyle}">
                             <Expander.Header>
                                 <Grid>
@@ -499,22 +725,36 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <Path Data="{StaticResource ContainerIcon}" Fill="#287BAE" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="1" Text="Containers" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding Explorer.PrimaryResourceLabel}" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
                                     <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
                                         <TextBlock Text="{Binding Explorer.ExistingContainers.Count}" FontSize="10" Foreground="#59636F"/>
                                     </Border>
                                 </Grid>
                             </Expander.Header>
                             <StackPanel>
-                                <TextBox Text="{Binding Explorer.ContainerSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="Search containers" Margin="4,2,4,5"/>
+                                <TextBox Text="{Binding Explorer.ContainerSearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource SearchTextBoxStyle}" Tag="{Binding Explorer.PrimaryResourceSearchPlaceholder}" Margin="4,2,4,5"/>
                                 <ListBox ItemsSource="{Binding Explorer.ExistingContainers}" BorderThickness="0" Background="Transparent" MaxHeight="250" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                          ItemContainerStyle="{StaticResource ResourceListItemStyle}">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
                                             <DockPanel LastChildFill="True">
-                                                <Button DockPanel.Dock="Right" Content="×" Style="{StaticResource ResourceDeleteButtonStyle}"
+                                                <Button DockPanel.Dock="Right" Content="×"
                                             Command="{Binding DataContext.Explorer.DeleteContainerItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                            CommandParameter="{Binding}"/>
+                                            CommandParameter="{Binding}">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button" BasedOn="{StaticResource ResourceDeleteButtonStyle}">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsSwarmService}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsKubernetesPod}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
 
                                                 <Border Padding="5,3" Background="Transparent" Cursor="Hand" Tag="{Binding}" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" MouseMove="ExistingItem_MouseMove">
                                                     <StackPanel Orientation="Horizontal">
@@ -809,8 +1049,8 @@
                                     <Canvas>
                                         <Canvas MouseLeftButtonDown="Connector_MouseDown" Background="Transparent" Cursor="Hand">
                                             <Polyline Points="{Binding Points}" Stroke="Transparent" StrokeThickness="10"/>
-                                            <Polyline Points="{Binding Points}" Stroke="Black" StrokeThickness="2"/>
-                                            <Polygon Points="{Binding ArrowPoints}" Fill="Black" Stroke="Black" />
+                                            <Polyline Points="{Binding Points}" Stroke="{Binding StrokeColor}" StrokeThickness="2"/>
+                                            <Polygon Points="{Binding ArrowPoints}" Fill="{Binding StrokeColor}" Stroke="{Binding StrokeColor}" />
                                         </Canvas>
                                     </Canvas>
                                 </DataTemplate>
@@ -861,6 +1101,50 @@
                                                     <StackPanel Margin="10">
                                                         <TextBlock Text="{Binding ImageName}" FontSize="11" Foreground="Gray" IsHitTestVisible="False"/>
                                                         <TextBlock Text="{Binding PortInfo}" FontSize="10" Foreground="#888" Margin="0,5,0,0" IsHitTestVisible="False"/>
+                                                        <StackPanel Margin="0,6,0,0"
+                                                                    Visibility="{Binding IsCreating, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                                    IsHitTestVisible="False">
+                                                            <ProgressBar Height="5"
+                                                                         Maximum="100"
+                                                                         Value="{Binding CreationProgressValue}"
+                                                                         IsIndeterminate="{Binding IsCreationProgressIndeterminate}"
+                                                                         Foreground="{Binding StatusColor}"
+                                                                         Background="#E9ECEF"
+                                                                         BorderThickness="0"/>
+                                                            <TextBlock Text="{Binding CreationProgressMessage}"
+                                                                       FontSize="9"
+                                                                       Foreground="#666"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       Margin="0,3,0,0"/>
+                                                        </StackPanel>
+                                                        <StackPanel Margin="0,6,0,0"
+                                                                    Visibility="{Binding IsCreationFailed, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                            <TextBlock Text="Creation failed"
+                                                                       FontSize="10"
+                                                                       Foreground="#DC3545"
+                                                                       FontWeight="SemiBold"
+                                                                       TextTrimming="CharacterEllipsis"/>
+                                                            <UniformGrid Rows="1" Columns="2" Margin="0,4,0,0">
+                                                                <Button Content="Retry"
+                                                                        Command="{Binding RetryFailedCreationCommand}"
+                                                                        Height="20"
+                                                                        Margin="0,0,3,0"
+                                                                        FontSize="10"
+                                                                        Padding="2,0"
+                                                                        Background="#0D6EFD"
+                                                                        Foreground="White"
+                                                                        BorderThickness="0"/>
+                                                                <Button Content="Remove"
+                                                                        Command="{Binding RemoveFailedCreationCommand}"
+                                                                        Height="20"
+                                                                        Margin="3,0,0,0"
+                                                                        FontSize="10"
+                                                                        Padding="2,0"
+                                                                        Background="#6C757D"
+                                                                        Foreground="White"
+                                                                        BorderThickness="0"/>
+                                                            </UniformGrid>
+                                                        </StackPanel>
                                                     </StackPanel>
                                                 </Border>
                                             </Grid>
@@ -1498,6 +1782,15 @@
                     </Button>
                 </StackPanel>
             </Border>
+
+            <Border HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,52,0,0"
+                    Background="#FFFFF4D6" BorderBrush="#E0B84E" BorderThickness="1" CornerRadius="4" Padding="12,7"
+                    Visibility="{Binding SheetManager.ActiveSheet.IsRuntimeUnavailable, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <StackPanel Orientation="Horizontal" MaxWidth="560">
+                    <TextBlock Text="Offline snapshot" FontWeight="Bold" Foreground="#7A5300" Margin="0,0,10,0"/>
+                    <TextBlock Text="{Binding SheetManager.ActiveSheet.RuntimeStatusMessage}" Foreground="#6A5A2A" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
         </Grid>
 
         <Border Grid.Column="2" Grid.Row="0" Width="340" Background="White"
@@ -1513,13 +1806,67 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <Border Grid.Row="0" Background="#FFF1F0" BorderBrush="#D32F2F" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,10"
-                        Visibility="{Binding Inspector.IsSelectedDockerDisconnected, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <StackPanel>
-                        <TextBlock Text="Docker connection lost" FontWeight="Bold" Foreground="#B71C1C"/>
-                        <TextBlock Text="Reconnect or delete this diagram item." FontSize="11" Foreground="#7F1D1D" TextWrapping="Wrap" Margin="0,3,0,0"/>
-                    </StackPanel>
-                </Border>
+                <StackPanel Grid.Row="0">
+                    <Border Background="#FFF1F0" BorderBrush="#D32F2F" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,10"
+                            Visibility="{Binding Inspector.SelectedElement.IsCreationFailed, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Text="Creation failed" FontWeight="Bold" Foreground="#B71C1C"/>
+                            <TextBlock Text="{Binding Inspector.SelectedElement.LastCreationError}" FontSize="11" Foreground="#7F1D1D" TextWrapping="Wrap" Margin="0,3,0,8" MaxHeight="52"/>
+                            <UniformGrid Rows="1" Columns="3">
+                                <Button Content="Retry"
+                                        Command="{Binding Inspector.SelectedElement.RetryFailedCreationCommand}"
+                                        Margin="0,0,6,0"
+                                        Padding="8,5"
+                                        Background="#0D6EFD"
+                                        Foreground="White"
+                                        BorderThickness="0"
+                                        Cursor="Hand"/>
+                                <Button Content="Remove"
+                                        Command="{Binding Inspector.SelectedElement.RemoveFailedCreationCommand}"
+                                        Margin="0,0,6,0"
+                                        Padding="8,5"
+                                        Background="#6C757D"
+                                        Foreground="White"
+                                        BorderThickness="0"
+                                        Cursor="Hand"/>
+                                <Button Content="View Error"
+                                        Command="{Binding Inspector.SelectedElement.ViewCreationErrorCommand}"
+                                        Padding="8,5"
+                                        Background="#B71C1C"
+                                        Foreground="White"
+                                        BorderThickness="0"
+                                        Cursor="Hand"/>
+                            </UniformGrid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Background="#FFF1F0" BorderBrush="#D32F2F" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,10"
+                            Visibility="{Binding Inspector.IsSelectedRuntimeDisconnected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <StackPanel>
+                            <TextBlock Text="Docker connection lost" FontWeight="Bold" Foreground="#B71C1C"/>
+                            <TextBlock Text="Reconnect or delete this diagram item." FontSize="11" Foreground="#7F1D1D" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Background="#FFFFF4D6" BorderBrush="#E0B84E" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,10"
+                            Visibility="{Binding Inspector.IsSelectedOfflineSnapshot, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="Offline snapshot" FontWeight="Bold" Foreground="#7A5300"/>
+                            <StackPanel Grid.Row="1" Margin="0,4,0,0">
+                                <TextBlock Text="Saved layout and metadata are visible. Live runtime controls are disabled until the runtime is available again."
+                                           FontSize="11" Foreground="#6A5A2A" TextWrapping="Wrap"/>
+                                <Button Content="View snapshot details"
+                                        Command="{Binding Inspector.SelectedElement.OpenDetailWindowCommand}"
+                                        Margin="0,8,0,0" Padding="8,5" HorizontalAlignment="Left"
+                                        Background="#E0B84E" Foreground="#3D2B00" BorderThickness="0" Cursor="Hand"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </StackPanel>
 
                 <ContentControl Content="{Binding Inspector.SelectedElement}" Grid.Row="1" IsEnabled="{Binding Inspector.IsSelectedDockerConnected}">
                     <ContentControl.Resources>
@@ -1619,6 +1966,81 @@
                                             </StackPanel.Style>
 
                                             <TextBlock Text="Type: Network Attach" FontWeight="Bold" Foreground="#6A1B9A" Margin="0,0,0,10"/>
+                                        </StackPanel>
+
+                                        <StackPanel>
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding RelationType}" Value="KubernetesOwner">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+
+                                            <TextBlock Text="Type: Kubernetes Owner" FontWeight="Bold" Foreground="#326CE5" Margin="0,0,0,5"/>
+                                            <Border Background="#E8F0FE" Padding="8" CornerRadius="3">
+                                                <WrapPanel>
+                                                    <TextBlock FontWeight="Bold" Text="{Binding Source.Name}" Foreground="#174EA6" FontSize="11"/>
+                                                    <TextBlock Text=" owns " Foreground="#174EA6" FontSize="11"/>
+                                                    <TextBlock FontWeight="Bold" Text="{Binding Target.Name}" Foreground="#174EA6" FontSize="11"/>
+                                                    <TextBlock Text="." Foreground="#174EA6" FontSize="11"/>
+                                                </WrapPanel>
+                                            </Border>
+                                        </StackPanel>
+
+                                        <StackPanel>
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding RelationType}" Value="KubernetesSelector">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+
+                                            <TextBlock Text="Type: Kubernetes Selector" FontWeight="Bold" Foreground="#0B8043" Margin="0,10,0,5"/>
+                                            <Border Background="#E6F4EA" Padding="8" CornerRadius="3">
+                                                <StackPanel>
+                                                    <WrapPanel>
+                                                        <TextBlock FontWeight="Bold" Text="{Binding Source.Name}" Foreground="#0B4F2A" FontSize="11"/>
+                                                        <TextBlock Text=" selects " Foreground="#0B4F2A" FontSize="11"/>
+                                                        <TextBlock FontWeight="Bold" Text="{Binding Target.Name}" Foreground="#0B4F2A" FontSize="11"/>
+                                                        <TextBlock Text="." Foreground="#0B4F2A" FontSize="11"/>
+                                                    </WrapPanel>
+                                                    <TextBlock Text="{Binding IpAddress}" FontFamily="Consolas" FontSize="10" Foreground="#0B4F2A" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </StackPanel>
+
+                                        <StackPanel>
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding RelationType}" Value="KubernetesVolumeClaim">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+
+                                            <TextBlock Text="Type: Kubernetes PVC Mount" FontWeight="Bold" Foreground="#E65100" Margin="0,10,0,5"/>
+                                            <Border Background="#FFF3E0" Padding="8" CornerRadius="3">
+                                                <StackPanel>
+                                                    <WrapPanel>
+                                                        <TextBlock FontWeight="Bold" Text="{Binding Source.Name}" Foreground="#8A3A00" FontSize="11"/>
+                                                        <TextBlock Text=" uses " Foreground="#8A3A00" FontSize="11"/>
+                                                        <TextBlock FontWeight="Bold" Text="{Binding Target.Name}" Foreground="#8A3A00" FontSize="11"/>
+                                                        <TextBlock Text="." Foreground="#8A3A00" FontSize="11"/>
+                                                    </WrapPanel>
+                                                    <TextBlock Text="{Binding MountPath}" FontFamily="Consolas" FontSize="10" Foreground="#8A3A00" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </Border>
                                         </StackPanel>
 
                                     </StackPanel>
@@ -1856,11 +2278,19 @@
                                             <TextBlock Text="{Binding DetailStatus}" FontSize="11" FontWeight="Bold" Foreground="{Binding StatusColor}"/>
                                             <ProgressBar Height="4"
                                                          Margin="0,4,0,0"
-                                                         IsIndeterminate="True"
+                                                         Maximum="100"
+                                                         Value="{Binding CreationProgressValue}"
+                                                         IsIndeterminate="{Binding IsCreationProgressIndeterminate}"
                                                          Foreground="{Binding StatusColor}"
                                                          Background="#E9ECEF"
                                                          BorderThickness="0"
                                                          Visibility="{Binding IsCreating, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                            <TextBlock Text="{Binding CreationProgressMessage}"
+                                                       FontSize="10"
+                                                       Foreground="#666"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Margin="0,3,0,0"
+                                                       Visibility="{Binding IsCreating, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                         </StackPanel>
                                     </Grid>
                                 </Border>
@@ -2313,6 +2743,12 @@
                                                 <Border x:Name="WorkspaceTabBorder" Background="Transparent" BorderBrush="#ccc" BorderThickness="0,0,1,0" Padding="15,5" MinWidth="120" Cursor="Hand">
                                                     <Border.ContextMenu>
                                                         <ContextMenu>
+                                                            <MenuItem Header="Runtime">
+                                                                <MenuItem Header="Docker Engine" CommandParameter="DockerEngine" Click="ChangeWorkspaceRuntime_Click"/>
+                                                                <MenuItem Header="Docker Swarm" CommandParameter="DockerSwarm" Click="ChangeWorkspaceRuntime_Click"/>
+                                                                <MenuItem Header="Kubernetes" CommandParameter="Kubernetes" Click="ChangeWorkspaceRuntime_Click"/>
+                                                            </MenuItem>
+                                                            <Separator/>
                                                             <MenuItem Header="이름 바꾸기" Click="RenameWorkspace_Click"/>
                                                             <MenuItem Header="삭제" Click="DeleteWorkspace_Click" Foreground="#dc3545"/>
                                                         </ContextMenu>
@@ -2320,6 +2756,9 @@
                                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding KindLabel}" FontSize="10" FontWeight="Bold" Foreground="#777" Margin="0,0,7,0"/>
                                                         <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" Foreground="#333" TextTrimming="CharacterEllipsis"/>
+                                                        <Border Background="#E7EEF4" CornerRadius="7" Padding="6,1" Margin="8,0,0,0">
+                                                            <TextBlock Text="{Binding RuntimeLabel}" FontSize="9" FontWeight="SemiBold" Foreground="#59636F"/>
+                                                        </Border>
                                                     </StackPanel>
                                                 </Border>
                                                 <ControlTemplate.Triggers>
@@ -2344,9 +2783,21 @@
 
                         <StackPanel x:Name="SheetLayerPanel" Orientation="Horizontal" Visibility="{Binding SheetManager.IsSheetLayer, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <Button Click="WorkspaceCrumb_Click" Background="White" BorderBrush="#ccc" BorderThickness="0,0,1,0" Padding="15,5" MinWidth="120" Cursor="Hand">
+                                <Button.ContextMenu>
+                                    <ContextMenu DataContext="{Binding SheetManager.ActiveWorkspace}">
+                                        <MenuItem Header="Runtime">
+                                            <MenuItem Header="Docker Engine" CommandParameter="DockerEngine" Click="ChangeWorkspaceRuntime_Click"/>
+                                            <MenuItem Header="Docker Swarm" CommandParameter="DockerSwarm" Click="ChangeWorkspaceRuntime_Click"/>
+                                            <MenuItem Header="Kubernetes" CommandParameter="Kubernetes" Click="ChangeWorkspaceRuntime_Click"/>
+                                        </MenuItem>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding SheetManager.ActiveWorkspace.KindLabel}" FontSize="10" FontWeight="Bold" Foreground="#777" Margin="0,0,7,0"/>
                                     <TextBlock Text="{Binding SheetManager.ActiveWorkspace.DisplayName}" FontWeight="SemiBold" Foreground="#333" TextTrimming="CharacterEllipsis"/>
+                                    <Border Background="#E7EEF4" CornerRadius="7" Padding="6,1" Margin="8,0,0,0">
+                                        <TextBlock Text="{Binding SheetManager.ActiveWorkspace.RuntimeLabel}" FontSize="9" FontWeight="SemiBold" Foreground="#59636F"/>
+                                    </Border>
                                 </StackPanel>
                             </Button>
 

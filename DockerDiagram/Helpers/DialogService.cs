@@ -218,5 +218,30 @@ namespace DockerDiagram.Helpers
             serverAddress = string.Empty;
             return false;
         }
+
+        public bool TryShowKubernetesPortForwardDialog(
+            string kind,
+            string target,
+            int defaultLocalPort,
+            int defaultRemotePort,
+            out int localPort,
+            out int remotePort)
+        {
+            var window = new DockerDiagram.Views.KubernetesPortForwardDialog(kind, target, defaultLocalPort, defaultRemotePort)
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            if (window.ShowDialog() == true)
+            {
+                localPort = window.LocalPort;
+                remotePort = window.RemotePort;
+                return true;
+            }
+
+            localPort = defaultLocalPort;
+            remotePort = defaultRemotePort;
+            return false;
+        }
     }
 }

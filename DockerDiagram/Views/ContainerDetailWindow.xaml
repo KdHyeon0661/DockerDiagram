@@ -8,6 +8,10 @@
         Background="#F5F6F8"
         FontFamily="Segoe UI">
 
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+    </Window.Resources>
+
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -37,7 +41,290 @@
 
         <TabControl Grid.Row="1" Margin="15" Background="White" BorderBrush="#DDD" BorderThickness="1">
 
-            <TabItem Header="📊 Status" FontSize="14" Padding="15,8">
+            <TabItem Header="☷ Swarm Service" FontSize="14" Padding="15,8"
+                     Visibility="{Binding IsSwarmService, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="15">
+                        <TextBlock Text="Service Summary" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
+                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,18">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="Mode" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Column="1" Text="{Binding SwarmMode}" FontWeight="SemiBold" Margin="0,0,12,8"/>
+                                <TextBlock Grid.Column="2" Text="Replicas" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Column="3" Text="{Binding SwarmReplicaSummary}" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,0,0,8"/>
+
+                                <TextBlock Grid.Row="1" Text="Image" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding ImageName}" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+                                <TextBlock Grid.Row="2" Text="Ports" Foreground="#777"/>
+                                <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding PortInfo}" FontFamily="Consolas" TextWrapping="Wrap"/>
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="Scale" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
+                        <Border Background="#F8F0FF" BorderBrush="#E5D0FF" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,18">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="100"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="replicated mode service의 desired replica 수를 변경합니다." Foreground="#666" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                <TextBox Grid.Column="1" Text="{Binding TargetSwarmReplicas, UpdateSourceTrigger=PropertyChanged}" Width="80" Padding="6,4" TextAlignment="Right" FontFamily="Consolas" Margin="10,0"/>
+                                <Button Grid.Column="2" Command="{Binding ScaleSwarmServiceCommand}" Content="Apply" Background="#6f42c1" Foreground="White" BorderThickness="0" Padding="14,6" FontWeight="Bold" Cursor="Hand"/>
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="Actions" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
+                        <UniformGrid Rows="1" Margin="0,0,0,18">
+                            <Button Command="{Binding RefreshSwarmServiceCommand}" Content="Refresh" Background="#007ACC" Foreground="White" BorderThickness="0" Padding="10,8" Margin="0,0,5,0" Cursor="Hand" FontWeight="Bold"/>
+                            <Button Command="{Binding RemoveSwarmServiceCommand}" Content="Remove Service" Background="#dc3545" Foreground="White" BorderThickness="0" Padding="10,8" Margin="5,0,0,0" Cursor="Hand" FontWeight="Bold"/>
+                        </UniformGrid>
+
+                        <Grid Margin="0,0,0,8">
+                            <TextBlock Text="Tasks" FontWeight="Bold" FontSize="14" Foreground="#555"/>
+                            <TextBlock Text="{Binding SwarmTaskSummary}" HorizontalAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#59636F"/>
+                        </Grid>
+                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="0" Margin="0,0,0,18">
+                            <ListView ItemsSource="{Binding SwarmTasks}" BorderThickness="0" Background="Transparent" MaxHeight="220">
+                                <ListView.View>
+                                    <GridView>
+                                        <GridViewColumn Header="Slot" Width="48" DisplayMemberBinding="{Binding Slot}"/>
+                                        <GridViewColumn Header="Task" Width="105" DisplayMemberBinding="{Binding ShortId}"/>
+                                        <GridViewColumn Header="Node" Width="130" DisplayMemberBinding="{Binding NodeName}"/>
+                                        <GridViewColumn Header="Desired" Width="80" DisplayMemberBinding="{Binding DesiredState}"/>
+                                        <GridViewColumn Header="State" Width="95">
+                                            <GridViewColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding CurrentState}" Foreground="{Binding StatusColor}" FontWeight="SemiBold"/>
+                                                </DataTemplate>
+                                            </GridViewColumn.CellTemplate>
+                                        </GridViewColumn>
+                                        <GridViewColumn Header="Container" Width="105" DisplayMemberBinding="{Binding ShortContainerId}"/>
+                                        <GridViewColumn Header="Error" Width="220" DisplayMemberBinding="{Binding Error}"/>
+                                    </GridView>
+                                </ListView.View>
+                            </ListView>
+                        </Border>
+
+                        <TextBlock Text="Raw Inspect" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
+                        <TextBox Text="{Binding SwarmServiceInspectJson}" FontFamily="Consolas" FontSize="12" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="180" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="☸ Kubernetes Pod" FontSize="14" Padding="15,8"
+                     Visibility="{Binding IsKubernetesPod, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="15">
+                        <Grid Margin="0,0,0,8">
+                            <TextBlock Text="Pod Summary" FontWeight="Bold" FontSize="14" Foreground="#555"/>
+                            <Button Command="{Binding RefreshKubernetesPodCommand}" Content="Refresh" HorizontalAlignment="Right"
+                                    Background="#326CE5" Foreground="White" BorderThickness="0" Padding="12,6" Cursor="Hand" FontWeight="Bold"/>
+                        </Grid>
+
+                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,18">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="Namespace" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Column="1" Text="{Binding KubernetesNamespace}" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,0,12,8"/>
+                                <TextBlock Grid.Column="2" Text="Pod" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Column="3" Text="{Binding KubernetesPodName}" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,0,0,8"/>
+
+                                <TextBlock Grid.Row="1" Text="Ready" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding KubernetesReady}" FontFamily="Consolas" Margin="0,0,12,8"/>
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="Restarts" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding KubernetesRestarts}" FontFamily="Consolas" Margin="0,0,0,8"/>
+
+                                <TextBlock Grid.Row="2" Text="Pod IP" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding KubernetesPodIp}" FontFamily="Consolas" Margin="0,0,12,8"/>
+                                <TextBlock Grid.Row="2" Grid.Column="2" Text="Node" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding KubernetesNodeName}" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+                                <TextBlock Grid.Row="3" Text="Image" Foreground="#777"/>
+                                <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding ImageName}" FontFamily="Consolas" TextWrapping="Wrap"/>
+                            </Grid>
+                        </Border>
+
+                        <Border Background="#F7FAFF" BorderBrush="#D7E3FF" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,18">
+                            <StackPanel>
+                                <TextBlock Text="Live Actions" FontWeight="Bold" Foreground="#555" Margin="0,0,0,8"/>
+                                <WrapPanel>
+                                    <Button Command="{Binding OpenKubernetesLogsFollowCommand}" Content="Follow Logs" Height="32" Margin="0,0,8,0"
+                                            Padding="14,0"
+                                            Background="#326CE5" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                    <Button Command="{Binding OpenKubernetesPortForwardCommand}" Content="Port Forward" Height="32" Margin="0,0,8,0"
+                                            Padding="14,0"
+                                            Background="#2E7D32" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                    <Button Command="{Binding ExportKubernetesYamlCommand}" Content="Export YAML" Height="32" Margin="0,0,8,0"
+                                            Padding="14,0"
+                                            Background="#455A64" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                    <Button Command="{Binding ApplyKubernetesManifestCommand}" Content="Apply Manifest" Height="32" Margin="0,0,8,0"
+                                            Padding="14,0"
+                                            Background="#00897B" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                    <Button Command="{Binding DeleteKubernetesResourceCommand}" Content="Delete Pod" Height="32"
+                                            Padding="14,0"
+                                            Background="#D32F2F" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <TabControl Background="White" BorderBrush="#DDD" BorderThickness="1">
+                            <TabItem Header="Describe" Padding="10,6">
+                                <TextBox Text="{Binding KubernetesPodDescribeText}" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
+                                         AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="300"
+                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                            </TabItem>
+                            <TabItem Header="YAML" Padding="10,6">
+                                <TextBox Text="{Binding KubernetesPodYamlText}" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
+                                         AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="300"
+                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                            </TabItem>
+                            <TabItem Header="JSON" Padding="10,6">
+                                <TextBox Text="{Binding KubernetesPodJsonText}" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
+                                         AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="300"
+                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                            </TabItem>
+                        </TabControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="☸ Kubernetes Resource" FontSize="14" Padding="15,8"
+                     Visibility="{Binding IsGenericKubernetesResource, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="15">
+                        <Grid Margin="0,0,0,8">
+                            <TextBlock Text="Resource Summary" FontWeight="Bold" FontSize="14" Foreground="#555"/>
+                            <Button Command="{Binding RefreshKubernetesResourceCommand}" Content="Refresh" HorizontalAlignment="Right"
+                                    Background="#326CE5" Foreground="White" BorderThickness="0" Padding="12,6" Cursor="Hand" FontWeight="Bold"/>
+                        </Grid>
+
+                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,18">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="Kind" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Column="1" Text="{Binding KubernetesKind}" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,0,12,8"/>
+                                <TextBlock Grid.Column="2" Text="Namespace" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Column="3" Text="{Binding KubernetesNamespace}" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,0,0,8"/>
+
+                                <TextBlock Grid.Row="1" Text="Name" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding KubernetesResourceName}" FontFamily="Consolas" Margin="0,0,12,8"/>
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="API" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding KubernetesApiVersion}" FontFamily="Consolas" Margin="0,0,0,8"/>
+
+                                <TextBlock Grid.Row="2" Text="Status" Foreground="#777"/>
+                                <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding DetailStatus}" FontFamily="Consolas" TextWrapping="Wrap"/>
+                            </Grid>
+                        </Border>
+
+                        <Border Background="#F7FAFF" BorderBrush="#D7E3FF" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,18"
+                                Visibility="{Binding IsKubernetesDeployment, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="Deployment Control" FontWeight="Bold" Foreground="#555" Margin="0,0,0,8"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="90"/>
+                                        <ColumnDefinition Width="80"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Replicas" VerticalAlignment="Center" Foreground="#666"/>
+                                    <TextBox Grid.Column="1" Text="{Binding TargetKubernetesReplicas, UpdateSourceTrigger=PropertyChanged}" Height="30" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" FontFamily="Consolas"/>
+                                    <Button Grid.Column="2" Command="{Binding ScaleKubernetesDeploymentCommand}" Content="Apply" Height="30" Padding="14,0" Margin="8,0,0,0"
+                                            Background="#326CE5" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                    <Button Grid.Column="3" Command="{Binding RestartKubernetesRolloutCommand}" Content="Rollout Restart" Height="30" Padding="14,0" Margin="8,0,0,0"
+                                            Background="#6F42C1" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                    <TextBlock Grid.Column="4" Text="{Binding KubernetesReplicaSummary}" VerticalAlignment="Center" HorizontalAlignment="Right" Foreground="#666"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,18">
+                            <StackPanel>
+                                <TextBlock Text="Resource Actions" FontWeight="Bold" Foreground="#555" Margin="0,0,0,8"/>
+                                <WrapPanel>
+                                    <Button Command="{Binding OpenKubernetesPortForwardCommand}" Content="Port Forward" Height="32" Margin="0,0,8,0"
+                                            Padding="14,0"
+                                            Background="#2E7D32" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                    <Button Command="{Binding ExportKubernetesYamlCommand}" Content="Export YAML" Height="32" Margin="0,0,8,0"
+                                            Padding="14,0"
+                                            Background="#455A64" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                    <Button Command="{Binding ApplyKubernetesManifestCommand}" Content="Apply Manifest" Height="32" Margin="0,0,8,0"
+                                            Padding="14,0"
+                                            Background="#00897B" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                    <Button Command="{Binding DeleteKubernetesResourceCommand}" Content="Delete Resource" Height="32"
+                                            Padding="14,0"
+                                            Background="#D32F2F" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <TabControl Background="White" BorderBrush="#DDD" BorderThickness="1">
+                            <TabItem Header="Describe" Padding="10,6">
+                                <TextBox Text="{Binding KubernetesPodDescribeText}" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
+                                         AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="300"
+                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                            </TabItem>
+                            <TabItem Header="YAML" Padding="10,6">
+                                <TextBox Text="{Binding KubernetesPodYamlText}" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
+                                         AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="300"
+                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                            </TabItem>
+                            <TabItem Header="JSON" Padding="10,6">
+                                <TextBox Text="{Binding KubernetesPodJsonText}" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
+                                         AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="300"
+                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                            </TabItem>
+                        </TabControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="📊 Status" FontSize="14" Padding="15,8"
+                     Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
 
@@ -174,7 +461,8 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="⚙️ Configuration" FontSize="14" Padding="15,8">
+            <TabItem Header="⚙️ Configuration" FontSize="14" Padding="15,8"
+                     Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Grid Margin="15">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -207,7 +495,8 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="🌐 Networks" FontSize="14" Padding="15,8">
+            <TabItem Header="🌐 Networks" FontSize="14" Padding="15,8"
+                     Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
                         <TextBlock Text="Connected Networks" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
@@ -254,7 +543,8 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="💾 Volumes" FontSize="14" Padding="15,8">
+            <TabItem Header="💾 Volumes" FontSize="14" Padding="15,8"
+                     Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Grid Margin="15">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -314,7 +604,8 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="📁 File Transfer" FontSize="14" Padding="15,8">
+            <TabItem Header="📁 File Transfer" FontSize="14" Padding="15,8"
+                     Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <StackPanel Margin="15">
                     <TextBlock Text="컨테이너 내부와 호스트(내 PC) 간에 파일/폴더를 복사합니다." Foreground="#888" Margin="0,0,0,20"/>
 

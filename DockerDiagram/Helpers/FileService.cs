@@ -70,10 +70,12 @@ namespace DockerDiagram.Helpers
                 // 모든 시트(탭)를 순회하며 데이터 긁어모으기
                 foreach (var sheetVm in allSheets)
                 {
+                    sheetVm.Profile.RuntimeKind = sheetVm.RuntimeKind;
                     var sheetData = new SheetData
                     {
                         Title = sheetVm.Title,
                         Profile = sheetVm.Profile, // 시트의 도커 연결 프로필(로컬/원격) 정보 저장
+                        RuntimeKind = sheetVm.RuntimeKind,
                         MapWidth = sheetVm.MapWidth,
                         MapHeight = sheetVm.MapHeight,
                         OffsetX = sheetVm.OffsetX,
@@ -91,6 +93,7 @@ namespace DockerDiagram.Helpers
                             DockerId = nodeVm.ContainerId,
                             Name = nodeVm.Name,
                             ImageName = nodeVm.ImageName,
+                            PortInfo = nodeVm.PortInfo,
                             Type = nodeVm.Type,
                             X = nodeVm.X,
                             Y = nodeVm.Y,
@@ -110,7 +113,25 @@ namespace DockerDiagram.Helpers
                             ComposeContainerNumber = nodeVm.ComposeContainerNumber,
                             ComposeLayoutInstanceId = nodeVm.ComposeLayoutInstanceId,
                             ComposeRawServiceYaml = nodeVm.ComposeRawServiceYaml,
-                            ComposeRawVolumeYaml = nodeVm.ComposeRawVolumeYaml
+                            ComposeRawVolumeYaml = nodeVm.ComposeRawVolumeYaml,
+                            IsSwarmService = nodeVm.IsSwarmService,
+                            SwarmMode = nodeVm.SwarmMode,
+                            SwarmDesiredReplicas = nodeVm.SwarmDesiredReplicas,
+                            SwarmRunningReplicas = nodeVm.SwarmRunningReplicas,
+                            IsKubernetesPod = nodeVm.IsKubernetesPod,
+                            KubernetesKind = nodeVm.KubernetesKind,
+                            KubernetesApiResource = nodeVm.KubernetesApiResource,
+                            KubernetesApiVersion = nodeVm.KubernetesApiVersion,
+                            KubernetesNamespace = nodeVm.KubernetesNamespace,
+                            KubernetesNodeName = nodeVm.KubernetesNodeName,
+                            KubernetesReady = nodeVm.KubernetesReady,
+                            KubernetesRestarts = nodeVm.KubernetesRestarts,
+                            KubernetesDesiredReplicas = nodeVm.KubernetesDesiredReplicas,
+                            KubernetesReadyReplicas = nodeVm.KubernetesReadyReplicas,
+                            KubernetesPodIp = nodeVm.KubernetesPodIp,
+                            KubernetesPodDescribeText = nodeVm.KubernetesPodDescribeText,
+                            KubernetesPodYamlText = nodeVm.KubernetesPodYamlText,
+                            KubernetesPodJsonText = nodeVm.KubernetesPodJsonText
                         });
                     }
 
@@ -253,6 +274,7 @@ namespace DockerDiagram.Helpers
                 {
                     // 저장된 연결 프로필이 없으면 로컬 연결로 처리합니다.
                     ConnectionProfile loadedProfile = sheetData.Profile ?? new ConnectionProfile { Name = "Local PC", Type = EndpointType.Local };
+                    loadedProfile.RuntimeKind = sheetData.RuntimeKind;
                     IDockerService targetDockerService = (IDockerService)containerService; // 기본값은 로컬 서비스
 
                     // 2. 만약 원격(SSH) 접속용 시트라면, 백그라운드에서 터널을 다시 개통!
@@ -281,7 +303,7 @@ namespace DockerDiagram.Helpers
                     }
 
                     // 3. 복원된 프로필과 전용 도커 서비스로 시트 생성
-                    var sheetVm = new SheetViewModel(sheetData.Title, loadedProfile, targetDockerService, dialogService);
+                    var sheetVm = new SheetViewModel(sheetData.Title, loadedProfile, targetDockerService, dialogService, sheetData.RuntimeKind);
                     sheetVm.MapWidth = sheetData.MapWidth;
                     sheetVm.MapHeight = sheetData.MapHeight;
                     sheetVm.OffsetX = sheetData.OffsetX;
@@ -306,6 +328,7 @@ namespace DockerDiagram.Helpers
                             ContainerId = nodeData.DockerId,
                             Name = nodeData.Name,
                             ImageName = nodeData.ImageName,
+                            PortInfo = nodeData.PortInfo ?? string.Empty,
                             Type = nodeData.Type,
                             X = nodeData.X,
                             Y = nodeData.Y,
@@ -326,7 +349,27 @@ namespace DockerDiagram.Helpers
                             ComposeLayoutInstanceId = nodeData.ComposeLayoutInstanceId ?? string.Empty,
                             ComposeRawServiceYaml = nodeData.ComposeRawServiceYaml ?? string.Empty,
                             ComposeRawVolumeYaml = nodeData.ComposeRawVolumeYaml ?? string.Empty,
-                            StatusColor = "#808080" // 초기 색상은 회색(Unkown)으로 고정, 이후 실시간 갱신됨
+                            IsSwarmService = nodeData.IsSwarmService,
+                            SwarmMode = nodeData.SwarmMode ?? string.Empty,
+                            SwarmDesiredReplicas = nodeData.SwarmDesiredReplicas,
+                            SwarmRunningReplicas = nodeData.SwarmRunningReplicas,
+                            TargetSwarmReplicas = nodeData.SwarmDesiredReplicas,
+                            IsKubernetesPod = nodeData.IsKubernetesPod,
+                            KubernetesKind = nodeData.KubernetesKind ?? string.Empty,
+                            KubernetesApiResource = nodeData.KubernetesApiResource ?? string.Empty,
+                            KubernetesApiVersion = nodeData.KubernetesApiVersion ?? string.Empty,
+                            KubernetesNamespace = nodeData.KubernetesNamespace ?? string.Empty,
+                            KubernetesNodeName = nodeData.KubernetesNodeName ?? string.Empty,
+                            KubernetesReady = nodeData.KubernetesReady ?? string.Empty,
+                            KubernetesRestarts = nodeData.KubernetesRestarts,
+                            KubernetesDesiredReplicas = nodeData.KubernetesDesiredReplicas,
+                            KubernetesReadyReplicas = nodeData.KubernetesReadyReplicas,
+                            TargetKubernetesReplicas = nodeData.KubernetesDesiredReplicas,
+                            KubernetesPodIp = nodeData.KubernetesPodIp ?? string.Empty,
+                            KubernetesPodDescribeText = nodeData.KubernetesPodDescribeText ?? string.Empty,
+                            KubernetesPodYamlText = nodeData.KubernetesPodYamlText ?? string.Empty,
+                            KubernetesPodJsonText = nodeData.KubernetesPodJsonText ?? string.Empty,
+                            StatusColor = nodeData.IsSwarmService || nodeData.IsKubernetesPod ? "#28a745" : "#808080" // 초기 색상은 회색(Unkown)으로 고정, 이후 실시간 갱신됨
                         };
 
                         sheetVm.Nodes.Add(nodeVm);

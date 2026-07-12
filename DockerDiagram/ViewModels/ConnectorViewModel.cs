@@ -90,7 +90,11 @@ namespace DockerDiagram.ViewModels
             get => _relationType;
             set
             {
-                if (SetProperty(ref _relationType, value)) OnModified?.Invoke(this, EventArgs.Empty);
+                if (SetProperty(ref _relationType, value))
+                {
+                    OnPropertyChanged(nameof(StrokeColor));
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
             }
         }
 
@@ -111,6 +115,15 @@ namespace DockerDiagram.ViewModels
                 if (SetProperty(ref _ipAddress, value)) OnModified?.Invoke(this, EventArgs.Empty);
             }
         }
+
+        public string StrokeColor => RelationType switch
+        {
+            RelationType.VolumeMount or RelationType.KubernetesVolumeClaim => "#E65100",
+            RelationType.NetworkAttach => "#6A1B9A",
+            RelationType.KubernetesOwner => "#326CE5",
+            RelationType.KubernetesSelector => "#0B8043",
+            _ => "#111111"
+        };
         #endregion
 
         #region Constructor

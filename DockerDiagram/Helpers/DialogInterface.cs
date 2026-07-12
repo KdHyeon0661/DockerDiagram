@@ -26,5 +26,6 @@ namespace DockerDiagram.Helpers
         bool TryShowComposeLayoutDialog(ComposeLayoutOptions initialOptions, out ComposeLayoutOptions options);
         bool TryShowImageTagDialog(string sourceImage, string repository, string tag, out string newRepository, out string newTag, out bool force);
         bool TryShowImagePushDialog(string repository, string tag, out string newRepository, out string newTag, out string username, out string password, out string serverAddress);
+        bool TryShowKubernetesPortForwardDialog(string kind, string target, int defaultLocalPort, int defaultRemotePort, out int localPort, out int remotePort);
     }
 }

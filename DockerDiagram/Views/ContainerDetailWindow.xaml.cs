@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -18,6 +19,7 @@ namespace DockerDiagram
         private readonly ObservableCollection<TextBlock> _logItems = new ObservableCollection<TextBlock>();
         private readonly List<string> _rawLogLines = new List<string>();
         private const int MAX_LOG_LINES = 2000; // 앱이 뻗지 않도록 최대 2000줄만 유지
+        private NodeViewModel? _nodeVm;
 
         public ContainerDetailWindow()
         {
@@ -40,6 +42,10 @@ namespace DockerDiagram
 
             if (this.DataContext is NodeViewModel vm)
             {
+                _nodeVm = vm;
+                _nodeVm.PropertyChanged += NodeVm_PropertyChanged;
+                ReplaceLogs(vm.ContainerLogs);
+
                 // 컨테이너 로그 스트리밍을 시작합니다.
                 _ = vm.StartLogStreamAsync(OnLogChunkReceived);
             }
@@ -49,10 +55,20 @@ namespace DockerDiagram
         {
             _timer.Stop();
 
-            if (this.DataContext is NodeViewModel vm)
+            if (_nodeVm != null)
             {
                 // 창이 닫히면 로그 스트리밍을 중지합니다.
-                vm.StopLogStream();
+                _nodeVm.PropertyChanged -= NodeVm_PropertyChanged;
+                _nodeVm.StopLogStream();
+                _nodeVm = null;
+            }
+        }
+
+        private void NodeVm_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(NodeViewModel.ContainerLogs) && sender is NodeViewModel vm)
+            {
+                Dispatcher.InvokeAsync(() => ReplaceLogs(vm.ContainerLogs));
             }
         }
 
@@ -107,6 +123,33 @@ namespace DockerDiagram
                     lbLogs.ScrollIntoView(_logItems[_logItems.Count - 1]);
                 }
             });
+        }
+
+        private void ReplaceLogs(string? logs)
+        {
+            _rawLogLines.Clear();
+            _logItems.Clear();
+
+            if (string.IsNullOrWhiteSpace(logs))
+                return;
+
+            string searchTerm = txtLogSearch.Text;
+            var lines = logs.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var line in lines)
+            {
+                _rawLogLines.Add(line);
+                _logItems.Add(CreateLogTextBlock(line, searchTerm));
+            }
+
+            while (_rawLogLines.Count > MAX_LOG_LINES)
+            {
+                _rawLogLines.RemoveAt(0);
+                _logItems.RemoveAt(0);
+            }
+
+            if (_logItems.Count > 0)
+                lbLogs.ScrollIntoView(_logItems[_logItems.Count - 1]);
         }
 
         /// <summary>

@@ -26,7 +26,10 @@
     {
         Dependency,     // 컨테이너 간의 실행 순서/의존성 (Container <-> Container)
         VolumeMount,    // 컨테이너에 데이터를 저장하기 위한 마운트 (Container <-> Volume)
-        NetworkAttach   // 컨테이너가 외부 통신을 하기 위한 연결 (Container <-> Internet)
+        NetworkAttach,  // 컨테이너가 외부 통신을 하기 위한 연결 (Container <-> Internet)
+        KubernetesOwner,     // Kubernetes ownerReferences 기반 관계 (Deployment/ReplicaSet/Pod 등)
+        KubernetesSelector,  // Service selector가 Pod label을 선택하는 관계
+        KubernetesVolumeClaim // Pod가 PersistentVolumeClaim을 사용하는 관계
     }
 
     /// <summary>
@@ -38,5 +41,15 @@
         SshRemote,      // SSH 터널링을 통해 연결된 원격 서버의 도커
         DockerContext,  // Docker CLI context의 Docker endpoint로 직접 연결
         Kubernetes      // (미래 확장용) 쿠버네티스 API 서버 연결
+    }
+
+    /// <summary>
+    /// 하나의 Workspace 또는 Sheet가 어떤 런타임 리소스 모델을 바라보는지 정의합니다.
+    /// </summary>
+    public enum RuntimeKind
+    {
+        DockerEngine,
+        DockerSwarm,
+        Kubernetes
     }
 }

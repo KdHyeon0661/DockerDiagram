@@ -57,6 +57,8 @@ namespace DockerDiagram.ViewModels
         private double _scale = 1.0;
         private double _offsetX = 0;
         private double _offsetY = 0;
+        private bool _isRuntimeUnavailable;
+        private string _runtimeStatusMessage = string.Empty;
 
         private NodeViewModel? _selectedNode;
         private GroupViewModel? _selectedGroup;
@@ -67,7 +69,30 @@ namespace DockerDiagram.ViewModels
         public string Title { get => _title; set => SetProperty(ref _title, value); } // 탭 등에 표시될 시트 이름
         public ConnectionProfile Profile { get; set; } // 현재 시트가 연결된 도커 접속 정보
         public IDockerService DockerService { get; set; } // 도커 엔진 통신 서비스
+        public RuntimeKind RuntimeKind { get; set; } = RuntimeKind.DockerEngine; // 현재 시트의 런타임 모델
+        public string RuntimeLabel => RuntimeKind switch
+        {
+            RuntimeKind.DockerEngine => "Docker",
+            RuntimeKind.DockerSwarm => "Swarm",
+            RuntimeKind.Kubernetes => "Kubernetes",
+            _ => RuntimeKind.ToString()
+        };
         public string ComposeRawYaml { get; set; } = string.Empty; // Compose import 원본 보존용
+        public bool IsRuntimeUnavailable
+        {
+            get => _isRuntimeUnavailable;
+            set
+            {
+                if (SetProperty(ref _isRuntimeUnavailable, value))
+                    NotifyRuntimeAvailabilityChanged();
+            }
+        }
+
+        public string RuntimeStatusMessage
+        {
+            get => _runtimeStatusMessage;
+            set => SetProperty(ref _runtimeStatusMessage, value);
+        }
         #endregion
 
         #region Map Data (Collections)
@@ -75,6 +100,12 @@ namespace DockerDiagram.ViewModels
         public ObservableCollection<ConnectorViewModel> Connectors { get; set; } = new(); // 노드들을 연결하는 모든 선
         public ObservableCollection<GroupViewModel> Groups { get; set; } = new(); // 노드들을 묶는 모든 그룹(네트워크 등)
         #endregion
+
+        private void NotifyRuntimeAvailabilityChanged()
+        {
+            foreach (var node in Nodes)
+                node.NotifyRuntimeAvailabilityChanged();
+        }
 
         #region Map Settings & View State (Zoom/Pan)
         public double MapWidth { get => _mapWidth; set => SetProperty(ref _mapWidth, value); } // 도화지의 전체 가로 길이
@@ -146,11 +177,18 @@ namespace DockerDiagram.ViewModels
         /// <summary>
         /// 시트 뷰모델을 초기화하고 필요한 서비스들을 주입받습니다.
         /// </summary>
-        public SheetViewModel(string title, ConnectionProfile profile, IDockerService dockerService, IDialogService dialogService)
+        public SheetViewModel(
+            string title,
+            ConnectionProfile profile,
+            IDockerService dockerService,
+            IDialogService dialogService,
+            RuntimeKind? runtimeKind = null)
         {
             Title = title;
             Profile = profile;
             DockerService = dockerService;
+            RuntimeKind = runtimeKind ?? profile.RuntimeKind;
+            Profile.RuntimeKind = RuntimeKind;
 
             _containerService = dockerService;
             _volumeService = dockerService;
@@ -185,11 +223,34 @@ namespace DockerDiagram.ViewModels
             if (nodeModel is DockerContainer container)
             {
                 nodeVm.ImageName = container.Image;
+                nodeVm.PortInfo = container.Ports;
                 nodeVm.StatusColor = container.StateColor;
                 nodeVm.ContainerId = container.Id;
                 nodeVm.ComposeProjectName = container.ComposeProjectName;
                 nodeVm.ComposeServiceName = container.ComposeServiceName;
                 nodeVm.ComposeContainerNumber = container.ComposeContainerNumber;
+                nodeVm.IsSwarmService = container.IsSwarmService;
+                nodeVm.SwarmMode = container.SwarmMode;
+                nodeVm.SwarmDesiredReplicas = container.SwarmDesiredReplicas;
+                nodeVm.SwarmRunningReplicas = container.SwarmRunningReplicas;
+                nodeVm.TargetSwarmReplicas = container.SwarmDesiredReplicas;
+                nodeVm.IsKubernetesPod = container.IsKubernetesPod;
+                nodeVm.KubernetesKind = container.KubernetesKind;
+                nodeVm.KubernetesApiResource = container.KubernetesApiResource;
+                nodeVm.KubernetesApiVersion = container.KubernetesApiVersion;
+                nodeVm.KubernetesNamespace = container.KubernetesNamespace;
+                nodeVm.KubernetesNodeName = container.KubernetesNodeName;
+                nodeVm.KubernetesReady = container.KubernetesReady;
+                nodeVm.KubernetesRestarts = container.KubernetesRestarts;
+                nodeVm.KubernetesDesiredReplicas = container.KubernetesDesiredReplicas;
+                nodeVm.KubernetesReadyReplicas = container.KubernetesReadyReplicas;
+                nodeVm.TargetKubernetesReplicas = container.KubernetesDesiredReplicas;
+                nodeVm.KubernetesPodIp = container.KubernetesPodIp;
+                nodeVm.KubernetesPodJsonText = container.KubernetesRawJson;
+                nodeVm.DetailStatus = (container.IsSwarmService || container.IsKubernetesResource) && !string.IsNullOrWhiteSpace(container.Ports)
+                    ? container.Ports
+                    : container.State;
+                nodeVm.IsRunning = container.IsSwarmService || string.Equals(container.State, "running", System.StringComparison.OrdinalIgnoreCase);
                 nodeVm.IsDockerConnected = !string.IsNullOrWhiteSpace(container.Id);
             }
             else if (nodeModel is DockerVolume volume)

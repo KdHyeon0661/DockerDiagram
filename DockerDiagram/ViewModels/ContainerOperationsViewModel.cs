@@ -49,10 +49,10 @@ namespace DockerDiagram.ViewModels
                 _ => IsConnectedContainer && _node.IsRunning);
             OpenDetailWindowCommand = new AsyncRelayCommand(
                 _ => OpenDetailWindowAsync(),
-                _ => IsConnectedContainer);
+                _ => IsConnectedContainer || IsConnectedSwarmService || IsKubernetesResource);
             RefreshLogsCommand = new AsyncRelayCommand(
                 _ => LoadLogsAsync(),
-                _ => IsConnectedContainer);
+                _ => IsConnectedContainer || IsConnectedKubernetesPod);
             ExtractDockerfileCommand = new AsyncRelayCommand(
                 _ => ExtractDockerfileAsync(),
                 _ => IsConnectedContainer);
@@ -84,8 +84,27 @@ namespace DockerDiagram.ViewModels
 
         private bool IsConnectedContainer =>
             _node.Type == NodeType.Container &&
+            !_node.IsSwarmService &&
+            !_node.IsKubernetesResource &&
             _node.IsDockerConnected &&
             !string.IsNullOrWhiteSpace(_node.ContainerId);
+
+        private bool IsConnectedSwarmService =>
+            _node.Type == NodeType.Container &&
+            _node.IsSwarmService;
+
+        private bool IsKubernetesPod =>
+            _node.Type == NodeType.Container &&
+            _node.IsKubernetesPod;
+
+        private bool IsKubernetesResource =>
+            _node.Type == NodeType.Container &&
+            _node.IsKubernetesResource;
+
+        private bool IsConnectedKubernetesPod =>
+            IsKubernetesPod &&
+            !_node.IsRuntimeUnavailable &&
+            _node.IsDockerConnected;
 
         public void RaiseCommandStates()
         {
@@ -107,6 +126,7 @@ namespace DockerDiagram.ViewModels
 
         public async Task StartLogStreamAsync(Action<string> onLogReceived)
         {
+            if (_node.IsSwarmService || _node.IsKubernetesResource) return;
             if (string.IsNullOrWhiteSpace(_node.ContainerId)) return;
 
             StopLogStream();
@@ -403,7 +423,13 @@ namespace DockerDiagram.ViewModels
 
         private async Task OpenDetailWindowAsync()
         {
-            if (!IsConnectedContainer) return;
+            if (!IsConnectedContainer && !IsConnectedSwarmService && !IsKubernetesResource) return;
+
+            if (_node.IsSwarmService && !_node.IsRuntimeUnavailable && _node.IsDockerConnected)
+                await _node.RefreshSwarmServiceAsync();
+
+            if (_node.IsKubernetesResource && !_node.IsRuntimeUnavailable && _node.IsDockerConnected)
+                await _node.RefreshKubernetesResourceAsync();
 
             _dialogService.ShowContainerDetail(_node);
             await LoadLogsAsync();
@@ -411,6 +437,46 @@ namespace DockerDiagram.ViewModels
 
         private async Task LoadLogsAsync()
         {
+            if (_node.IsSwarmService)
+            {
+                _node.ContainerLogs = "Swarm service는 단일 컨테이너 로그 대상이 아닙니다. 실제 로그는 service task/container 단위에서 확인해야 합니다.";
+                return;
+            }
+
+            if (_node.IsKubernetesPod)
+            {
+                if (_node.IsRuntimeUnavailable)
+                {
+                    _node.ContainerLogs = "현재 시트는 오프라인 스냅샷입니다. 런타임을 사용할 수 있을 때 로그를 다시 조회해 주세요.";
+                    return;
+                }
+
+                if (_containerService is not IKubernetesService kubernetesService)
+                {
+                    _node.ContainerLogs = "Kubernetes service가 연결되어 있지 않습니다.";
+                    return;
+                }
+
+                try
+                {
+                    _node.ContainerLogs = "Fetching logs from Kubernetes...";
+                    string logs = await kubernetesService.GetKubernetesPodLogsAsync(_node.KubernetesNamespace, _node.KubernetesPodName, 500);
+                    _node.ContainerLogs = string.IsNullOrWhiteSpace(logs) ? "(No logs found)" : logs;
+                }
+                catch (Exception ex)
+                {
+                    _node.ContainerLogs = $"Error fetching Kubernetes logs: {ex.Message}";
+                }
+
+                return;
+            }
+
+            if (_node.IsKubernetesResource)
+            {
+                _node.ContainerLogs = $"{_node.KubernetesKind} 리소스는 Pod 로그 대상이 아닙니다. Describe/YAML/JSON 탭에서 상태를 확인하세요.";
+                return;
+            }
+
             if (string.IsNullOrWhiteSpace(_node.ContainerId))
             {
                 _node.ContainerLogs = "Container ID is missing.";

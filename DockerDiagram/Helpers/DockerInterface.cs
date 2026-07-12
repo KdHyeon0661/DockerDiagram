@@ -11,7 +11,7 @@ namespace DockerDiagram.Helpers
     /// 도커 엔진과의 통신을 담당하는 최상위 서비스 인터페이스입니다.
     /// 하위 서비스(컨테이너, 볼륨, 네트워크, 이미지, 시스템)들을 하나로 묶어 제공하며, 자원 해제(IDisposable)를 지원합니다.
     /// </summary>
-    public interface IDockerService : IContainerService, IVolumeService, INetworkService, IImageService, ISystemService, IDisposable
+    public interface IDockerService : IContainerService, IVolumeService, INetworkService, IImageService, ISystemService, ISwarmService, IKubernetesService, IDisposable
     {
     }
 
@@ -33,7 +33,7 @@ namespace DockerDiagram.Helpers
         Task<string> CommitContainerAsync(string containerId, string repository, string tag, string comment, string author, bool pause);
         Task ExportContainerAsync(string containerId, string tarFilePath);
 
-        Task<string> CreateAndStartContainerAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, string command = "", bool tty = false, string networkName = "");
+        Task<string> CreateAndStartContainerAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, string command = "", bool tty = false, string networkName = "", Dictionary<string, string>? labels = null);
         Task UpdateContainerResourcesAsync(string containerId, double cpuCount, long memoryMb);
 
         Task CopyFromContainerAsync(string containerId, string containerPath, string hostPath);
@@ -110,5 +110,41 @@ namespace DockerDiagram.Helpers
             string? serverAddress = null,
             CancellationToken cancellationToken = default);
         Task PullImageWithProgressAsync(string image, string tag, IProgress<JSONMessage> progress, string? username = null, string? password = null, string? serverAddress = null);
+    }
+
+    public interface ISwarmService
+    {
+        Task<List<DockerContainer>> GetSwarmServicesAsync();
+        Task<List<DockerSwarmNode>> GetSwarmNodesAsync();
+        Task<List<DockerSwarmTask>> GetSwarmServiceTasksAsync(string serviceId);
+        Task<object> InspectSwarmServiceRawAsync(string serviceId);
+        Task ScaleSwarmServiceAsync(string serviceId, ulong replicas);
+        Task RemoveSwarmServiceAsync(string serviceId);
+    }
+
+    public interface IKubernetesService
+    {
+        Task<List<DockerContainer>> GetKubernetesPodsAsync();
+        Task<List<DockerContainer>> GetKubernetesDeploymentsAsync();
+        Task<List<DockerContainer>> GetKubernetesReplicaSetsAsync();
+        Task<List<DockerContainer>> GetKubernetesServicesAsync();
+        Task<List<DockerContainer>> GetKubernetesConfigMapsAsync();
+        Task<List<DockerContainer>> GetKubernetesSecretsAsync();
+        Task<List<DockerContainer>> GetKubernetesIngressesAsync();
+        Task<List<DockerContainer>> GetKubernetesPersistentVolumeClaimsAsync();
+        Task<List<DockerKubernetesNode>> GetKubernetesNodesAsync();
+        Task<object> InspectKubernetesPodRawAsync(string namespaceName, string podName);
+        Task<object> InspectKubernetesResourceRawAsync(string apiResource, string namespaceName, string resourceName);
+        Task<string> GetKubernetesResourceYamlAsync(string apiResource, string namespaceName, string resourceName);
+        Task<string> DescribeKubernetesResourceAsync(string apiResource, string namespaceName, string resourceName);
+        Task<string> GetKubernetesPodYamlAsync(string namespaceName, string podName);
+        Task<string> DescribeKubernetesPodAsync(string namespaceName, string podName);
+        Task<string> GetKubernetesPodLogsAsync(string namespaceName, string podName, int tailCount = 500);
+        Task ScaleKubernetesDeploymentAsync(string namespaceName, string deploymentName, int replicas);
+        Task RolloutRestartKubernetesResourceAsync(string apiResource, string namespaceName, string resourceName);
+        Task DeleteKubernetesResourceAsync(string apiResource, string namespaceName, string resourceName);
+        Task ApplyKubernetesManifestAsync(string manifestPath);
+        void OpenKubernetesLogsFollow(string namespaceName, string podName);
+        void OpenKubernetesPortForward(string apiResource, string namespaceName, string resourceName, int localPort, int remotePort);
     }
 }

@@ -29,6 +29,15 @@ namespace DockerDiagram.ViewModels
         public ObservableCollection<DockerNetworkGroup> ExistingNetworks { get; } = new();
         public ObservableCollection<DockerImage> LocalImages { get; } = new();
         public ObservableCollection<DockerComposeProject> ComposeProjects { get; } = new();
+        public ObservableCollection<DockerSwarmNode> SwarmNodes { get; } = new();
+        public ObservableCollection<DockerKubernetesNode> KubernetesNodes { get; } = new();
+        public ObservableCollection<DockerContainer> KubernetesDeployments { get; } = new();
+        public ObservableCollection<DockerContainer> KubernetesReplicaSets { get; } = new();
+        public ObservableCollection<DockerContainer> KubernetesServices { get; } = new();
+        public ObservableCollection<DockerContainer> KubernetesConfigMaps { get; } = new();
+        public ObservableCollection<DockerContainer> KubernetesSecrets { get; } = new();
+        public ObservableCollection<DockerContainer> KubernetesIngresses { get; } = new();
+        public ObservableCollection<DockerContainer> KubernetesPersistentVolumeClaims { get; } = new();
         public ObservableCollection<ImageSearchResponse> HubSearchResults { get; } = new();
 
         // --- 2. 검색 및 상태 필드 ---
@@ -61,12 +70,32 @@ namespace DockerDiagram.ViewModels
 
         private string _lastSyncTime = "Ready";
         public string LastSyncTime { get => _lastSyncTime; set => SetProperty(ref _lastSyncTime, value); }
+        public bool IsSwarmRuntime => _mainVm.ActiveSheet?.RuntimeKind == RuntimeKind.DockerSwarm;
+        public bool IsKubernetesRuntime => _mainVm.ActiveSheet?.RuntimeKind == RuntimeKind.Kubernetes;
+        public string ResourceHeader => IsSwarmRuntime ? "Swarm Resources" : IsKubernetesRuntime ? "Kubernetes Resources" : "Docker Resources";
+        public string PrimaryResourceLabel => IsSwarmRuntime ? "Services" : IsKubernetesRuntime ? "Pods" : "Containers";
+        public string PrimaryResourceSearchPlaceholder => IsSwarmRuntime ? "Search services" : IsKubernetesRuntime ? "Search pods" : "Search containers";
+        public int KubernetesResourceCount =>
+            KubernetesDeployments.Count +
+            KubernetesReplicaSets.Count +
+            KubernetesServices.Count +
+            KubernetesConfigMaps.Count +
+            KubernetesSecrets.Count +
+            KubernetesIngresses.Count +
+            KubernetesPersistentVolumeClaims.Count;
 
         // --- 3. 로컬 캐시 (필터링 전 원본) ---
         private List<DockerContainer> _rawContainers = new();
         private List<DockerVolume> _rawVolumes = new();
         private List<DockerNetworkGroup> _rawNetworks = new();
         private List<DockerImage> _rawImages = new();
+        private List<DockerContainer> _rawKubernetesDeployments = new();
+        private List<DockerContainer> _rawKubernetesReplicaSets = new();
+        private List<DockerContainer> _rawKubernetesServices = new();
+        private List<DockerContainer> _rawKubernetesConfigMaps = new();
+        private List<DockerContainer> _rawKubernetesSecrets = new();
+        private List<DockerContainer> _rawKubernetesIngresses = new();
+        private List<DockerContainer> _rawKubernetesPersistentVolumeClaims = new();
         private Dictionary<string, int> _usageStats = new();
 
         // --- 4. 명령(Commands) ---
@@ -108,26 +137,107 @@ namespace DockerDiagram.ViewModels
             var sheet = _mainVm.ActiveSheet;
             var service = sheet?.DockerService ?? _defaultDockerService;
             if (service == null) return;
+            RaiseRuntimeLabelsChanged();
 
-            // 로컬인 경우 프로세스 체크
-            if (sheet?.Profile.Type == EndpointType.Local && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            bool usesDockerEngine = sheet?.RuntimeKind != RuntimeKind.Kubernetes;
+
+            // 로컬 Docker 런타임인 경우 프로세스 체크
+            if (usesDockerEngine && sheet?.Profile.Type == EndpointType.Local && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 if (!DockerServiceHelper.IsDockerRunning())
                 {
                     LastSyncTime = "Docker stopped";
+                    MarkRuntimeUnavailable(sheet, "Docker engine is not running. This sheet is shown as an offline snapshot.");
                     return;
                 }
             }
 
             try
             {
-                if (!await ((ISystemService)service).PingAsync()) return;
+                if (sheet?.RuntimeKind == RuntimeKind.Kubernetes)
+                {
+                    try
+                    {
+                        _rawContainers = await ((IKubernetesService)service).GetKubernetesPodsAsync();
+                        SyncCollection(KubernetesNodes, await ((IKubernetesService)service).GetKubernetesNodesAsync(), node => node.Id);
+                        _rawKubernetesDeployments = await ((IKubernetesService)service).GetKubernetesDeploymentsAsync();
+                        _rawKubernetesReplicaSets = await ((IKubernetesService)service).GetKubernetesReplicaSetsAsync();
+                        _rawKubernetesServices = await ((IKubernetesService)service).GetKubernetesServicesAsync();
+                        _rawKubernetesConfigMaps = await ((IKubernetesService)service).GetKubernetesConfigMapsAsync();
+                        _rawKubernetesSecrets = await ((IKubernetesService)service).GetKubernetesSecretsAsync();
+                        _rawKubernetesIngresses = await ((IKubernetesService)service).GetKubernetesIngressesAsync();
+                        _rawKubernetesPersistentVolumeClaims = await ((IKubernetesService)service).GetKubernetesPersistentVolumeClaimsAsync();
+                    }
+                    catch (Exception kubernetesEx)
+                    {
+                        MarkRuntimeUnavailable(
+                            sheet,
+                            "Kubernetes runtime is unavailable. Saved resources remain visible as an offline snapshot; live controls are disabled.");
+                        _rawContainers.Clear();
+                        _rawVolumes.Clear();
+                        _rawNetworks.Clear();
+                        _rawImages.Clear();
+                        ComposeProjects.Clear();
+                        SwarmNodes.Clear();
+                        ClearKubernetesResourceCollections(clearNodes: true);
+                        UpdateAvailableItems();
+                        LastSyncTime = "Kubernetes unavailable";
+                        Debug.WriteLine($"[ResourceExplorer] Kubernetes Sync Error: {kubernetesEx.Message}");
+                        return;
+                    }
 
-                _rawContainers = await ((IContainerService)service).GetContainersAsync();
-                _rawVolumes = await ((IVolumeService)service).GetVolumesAsync();
-                _rawNetworks = await ((INetworkService)service).GetNetworksAsync();
-                _rawImages = await ((IImageService)service).GetImagesAsync();
+                    _rawVolumes.Clear();
+                    _rawNetworks.Clear();
+                    _rawImages.Clear();
+                    ComposeProjects.Clear();
+                    SwarmNodes.Clear();
+                }
+                else if (!await ((ISystemService)service).PingAsync())
+                {
+                    MarkRuntimeUnavailable(sheet, "Docker engine is not reachable. This sheet is shown as an offline snapshot.");
+                    return;
+                }
+                else if (sheet?.RuntimeKind == RuntimeKind.DockerSwarm)
+                {
+                    try
+                    {
+                        _rawContainers = await ((ISwarmService)service).GetSwarmServicesAsync();
+                    }
+                    catch (Exception swarmEx)
+                    {
+                        MarkRuntimeUnavailable(
+                            sheet,
+                            "Swarm runtime is unavailable. Saved services remain visible as an offline snapshot; live controls are disabled.");
+                        _rawContainers.Clear();
+                        _rawVolumes.Clear();
+                        _rawNetworks.Clear();
+                        _rawImages.Clear();
+                        ComposeProjects.Clear();
+                        SwarmNodes.Clear();
+                        UpdateAvailableItems();
+                        LastSyncTime = "Swarm unavailable";
+                        Debug.WriteLine($"[ResourceExplorer] Swarm Sync Error: {swarmEx.Message}");
+                        return;
+                    }
 
+                    _rawVolumes.Clear();
+                    _rawNetworks = await ((INetworkService)service).GetNetworksAsync();
+                    _rawImages.Clear();
+                    SyncCollection(SwarmNodes, await ((ISwarmService)service).GetSwarmNodesAsync(), node => node.Id);
+                    ClearKubernetesResourceCollections(clearNodes: true);
+                }
+                else
+                {
+                    ClearRuntimeUnavailable(sheet);
+                    _rawContainers = await ((IContainerService)service).GetContainersAsync();
+                    _rawVolumes = await ((IVolumeService)service).GetVolumesAsync();
+                    _rawNetworks = await ((INetworkService)service).GetNetworksAsync();
+                    _rawImages = await ((IImageService)service).GetImagesAsync();
+                    SwarmNodes.Clear();
+                    ClearKubernetesResourceCollections(clearNodes: true);
+                }
+
+                ClearRuntimeUnavailable(sheet);
                 UpdateComposeProjects();
                 UpdateAvailableItems();
                 UpdateDiagramConnectionStates();
@@ -136,13 +246,38 @@ namespace DockerDiagram.ViewModels
             catch (Exception ex)
             {
                 LastSyncTime = "Sync failed";
+                MarkRuntimeUnavailable(sheet, "Runtime sync failed. This sheet is shown as an offline snapshot.");
                 Debug.WriteLine($"[ResourceExplorer] Sync Error: {ex.Message}");
             }
+        }
+
+        private static void MarkRuntimeUnavailable(SheetViewModel? sheet, string message)
+        {
+            if (sheet == null) return;
+
+            sheet.RuntimeStatusMessage = message;
+            sheet.IsRuntimeUnavailable = true;
+
+            foreach (var node in sheet.Nodes.Where(node => node.IsSwarmService || node.IsKubernetesResource))
+            {
+                node.IsDockerConnected = false;
+                node.StatusColor = "#808080";
+                node.NotifyRuntimeAvailabilityChanged();
+            }
+        }
+
+        private static void ClearRuntimeUnavailable(SheetViewModel? sheet)
+        {
+            if (sheet == null) return;
+
+            sheet.IsRuntimeUnavailable = false;
+            sheet.RuntimeStatusMessage = string.Empty;
         }
 
         public void UpdateAvailableItems()
         {
             if (_mainVm.Sheets == null) return;
+            RaiseRuntimeLabelsChanged();
 
             // 1. 모든 시트에서 사용 중인 요소들 긁어모으기
             var allNodes = new List<NodeViewModel>();
@@ -198,33 +333,111 @@ namespace DockerDiagram.ViewModels
                 .Where(i => string.IsNullOrEmpty(ImageSearchText) || i.Repository.Contains(ImageSearchText, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             SyncCollection(LocalImages, filteredImages, i => i.Id);
+
+            SyncCollection(
+                KubernetesDeployments,
+                FilterKubernetesResources(_rawKubernetesDeployments, usedContainerIds),
+                resource => resource.Id);
+            SyncCollection(
+                KubernetesReplicaSets,
+                FilterKubernetesResources(_rawKubernetesReplicaSets, usedContainerIds),
+                resource => resource.Id);
+            SyncCollection(
+                KubernetesServices,
+                FilterKubernetesResources(_rawKubernetesServices, usedContainerIds),
+                resource => resource.Id);
+            SyncCollection(
+                KubernetesConfigMaps,
+                FilterKubernetesResources(_rawKubernetesConfigMaps, usedContainerIds),
+                resource => resource.Id);
+            SyncCollection(
+                KubernetesSecrets,
+                FilterKubernetesResources(_rawKubernetesSecrets, usedContainerIds),
+                resource => resource.Id);
+            SyncCollection(
+                KubernetesIngresses,
+                FilterKubernetesResources(_rawKubernetesIngresses, usedContainerIds),
+                resource => resource.Id);
+            SyncCollection(
+                KubernetesPersistentVolumeClaims,
+                FilterKubernetesResources(_rawKubernetesPersistentVolumeClaims, usedContainerIds),
+                resource => resource.Id);
+            OnPropertyChanged(nameof(KubernetesResourceCount));
+        }
+
+        private List<DockerContainer> FilterKubernetesResources(IEnumerable<DockerContainer> resources, HashSet<string> usedIds)
+        {
+            return resources
+                .Where(resource => !usedIds.Contains(resource.Id))
+                .Where(resource => string.IsNullOrWhiteSpace(ContainerSearchText) ||
+                                   resource.Name.Contains(ContainerSearchText, StringComparison.OrdinalIgnoreCase) ||
+                                   resource.KubernetesKind.Contains(ContainerSearchText, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        private void ClearKubernetesResourceCollections(bool clearNodes)
+        {
+            if (clearNodes)
+                KubernetesNodes.Clear();
+
+            _rawKubernetesDeployments.Clear();
+            _rawKubernetesReplicaSets.Clear();
+            _rawKubernetesServices.Clear();
+            _rawKubernetesConfigMaps.Clear();
+            _rawKubernetesSecrets.Clear();
+            _rawKubernetesIngresses.Clear();
+            _rawKubernetesPersistentVolumeClaims.Clear();
+
+            KubernetesDeployments.Clear();
+            KubernetesReplicaSets.Clear();
+            KubernetesServices.Clear();
+            KubernetesConfigMaps.Clear();
+            KubernetesSecrets.Clear();
+            KubernetesIngresses.Clear();
+            KubernetesPersistentVolumeClaims.Clear();
+            OnPropertyChanged(nameof(KubernetesResourceCount));
         }
 
         private void UpdateComposeProjects()
         {
-            var projectNames = _rawContainers.Cast<DockerResource>()
+            if (IsSwarmRuntime)
+            {
+                ComposeProjects.Clear();
+                return;
+            }
+
+            var projectGroups = _rawContainers.Cast<DockerResource>()
                 .Concat(_rawVolumes)
                 .Concat(_rawNetworks)
                 .Where(resource => resource.IsComposeManaged)
-                .Select(resource => resource.ComposeProjectName)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(
+                    resource => $"{NormalizeProjectSource(resource.ProjectSource)}\u001F{resource.ComposeProjectName}",
+                    StringComparer.OrdinalIgnoreCase)
+                .OrderBy(group => group.First().ComposeProjectName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(group => NormalizeProjectSource(group.First().ProjectSource), StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             ComposeProjects.Clear();
-            foreach (string projectName in projectNames)
+            foreach (var projectGroup in projectGroups)
             {
+                var sourceResource = projectGroup.First();
+                string projectName = sourceResource.ComposeProjectName;
+                string source = NormalizeProjectSource(sourceResource.ProjectSource);
+
+                if (source.Equals("Template", StringComparison.OrdinalIgnoreCase))
+                    MarkLikelyTemplateContainers(projectName);
+
                 var containers = _rawContainers
-                    .Where(container => container.ComposeProjectName.Equals(projectName, StringComparison.OrdinalIgnoreCase))
+                    .Where(container => IsSameProject(container, projectName, source))
                     .OrderBy(container => container.ComposeServiceName, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(container => container.ComposeContainerNumber)
                     .ToList();
                 var volumes = _rawVolumes
-                    .Where(volume => volume.ComposeProjectName.Equals(projectName, StringComparison.OrdinalIgnoreCase))
+                    .Where(volume => IsSameProject(volume, projectName, source))
                     .OrderBy(volume => volume.ComposeResourceName, StringComparer.OrdinalIgnoreCase)
                     .ToList();
                 var networks = _rawNetworks
-                    .Where(network => network.ComposeProjectName.Equals(projectName, StringComparison.OrdinalIgnoreCase))
+                    .Where(network => IsSameProject(network, projectName, source))
                     .OrderBy(network => network.ComposeResourceName, StringComparer.OrdinalIgnoreCase)
                     .ToList();
                 var projectSource = containers.Cast<DockerResource>()
@@ -238,10 +451,44 @@ namespace DockerDiagram.ViewModels
                     Name = projectName,
                     WorkingDirectory = projectSource.ComposeWorkingDirectory,
                     ConfigFiles = projectSource.ComposeConfigFiles,
+                    Source = source,
                     Containers = containers,
                     Volumes = volumes,
                     Networks = networks
                 });
+            }
+        }
+
+        private static bool IsSameProject(DockerResource resource, string projectName, string source)
+        {
+            return resource.ComposeProjectName.Equals(projectName, StringComparison.OrdinalIgnoreCase) &&
+                   NormalizeProjectSource(resource.ProjectSource).Equals(source, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeProjectSource(string source)
+        {
+            return string.IsNullOrWhiteSpace(source) ? "Compose" : source;
+        }
+
+        private void MarkLikelyTemplateContainers(string projectName)
+        {
+            if (string.IsNullOrWhiteSpace(projectName)) return;
+
+            string prefix = $"{projectName}-";
+            foreach (var container in _rawContainers)
+            {
+                if (container.IsComposeManaged) continue;
+                if (!container.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                string resourceName = container.Name[prefix.Length..];
+                if (string.IsNullOrWhiteSpace(resourceName))
+                    resourceName = container.Name;
+
+                container.ComposeProjectName = projectName;
+                container.ComposeResourceName = resourceName;
+                container.ComposeServiceName = resourceName;
+                container.ComposeContainerNumber = 1;
+                container.ProjectSource = "Template";
             }
         }
 
@@ -250,6 +497,13 @@ namespace DockerDiagram.ViewModels
             if (_mainVm.Sheets == null) return;
 
             var containerIds = _rawContainers
+                .Concat(_rawKubernetesDeployments)
+                .Concat(_rawKubernetesReplicaSets)
+                .Concat(_rawKubernetesServices)
+                .Concat(_rawKubernetesConfigMaps)
+                .Concat(_rawKubernetesSecrets)
+                .Concat(_rawKubernetesIngresses)
+                .Concat(_rawKubernetesPersistentVolumeClaims)
                 .Where(c => !string.IsNullOrWhiteSpace(c.Id))
                 .Select(c => c.Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -339,6 +593,12 @@ namespace DockerDiagram.ViewModels
         {
             if (param is DockerContainer c)
             {
+                if (c.IsSwarmService)
+                {
+                    _dialogService.ShowInfo("Swarm service 삭제는 다음 단계에서 별도 동작으로 추가할 예정입니다.", "Swarm Service");
+                    return;
+                }
+
                 if (_dialogService.ShowConfirm($"컨테이너 '{c.Name}'을 영구 삭제하시겠습니까?", "확인"))
                 {
                     try
@@ -350,6 +610,16 @@ namespace DockerDiagram.ViewModels
                     catch (Exception ex) { _dialogService.ShowMessage($"삭제 실패: {ex.Message}"); }
                 }
             }
+        }
+
+        private void RaiseRuntimeLabelsChanged()
+        {
+            OnPropertyChanged(nameof(IsSwarmRuntime));
+            OnPropertyChanged(nameof(IsKubernetesRuntime));
+            OnPropertyChanged(nameof(ResourceHeader));
+            OnPropertyChanged(nameof(PrimaryResourceLabel));
+            OnPropertyChanged(nameof(PrimaryResourceSearchPlaceholder));
+            OnPropertyChanged(nameof(KubernetesResourceCount));
         }
 
         private async Task DeleteVolumeItemAsync(object? param)

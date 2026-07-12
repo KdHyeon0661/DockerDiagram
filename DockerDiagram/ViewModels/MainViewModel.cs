@@ -385,7 +385,7 @@ namespace DockerDiagram.ViewModels
                 IsModified = true;
                 Explorer.RegisterTemplateUsage(container.Image);
 
-                if (!string.IsNullOrEmpty(container.Id))
+                if (!container.IsSwarmService && !string.IsNullOrEmpty(container.Id))
                 {
                     try
                     {
@@ -587,11 +587,48 @@ namespace DockerDiagram.ViewModels
                 IsCreating = true,
                 StatusColor = "#FFC107"
             };
+            node.SetCreationProgress("Waiting to pull image...");
             ActiveSheet.Nodes.Add(node);
+            var creationSheet = ActiveSheet;
+            Func<Task> retryContainerCreation = async () =>
+            {
+                ActiveSheet = creationSheet;
+                await CreateNewContainerNodeAsync(
+                    name,
+                    image,
+                    tag,
+                    safePorts.ToList(),
+                    safeEnvs.ToList(),
+                    safeVolumes.ToList(),
+                    restartPolicy,
+                    memoryMb,
+                    cpuCount,
+                    x,
+                    y,
+                    networkName,
+                    command,
+                    tty,
+                    regUser,
+                    regPass,
+                    regServer);
+            };
 
             try
             {
-                try { await _imageService.PullImageAsync(image, tag, regUser, regPass, regServer); }
+                try
+                {
+                    var tracker = new DockerPullProgressTracker();
+                    var progress = new Progress<JSONMessage>(message =>
+                    {
+                        var snapshot = tracker.Update(message);
+                        node.SetCreationProgress(snapshot.Message, snapshot.Percent);
+                        node.StatusColor = snapshot.Percent.HasValue ? "#0D6EFD" : "#FFC107";
+                    });
+
+                    node.StatusColor = "#0D6EFD";
+                    await _imageService.PullImageWithProgressAsync(image, tag, progress, regUser, regPass, regServer);
+                    node.SetCreationProgress("Image pull complete", 100);
+                }
                 catch (Exception pullEx)
                 {
                     Debug.WriteLine($"[Image Pull] 원격 이미지 다운로드 실패: {pullEx.Message}");
@@ -599,12 +636,17 @@ namespace DockerDiagram.ViewModels
                     bool existsLocally = localImages.Any(img => img.Repository == image && (img.Tag == tag || tag == "latest"));
                     if (!existsLocally)
                     {
-                        _dialogService.ShowInfo($"이미지 '{image}:{tag}'를 다운로드할 수 없으며 로컬에도 없습니다.\n생성을 취소합니다.\n\n{pullEx.Message}", "이미지 없음");
-                        ActiveSheet.Nodes.Remove(node);
+                        node.MarkCreationFailed(
+                            $"이미지 '{image}:{tag}'를 다운로드할 수 없으며 로컬에도 없습니다.\n\n{pullEx.Message}",
+                            retryContainerCreation);
                         return;
                     }
+
+                    node.SetCreationProgress("Using local image");
                 }
 
+                node.StatusColor = "#FFC107";
+                node.SetCreationProgress("Creating container...");
                 string containerId = await _containerService.CreateAndStartContainerAsync(
                     name, image, tag, safePorts, safeEnvs, safeVolumes, restartPolicy, memoryMb, cpuCount, command, tty);
 
@@ -614,8 +656,11 @@ namespace DockerDiagram.ViewModels
                 node.PortBindings = safePorts;
                 node.EnvironmentVariables = safeEnvs;
                 node.RestartPolicy = restartPolicy;
+                node.ClearCreationFailure();
                 node.IsCreating = false;
                 node.StatusColor = "#28a745";
+                node.CreationProgressValue = 100;
+                node.CreationProgressMessage = "Created";
                 node.IsDockerConnected = true;
 
                 if (targetGroup != null)
@@ -680,8 +725,8 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
+                node.MarkCreationFailed($"컨테이너 생성 중 오류가 발생했습니다:\n{ex.Message}", retryContainerCreation);
                 _dialogService.ShowError($"컨테이너 생성 중 오류가 발생했습니다:\n{ex.Message}", "생성 실패");
-                ActiveSheet.Nodes.Remove(node);
             }
         }
 
@@ -712,6 +757,12 @@ namespace DockerDiagram.ViewModels
                 StatusColor = "#FFC107"
             };
             ActiveSheet.Nodes.Add(node);
+            var creationSheet = ActiveSheet;
+            Func<Task> retryVolumeCreation = async () =>
+            {
+                ActiveSheet = creationSheet;
+                await CreateNewVolumeNodeAsync(options, x, y);
+            };
 
             try
             {
@@ -733,6 +784,7 @@ namespace DockerDiagram.ViewModels
                 node.ContainerId = "";
                 node.Driver = driver;
                 node.ImageName = driver;
+                node.ClearCreationFailure();
                 node.IsCreating = false;
                 node.StatusColor = "#E67E22";
                 node.IsDockerConnected = true;
@@ -744,8 +796,8 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
+                node.MarkCreationFailed($"볼륨 생성 실패:\n{ex.Message}", retryVolumeCreation);
                 _dialogService.ShowMessage($"볼륨 생성 실패: {ex.Message}");
-                ActiveSheet.Nodes.Remove(node);
             }
         }
 
@@ -870,7 +922,14 @@ namespace DockerDiagram.ViewModels
                 IsCreating = true,
                 StatusColor = "#FFC107"
             };
+            dummyNode.SetCreationProgress("Running docker command...");
             ActiveSheet.Nodes.Add(dummyNode);
+            var creationSheet = ActiveSheet;
+            Func<Task> retryCliCreation = async () =>
+            {
+                ActiveSheet = creationSheet;
+                await ProcessCliCommandAsync(cliCommand, x, y);
+            };
 
             if (targetGroup != null)
             {
@@ -901,8 +960,11 @@ namespace DockerDiagram.ViewModels
                 {
                     dummyNode.ContainerId = realContainer.Id;
                     dummyNode.Name = name;
+                    dummyNode.ClearCreationFailure();
                     dummyNode.IsCreating = false;
                     dummyNode.StatusColor = "#28a745";
+                    dummyNode.CreationProgressValue = 100;
+                    dummyNode.CreationProgressMessage = "Created";
                     dummyNode.IsDockerConnected = true;
 
                     await dummyNode.RefreshDetailsAsync();
@@ -977,13 +1039,15 @@ namespace DockerDiagram.ViewModels
                 else
                 {
                     _dialogService.ShowError($"명령어 실행 실패.\n도커가 컨테이너를 생성하지 못했습니다. 명령어를 다시 확인해 주세요.", "실패");
-                    ActiveSheet.Nodes.Remove(dummyNode);
+                    dummyNode.MarkCreationFailed(
+                        "명령어 실행 실패.\n도커가 컨테이너를 생성하지 못했습니다. 명령어를 다시 확인해 주세요.",
+                        retryCliCreation);
                 }
             }
             catch (Exception ex)
             {
                 _dialogService.ShowError($"CMD 실행 중 오류가 발생했습니다:\n{ex.Message}", "명령어 실행 오류");
-                ActiveSheet.Nodes.Remove(dummyNode);
+                dummyNode.MarkCreationFailed($"CMD 실행 중 오류가 발생했습니다:\n{ex.Message}", retryCliCreation);
             }
         }
 
@@ -1019,7 +1083,14 @@ namespace DockerDiagram.ViewModels
                 IsCreating = true,
                 StatusColor = "#17a2b8"
             };
+            dummyNode.SetCreationProgress("Building image...");
             ActiveSheet.Nodes.Add(dummyNode);
+            var creationSheet = ActiveSheet;
+            Func<Task> retryBuildCreation = async () =>
+            {
+                ActiveSheet = creationSheet;
+                await BuildImageAndCreateNodeAsync(targetImageName, dockerfileContent, uploadedFilePath, x, y);
+            };
 
             try
             {
@@ -1036,7 +1107,7 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                ActiveSheet.Nodes.Remove(dummyNode);
+                dummyNode.MarkCreationFailed($"빌드 중 오류 발생:\n{ex.Message}", retryBuildCreation);
                 _dialogService.ShowMessage($"빌드 중 오류 발생: {ex.Message}");
             }
         }

@@ -10,7 +10,7 @@ namespace DockerDiagram.Models
     /// </summary>
     public class DiagramFile
     {
-        public string Version { get; set; } = "1.33"; // 파일 구조의 버전 (하위 호환성 체크용)
+        public string Version { get; set; } = "1.35"; // 파일 구조의 버전 (하위 호환성 체크용)
         public DateTime SavedAt { get; set; } = DateTime.Now; // 파일이 마지막으로 저장된 시간
         public List<SheetData> Sheets { get; set; } = new List<SheetData>(); // 파일에 포함된 모든 시트(도화지) 목록
         public int ActiveSheetIndex { get; set; } = 0; // 파일을 다시 열었을 때 포커스를 맞출 시트의 인덱스
@@ -23,6 +23,7 @@ namespace DockerDiagram.Models
     {
         public string Title { get; set; } = "Sheet"; // 시트의 이름
         public ConnectionProfile Profile { get; set; } = new ConnectionProfile(); // 해당 시트가 사용하던 도커 접속 정보
+        public RuntimeKind RuntimeKind { get; set; } = RuntimeKind.DockerEngine; // 시트가 바라보는 런타임 종류
 
         // --- 화면 뷰(줌/팬) 상태 ---
         public double MapWidth { get; set; } // 도화지 전체 가로 길이
@@ -47,6 +48,7 @@ namespace DockerDiagram.Models
         public string DockerId { get; set; } = string.Empty; // 실제 도커 엔진에 생성된 컨테이너/볼륨의 ID
         public string Name { get; set; } = string.Empty; // 노드(도커 리소스)의 이름
         public string ImageName { get; set; } = string.Empty; // 컨테이너인 경우 사용된 이미지 이름
+        public string PortInfo { get; set; } = string.Empty; // 포트 또는 Swarm replica 요약 표시
 
         public NodeType Type { get; set; } // 노드의 종류 (컨테이너, 볼륨, 인터넷 등)
 
@@ -72,6 +74,24 @@ namespace DockerDiagram.Models
         public string ComposeLayoutInstanceId { get; set; } = string.Empty;
         public string ComposeRawServiceYaml { get; set; } = string.Empty; // 원본 service YAML
         public string ComposeRawVolumeYaml { get; set; } = string.Empty; // 원본 volume YAML
+        public bool IsSwarmService { get; set; } // Docker Swarm service를 읽기 전용 노드로 표시
+        public string SwarmMode { get; set; } = string.Empty;
+        public ulong SwarmDesiredReplicas { get; set; }
+        public ulong SwarmRunningReplicas { get; set; }
+        public bool IsKubernetesPod { get; set; } // Kubernetes Pod를 읽기 전용 노드로 표시
+        public string KubernetesKind { get; set; } = string.Empty;
+        public string KubernetesApiResource { get; set; } = string.Empty;
+        public string KubernetesApiVersion { get; set; } = string.Empty;
+        public string KubernetesNamespace { get; set; } = string.Empty;
+        public string KubernetesNodeName { get; set; } = string.Empty;
+        public string KubernetesReady { get; set; } = string.Empty;
+        public int KubernetesRestarts { get; set; }
+        public int KubernetesDesiredReplicas { get; set; }
+        public int KubernetesReadyReplicas { get; set; }
+        public string KubernetesPodIp { get; set; } = string.Empty;
+        public string KubernetesPodDescribeText { get; set; } = string.Empty;
+        public string KubernetesPodYamlText { get; set; } = string.Empty;
+        public string KubernetesPodJsonText { get; set; } = string.Empty;
     }
 
     /// <summary>

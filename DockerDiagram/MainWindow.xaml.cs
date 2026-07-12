@@ -129,6 +129,20 @@ namespace DockerDiagram
         {
             if (this.DataContext is not MainViewModel vm) return;
 
+            if (vm.SheetManager.HasActiveCreationTasks)
+            {
+                int count = vm.SheetManager.ActiveCreationTaskCount;
+                bool closeAnyway = _dialogService.ShowConfirm(
+                    $"현재 생성 작업이 진행 중입니다. ({count}개)\n앱을 종료하시겠습니까?\n\n종료하면 Docker 리소스가 일부 생성된 상태로 남을 수 있습니다.",
+                    "작업 진행 중");
+
+                if (!closeAnyway)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+            }
+
             if (!vm.IsModified) return;
 
             var result = _dialogService.ShowYesNoCancel("변경 사항이 저장되지 않았습니다.\n저장하고 종료하시겠습니까?", "종료 확인");
@@ -427,8 +441,29 @@ namespace DockerDiagram
                 {
                     if (string.IsNullOrWhiteSpace(node.ContainerId))
                     {
-                        _dialogService.ShowInfo("컨테이너 ID가 없어 inspect를 실행할 수 없습니다.", "Raw Inspect");
+                        _dialogService.ShowInfo("Docker ID가 없어 inspect를 실행할 수 없습니다.", "Raw Inspect");
                         return null;
+                    }
+
+                    if (node.IsSwarmService)
+                    {
+                        var servicePayload = await dockerService.InspectSwarmServiceRawAsync(node.ContainerId);
+                        return ($"Swarm service inspect - {node.Name}", servicePayload);
+                    }
+
+                    if (node.IsKubernetesPod)
+                    {
+                        var podPayload = await dockerService.InspectKubernetesPodRawAsync(node.KubernetesNamespace, node.KubernetesPodName);
+                        return ($"Kubernetes pod inspect - {node.Name}", podPayload);
+                    }
+
+                    if (node.IsKubernetesResource)
+                    {
+                        var resourcePayload = await dockerService.InspectKubernetesResourceRawAsync(
+                            node.KubernetesApiResource,
+                            node.KubernetesNamespace,
+                            node.KubernetesResourceName);
+                        return ($"Kubernetes {node.KubernetesKind} inspect - {node.Name}", resourcePayload);
                     }
 
                     var payload = await dockerService.InspectContainerAsync(node.ContainerId);
@@ -1533,6 +1568,60 @@ namespace DockerDiagram
             }
         }
 
+        private void ChangeWorkspaceRuntime_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not MenuItem menuItem ||
+                menuItem.CommandParameter is not string runtimeText ||
+                !Enum.TryParse(runtimeText, out RuntimeKind targetRuntime))
+            {
+                return;
+            }
+
+            var workspace = ResolveWorkspaceFromMenu(menuItem);
+            if (workspace == null) return;
+
+            if (workspace.RuntimeKind == targetRuntime)
+            {
+                _dialogService.ShowInfo($"이미 {workspace.RuntimeLabel} runtime입니다.", "Runtime");
+                return;
+            }
+
+            string targetLabel = GetRuntimeLabel(targetRuntime);
+            bool confirmed = _dialogService.ShowConfirm(
+                $"'{workspace.DisplayName}' 연결에 새 {targetLabel} Workspace와 시트를 만듭니다.\n기존 {workspace.RuntimeLabel} 시트는 그대로 유지됩니다.",
+                "Runtime 변경");
+            if (!confirmed) return;
+
+            ViewModel.SheetManager.CreateRuntimeWorkspace(workspace, targetRuntime, activate: true);
+            TabScrollViewer.ScrollToHorizontalOffset(0);
+        }
+
+        private ConnectionWorkspaceViewModel? ResolveWorkspaceFromMenu(MenuItem menuItem)
+        {
+            object? parent = menuItem.Parent;
+            while (parent is MenuItem parentMenu)
+                parent = parentMenu.Parent;
+
+            if (parent is ContextMenu contextMenu)
+            {
+                if (contextMenu.DataContext is ConnectionWorkspaceViewModel contextWorkspace)
+                    return contextWorkspace;
+
+                if (contextMenu.PlacementTarget is FrameworkElement { DataContext: ConnectionWorkspaceViewModel placementWorkspace })
+                    return placementWorkspace;
+            }
+
+            return ViewModel.SheetManager.ActiveWorkspace;
+        }
+
+        private static string GetRuntimeLabel(RuntimeKind runtimeKind) => runtimeKind switch
+        {
+            RuntimeKind.DockerEngine => "Docker",
+            RuntimeKind.DockerSwarm => "Swarm",
+            RuntimeKind.Kubernetes => "Kubernetes",
+            _ => runtimeKind.ToString()
+        };
+
         /// <summary>
         /// 시트 이름 변경을 확정(OK)하고 팝업을 닫습니다.
         /// </summary>
@@ -1586,7 +1675,8 @@ namespace DockerDiagram
             var border = contextMenu?.PlacementTarget as FrameworkElement;
             if (border?.DataContext is not ConnectionWorkspaceViewModel workspace) return;
 
-            if (workspace.Profile.Type == EndpointType.Local)
+            if (workspace.Profile.Type == EndpointType.Local &&
+                workspace.RuntimeKind == RuntimeKind.DockerEngine)
             {
                 _dialogService.ShowMessage("Local PC 연결은 삭제할 수 없습니다.");
                 return;
@@ -1943,6 +2033,16 @@ namespace DockerDiagram
             {
                 vm.ActiveSheet.UpdateGroupLayering();
             }
+
+            RefreshKubernetesRelationships(vm.ActiveSheet);
+        }
+
+        private void RefreshKubernetesRelationships(SheetViewModel? sheet)
+        {
+            if (sheet?.RuntimeKind != RuntimeKind.Kubernetes)
+                return;
+
+            new KubernetesRelationshipService(_dialogService).RefreshRelationships(sheet);
         }
 
         /// <summary>

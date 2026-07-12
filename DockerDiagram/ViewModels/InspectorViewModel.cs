@@ -29,7 +29,7 @@ namespace DockerDiagram.ViewModels
 
             ClosePanelCommand = new RelayCommand(_ => ClearSelection());
             DeleteCommand = new AsyncRelayCommand(_ => DeleteSelectedAsync());
-            ReconnectCommand = new AsyncRelayCommand(_ => ReconnectSelectedAsync(), _ => IsSelectedDockerDisconnected);
+            ReconnectCommand = new AsyncRelayCommand(_ => ReconnectSelectedAsync(), _ => IsSelectedRuntimeDisconnected);
         }
 
         // 캔버스 위에서 현재 선택된 요소(노드, 선, 그룹 등)
@@ -63,7 +63,7 @@ namespace DockerDiagram.ViewModels
                 // 2. 노드가 선택되었다면, 상세 정보(Inspect)를 비동기로 갱신.
                 if (_selectedElement is NodeViewModel nodeVm)
                 {
-                    if (nodeVm.IsDockerConnected)
+                    if (nodeVm.IsDockerConnected && !nodeVm.IsKubernetesResource)
                         _ = nodeVm.RefreshDetailsAsync();
                 }
             }
@@ -77,6 +77,8 @@ namespace DockerDiagram.ViewModels
             GroupViewModel group => group.IsDockerDisconnected,
             _ => false
         };
+        public bool IsSelectedOfflineSnapshot => SelectedElement is NodeViewModel { IsOfflineSnapshot: true };
+        public bool IsSelectedRuntimeDisconnected => IsSelectedDockerDisconnected && !IsSelectedOfflineSnapshot;
         public bool IsSelectedDockerConnected => !IsSelectedDockerDisconnected;
 
         public void ClearSelection() => SelectedElement = null;
@@ -85,6 +87,8 @@ namespace DockerDiagram.ViewModels
         {
             if (e.PropertyName == nameof(NodeViewModel.IsDockerConnected) ||
                 e.PropertyName == nameof(NodeViewModel.IsDockerDisconnected) ||
+                e.PropertyName == nameof(NodeViewModel.IsOfflineSnapshot) ||
+                e.PropertyName == nameof(NodeViewModel.IsRuntimeUnavailable) ||
                 e.PropertyName == nameof(GroupViewModel.IsDockerConnected) ||
                 e.PropertyName == nameof(GroupViewModel.IsDockerDisconnected))
             {
@@ -96,6 +100,8 @@ namespace DockerDiagram.ViewModels
         {
             OnPropertyChanged(nameof(IsSelectedDockerDisconnected));
             OnPropertyChanged(nameof(IsSelectedDockerConnected));
+            OnPropertyChanged(nameof(IsSelectedOfflineSnapshot));
+            OnPropertyChanged(nameof(IsSelectedRuntimeDisconnected));
             ReconnectCommand?.RaiseCanExecuteChanged();
         }
 
@@ -165,6 +171,10 @@ namespace DockerDiagram.ViewModels
                     {
                         await _mainVm.History.ExecuteAndRecordAsync(_mainVm.CreateConnectorDeleteCommand(sheet, conn));
                     }
+                }
+                else
+                {
+                    await _mainVm.History.ExecuteAndRecordAsync(_mainVm.CreateConnectorDeleteCommand(sheet, conn));
                 }
                 _mainVm.IsModified = true;
             }

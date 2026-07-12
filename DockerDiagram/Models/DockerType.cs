@@ -31,6 +31,7 @@ namespace DockerDiagram.Models
         public string ComposeResourceName { get; set; } = string.Empty;
         public string ComposeWorkingDirectory { get; set; } = string.Empty;
         public string ComposeConfigFiles { get; set; } = string.Empty;
+        public string ProjectSource { get; set; } = string.Empty;
         public Dictionary<string, string> Labels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public bool IsComposeManaged => !string.IsNullOrWhiteSpace(ComposeProjectName);
     }
@@ -62,6 +63,23 @@ namespace DockerDiagram.Models
         public string ComposeServiceName { get; set; } = string.Empty;
         public int ComposeContainerNumber { get; set; }
         public bool IsComposeOneOff { get; set; }
+        public bool IsSwarmService { get; set; }
+        public string SwarmMode { get; set; } = string.Empty;
+        public ulong SwarmDesiredReplicas { get; set; }
+        public ulong SwarmRunningReplicas { get; set; }
+        public bool IsKubernetesPod { get; set; }
+        public bool IsKubernetesResource => IsKubernetesPod || !string.IsNullOrWhiteSpace(KubernetesKind);
+        public string KubernetesKind { get; set; } = string.Empty;
+        public string KubernetesApiResource { get; set; } = string.Empty;
+        public string KubernetesApiVersion { get; set; } = string.Empty;
+        public string KubernetesNamespace { get; set; } = string.Empty;
+        public string KubernetesNodeName { get; set; } = string.Empty;
+        public string KubernetesReady { get; set; } = string.Empty;
+        public int KubernetesRestarts { get; set; }
+        public int KubernetesDesiredReplicas { get; set; }
+        public int KubernetesReadyReplicas { get; set; }
+        public string KubernetesPodIp { get; set; } = string.Empty;
+        public string KubernetesRawJson { get; set; } = string.Empty;
 
         public override NodeType Type => NodeType.Container; // override로 구현
     }
@@ -116,9 +134,49 @@ namespace DockerDiagram.Models
         public string Name { get; init; } = string.Empty;
         public string WorkingDirectory { get; init; } = string.Empty;
         public string ConfigFiles { get; init; } = string.Empty;
+        public string Source { get; init; } = "Compose";
         public List<DockerContainer> Containers { get; init; } = [];
         public List<DockerVolume> Volumes { get; init; } = [];
         public List<DockerNetworkGroup> Networks { get; init; } = [];
         public int ResourceCount => Containers.Count + Volumes.Count + Networks.Count;
+        public string SourceLabel => string.IsNullOrWhiteSpace(Source) ? "Project" : Source;
+    }
+
+    public sealed class DockerSwarmTask
+    {
+        public string Id { get; init; } = string.Empty;
+        public ulong Slot { get; init; }
+        public string NodeId { get; init; } = string.Empty;
+        public string NodeName { get; init; } = "-";
+        public string DesiredState { get; init; } = string.Empty;
+        public string CurrentState { get; init; } = string.Empty;
+        public string Image { get; init; } = string.Empty;
+        public string Error { get; init; } = string.Empty;
+        public string ContainerId { get; init; } = string.Empty;
+        public string StatusColor { get; init; } = "#808080";
+        public string ShortId => Id.Length > 12 ? Id[..12] : Id;
+        public string ShortContainerId => ContainerId.Length > 12 ? ContainerId[..12] : ContainerId;
+    }
+
+    public sealed class DockerSwarmNode : DockerResource
+    {
+        public string Hostname { get; set; } = string.Empty;
+        public string Role { get; set; } = string.Empty;
+        public string Availability { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public string Address { get; set; } = string.Empty;
+        public string ManagerStatus { get; set; } = string.Empty;
+        public string EngineVersion { get; set; } = string.Empty;
+        public string RoleLabel => string.IsNullOrWhiteSpace(ManagerStatus) ? Role : $"{Role} / {ManagerStatus}";
+    }
+
+    public sealed class DockerKubernetesNode : DockerResource
+    {
+        public string Role { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public string Version { get; set; } = string.Empty;
+        public string InternalIp { get; set; } = string.Empty;
+        public string OsImage { get; set; } = string.Empty;
+        public string RoleLabel => string.IsNullOrWhiteSpace(Role) ? "node" : Role;
     }
 }

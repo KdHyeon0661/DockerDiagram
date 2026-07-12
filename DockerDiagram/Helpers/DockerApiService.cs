@@ -1,6 +1,8 @@
 ﻿using Docker.DotNet;
 using Docker.DotNet.Models;
 using DockerDiagram.Models;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO;
@@ -194,7 +196,7 @@ namespace DockerDiagram.Helpers
             return query.Count == 0 ? "system/prune" : $"system/prune?{string.Join("&", query)}";
         }
 
-        private async Task<T> MakeRawDockerRequestAsync<T>(HttpMethod method, string path)
+        private async Task<T> MakeRawDockerRequestAsync<T>(HttpMethod method, string path, object? body = null)
         {
             var requestMethod = typeof(DockerClient)
                 .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
@@ -213,7 +215,7 @@ namespace DockerDiagram.Helpers
                 method,
                 path,
                 null,
-                null,
+                CreateRawRequestContent(body),
                 null,
                 TimeSpan.FromSeconds(CurrentProfile.Type == EndpointType.SshRemote ? 20 : 10),
                 CancellationToken.None
@@ -225,6 +227,69 @@ namespace DockerDiagram.Helpers
             }
 
             return await task;
+        }
+
+        private async Task MakeRawDockerRequestAsync(HttpMethod method, string path, object? body = null)
+        {
+            var requestMethod = typeof(DockerClient)
+                .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .FirstOrDefault(m =>
+                    m.Name == "MakeRequestAsync" &&
+                    !m.IsGenericMethodDefinition &&
+                    m.GetParameters().Length == 8)
+                ?? throw new NotSupportedException("Docker.DotNet raw request API를 찾을 수 없습니다.");
+
+            var errorHandlerType = requestMethod.GetParameters()[0].ParameterType.GetGenericArguments()[0];
+            var errorHandlers = Array.CreateInstance(errorHandlerType, 0);
+
+            var task = requestMethod.Invoke(_client, new object?[]
+            {
+                errorHandlers,
+                method,
+                path,
+                null,
+                CreateRawRequestContent(body),
+                null,
+                TimeSpan.FromSeconds(CurrentProfile.Type == EndpointType.SshRemote ? 20 : 10),
+                CancellationToken.None
+            }) as Task;
+
+            if (task == null)
+            {
+                throw new InvalidOperationException($"Docker API 요청을 시작할 수 없습니다: {path}");
+            }
+
+            await task;
+        }
+
+        private static object? CreateRawRequestContent(object? body)
+        {
+            if (body == null) return null;
+
+            var contentType = typeof(DockerClient).Assembly.GetType("Docker.DotNet.JsonRequestContent")
+                ?? throw new NotSupportedException("Docker.DotNet JsonRequestContent API를 찾을 수 없습니다.");
+
+            foreach (var ctor in contentType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                         .OrderBy(ctor => ctor.GetParameters().Length))
+            {
+                var parameters = ctor.GetParameters();
+                if (parameters.Length == 1)
+                {
+                    return ctor.Invoke(new[] { body });
+                }
+
+                if (parameters.Length == 2 &&
+                    parameters[1].ParameterType == typeof(JsonSerializerSettings))
+                {
+                    return ctor.Invoke(new object?[]
+                    {
+                        body,
+                        new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore }
+                    });
+                }
+            }
+
+            throw new NotSupportedException("Docker.DotNet JsonRequestContent 생성자를 찾을 수 없습니다.");
         }
 
         // =========================================================
@@ -265,6 +330,22 @@ namespace DockerDiagram.Helpers
                     portStr = string.Join(", ", ports);
                 }
 
+                string composeProjectName = GetLabel(labels, "com.docker.compose.project");
+                string templateProjectName = GetLabel(labels, "com.dockerdiagram.project");
+                string projectName = FirstNonEmpty(composeProjectName, templateProjectName);
+                string projectSource = string.IsNullOrWhiteSpace(composeProjectName)
+                    ? (string.IsNullOrWhiteSpace(templateProjectName) ? string.Empty : "Template")
+                    : "Compose";
+                string resourceName = FirstNonEmpty(
+                    GetLabel(labels, "com.docker.compose.service"),
+                    GetLabel(labels, "com.dockerdiagram.resource"),
+                    c.Names?.FirstOrDefault()?.TrimStart('/') ?? c.ID);
+
+                int composeContainerNumber = ParseComposeContainerNumber(
+                    GetLabel(labels, "com.docker.compose.container-number"));
+                if (composeContainerNumber == 0 && projectSource.Equals("Template", StringComparison.OrdinalIgnoreCase))
+                    composeContainerNumber = 1;
+
                 result.Add(new DockerContainer
                 {
                     Id = c.ID,
@@ -273,19 +354,740 @@ namespace DockerDiagram.Helpers
                     State = c.State,
                     Ports = portStr,
                     Labels = labels,
-                    ComposeProjectName = GetLabel(labels, "com.docker.compose.project"),
-                    ComposeResourceName = GetLabel(labels, "com.docker.compose.service"),
-                    ComposeServiceName = GetLabel(labels, "com.docker.compose.service"),
-                    ComposeContainerNumber = ParseComposeContainerNumber(
-                        GetLabel(labels, "com.docker.compose.container-number")),
+                    ComposeProjectName = projectName,
+                    ComposeResourceName = resourceName,
+                    ComposeServiceName = resourceName,
+                    ComposeContainerNumber = composeContainerNumber,
                     IsComposeOneOff = bool.TryParse(
                         GetLabel(labels, "com.docker.compose.oneoff"),
                         out bool oneOff) && oneOff,
                     ComposeWorkingDirectory = GetLabel(labels, "com.docker.compose.project.working_dir"),
-                    ComposeConfigFiles = GetLabel(labels, "com.docker.compose.project.config_files")
+                    ComposeConfigFiles = GetLabel(labels, "com.docker.compose.project.config_files"),
+                    ProjectSource = projectSource
                 });
             }
             return result;
+        }
+
+        public async Task<List<DockerContainer>> GetSwarmServicesAsync()
+        {
+            var services = await MakeRawDockerRequestAsync<List<SwarmServiceResponse>>(HttpMethod.Get, "services");
+
+            return services.Select(service =>
+            {
+                string name = service.Spec?.Name ?? service.ID;
+                string image = NormalizeImageReference(service.Spec?.TaskTemplate?.ContainerSpec?.Image ?? string.Empty);
+                string mode = service.Spec?.Mode?.Replicated != null ? "replicated" :
+                    service.Spec?.Mode?.Global != null ? "global" : "unknown";
+                ulong desired = service.ServiceStatus?.DesiredTasks
+                    ?? service.Spec?.Mode?.Replicated?.Replicas
+                    ?? 0;
+                ulong running = service.ServiceStatus?.RunningTasks ?? 0;
+                var labels = CopyLabels(service.Spec?.Labels);
+
+                return new DockerContainer
+                {
+                    Id = service.ID,
+                    Name = name,
+                    Image = image,
+                    State = running > 0 || mode.Equals("global", StringComparison.OrdinalIgnoreCase)
+                        ? "running"
+                        : "stopped",
+                    Ports = BuildSwarmServiceSummary(mode, running, desired, service.Endpoint?.Spec?.Ports),
+                    Labels = labels,
+                    ComposeProjectName = GetLabel(labels, "com.docker.stack.namespace"),
+                    ComposeResourceName = name,
+                    ComposeServiceName = name,
+                    ComposeContainerNumber = 0,
+                    ProjectSource = string.IsNullOrWhiteSpace(GetLabel(labels, "com.docker.stack.namespace"))
+                        ? "Swarm"
+                        : "Swarm Stack",
+                    IsSwarmService = true,
+                    SwarmMode = mode,
+                    SwarmDesiredReplicas = desired,
+                    SwarmRunningReplicas = running,
+                    StateColor = running > 0 || mode.Equals("global", StringComparison.OrdinalIgnoreCase)
+                        ? "#28a745"
+                        : "#808080"
+                };
+            }).ToList();
+        }
+
+        public async Task<List<DockerSwarmTask>> GetSwarmServiceTasksAsync(string serviceId)
+        {
+            if (string.IsNullOrWhiteSpace(serviceId))
+                throw new ArgumentException("Swarm service ID가 비어 있습니다.", nameof(serviceId));
+
+            string filterJson = JsonConvert.SerializeObject(new
+            {
+                service = new Dictionary<string, bool> { [serviceId] = true }
+            });
+            var tasks = await MakeRawDockerRequestAsync<List<SwarmTaskResponse>>(
+                HttpMethod.Get,
+                $"tasks?filters={Uri.EscapeDataString(filterJson)}");
+
+            var swarmNodes = await GetSwarmNodesAsync();
+            var nodeNames = swarmNodes.ToDictionary(
+                node => node.Id,
+                node => FirstNonEmpty(node.Hostname, node.Name, node.Id),
+                StringComparer.OrdinalIgnoreCase);
+
+            return tasks
+                .OrderBy(task => task.Slot)
+                .ThenBy(task => task.ID, StringComparer.OrdinalIgnoreCase)
+                .Select(task =>
+                {
+                    string state = task.Status?.State ?? string.Empty;
+                    string nodeName = !string.IsNullOrWhiteSpace(task.NodeID) &&
+                                      nodeNames.TryGetValue(task.NodeID, out string? resolvedNode)
+                        ? resolvedNode
+                        : FirstNonEmpty(task.NodeID, "-");
+
+                    return new DockerSwarmTask
+                    {
+                        Id = task.ID,
+                        Slot = task.Slot,
+                        NodeId = task.NodeID,
+                        NodeName = nodeName,
+                        DesiredState = task.DesiredState,
+                        CurrentState = state,
+                        Image = NormalizeImageReference(task.Spec?.ContainerSpec?.Image ?? string.Empty),
+                        Error = FirstNonEmpty(task.Status?.Err ?? string.Empty, task.Status?.Message ?? string.Empty),
+                        ContainerId = task.Status?.ContainerStatus?.ContainerID ?? string.Empty,
+                        StatusColor = GetSwarmTaskStatusColor(state)
+                    };
+                })
+                .ToList();
+        }
+
+        public async Task<List<DockerSwarmNode>> GetSwarmNodesAsync()
+        {
+            var nodes = await MakeRawDockerRequestAsync<List<SwarmNodeResponse>>(HttpMethod.Get, "nodes");
+            return nodes
+                .Where(node => !string.IsNullOrWhiteSpace(node.ID))
+                .OrderByDescending(node => string.Equals(node.Spec?.Role, "manager", StringComparison.OrdinalIgnoreCase))
+                .ThenBy(node => node.Description?.Hostname ?? node.ID, StringComparer.OrdinalIgnoreCase)
+                .Select(node =>
+                {
+                    string status = node.Status?.State ?? string.Empty;
+                    string hostname = FirstNonEmpty(node.Description?.Hostname ?? string.Empty, node.ID);
+                    return new DockerSwarmNode
+                    {
+                        Id = node.ID,
+                        Name = hostname,
+                        Hostname = hostname,
+                        Role = node.Spec?.Role ?? string.Empty,
+                        Availability = node.Spec?.Availability ?? string.Empty,
+                        Status = status,
+                        Address = node.Status?.Addr ?? string.Empty,
+                        ManagerStatus = FirstNonEmpty(
+                            node.ManagerStatus?.Leader == true ? "leader" : string.Empty,
+                            node.ManagerStatus?.Reachability ?? string.Empty),
+                        EngineVersion = node.Description?.Engine?.EngineVersion ?? string.Empty,
+                        StateColor = GetSwarmNodeStatusColor(status)
+                    };
+                })
+                .ToList();
+        }
+
+        public async Task<object> InspectSwarmServiceRawAsync(string serviceId)
+        {
+            if (string.IsNullOrWhiteSpace(serviceId))
+                throw new ArgumentException("Swarm service ID가 비어 있습니다.", nameof(serviceId));
+
+            return await MakeRawDockerRequestAsync<JObject>(
+                HttpMethod.Get,
+                $"services/{Uri.EscapeDataString(serviceId)}");
+        }
+
+        public async Task ScaleSwarmServiceAsync(string serviceId, ulong replicas)
+        {
+            if (string.IsNullOrWhiteSpace(serviceId))
+                throw new ArgumentException("Swarm service ID가 비어 있습니다.", nameof(serviceId));
+
+            var service = await MakeRawDockerRequestAsync<JObject>(
+                HttpMethod.Get,
+                $"services/{Uri.EscapeDataString(serviceId)}");
+
+            var version = service["Version"]?["Index"]?.Value<ulong>()
+                ?? throw new InvalidOperationException("Swarm service version 정보를 찾을 수 없습니다.");
+            var spec = service["Spec"] as JObject
+                ?? throw new InvalidOperationException("Swarm service spec 정보를 찾을 수 없습니다.");
+            var mode = spec["Mode"] as JObject
+                ?? throw new InvalidOperationException("Swarm service mode 정보를 찾을 수 없습니다.");
+
+            if (mode["Global"] != null)
+                throw new NotSupportedException("global mode service는 replica 수를 직접 조절할 수 없습니다.");
+
+            if (mode["Replicated"] is not JObject replicated)
+            {
+                replicated = new JObject();
+                mode["Replicated"] = replicated;
+            }
+
+            replicated["Replicas"] = replicas;
+
+            await MakeRawDockerRequestAsync(
+                HttpMethod.Post,
+                $"services/{Uri.EscapeDataString(serviceId)}/update?version={version}",
+                spec);
+        }
+
+        public async Task RemoveSwarmServiceAsync(string serviceId)
+        {
+            if (string.IsNullOrWhiteSpace(serviceId))
+                throw new ArgumentException("Swarm service ID가 비어 있습니다.", nameof(serviceId));
+
+            await MakeRawDockerRequestAsync(
+                HttpMethod.Delete,
+                $"services/{Uri.EscapeDataString(serviceId)}");
+        }
+
+        public async Task<List<DockerContainer>> GetKubernetesPodsAsync()
+        {
+            string json = await RunKubectlAsync("get", "pods", "--all-namespaces", "-o", "json");
+            var root = JObject.Parse(json);
+            var result = new List<DockerContainer>();
+
+            foreach (var item in root["items"]?.OfType<JObject>() ?? Enumerable.Empty<JObject>())
+            {
+                string name = item["metadata"]?["name"]?.ToString() ?? string.Empty;
+                string ns = item["metadata"]?["namespace"]?.ToString() ?? "default";
+                string uid = item["metadata"]?["uid"]?.ToString() ?? $"{ns}/{name}";
+                string phase = item["status"]?["phase"]?.ToString() ?? "Unknown";
+                string podIp = item["status"]?["podIP"]?.ToString() ?? string.Empty;
+                string nodeName = item["spec"]?["nodeName"]?.ToString() ?? string.Empty;
+
+                var containers = item["spec"]?["containers"]?.OfType<JObject>().ToList() ?? [];
+                var statuses = item["status"]?["containerStatuses"]?.OfType<JObject>().ToList() ?? [];
+                int ready = statuses.Count(status => status["ready"]?.Value<bool>() == true);
+                int total = containers.Count;
+                int restarts = statuses.Sum(status => status["restartCount"]?.Value<int>() ?? 0);
+                string images = string.Join(", ", containers
+                    .Select(container => container["image"]?.ToString())
+                    .Where(image => !string.IsNullOrWhiteSpace(image)));
+
+                result.Add(new DockerContainer
+                {
+                    Id = uid,
+                    Name = $"{ns}/{name}",
+                    Image = images,
+                    State = phase,
+                    Ports = BuildKubernetesPodSummary(ns, ready, total, restarts, podIp, nodeName),
+                    StateColor = GetKubernetesStatusColor(phase),
+                    IsKubernetesPod = true,
+                    KubernetesKind = "Pod",
+                    KubernetesApiResource = "pod",
+                    KubernetesApiVersion = item["apiVersion"]?.ToString() ?? "v1",
+                    KubernetesNamespace = ns,
+                    KubernetesNodeName = nodeName,
+                    KubernetesReady = total > 0 ? $"{ready}/{total}" : "-",
+                    KubernetesRestarts = restarts,
+                    KubernetesPodIp = podIp,
+                    KubernetesRawJson = item.ToString(Formatting.Indented)
+                });
+            }
+
+            return result.OrderBy(pod => pod.KubernetesNamespace).ThenBy(pod => pod.Name).ToList();
+        }
+
+        public Task<List<DockerContainer>> GetKubernetesDeploymentsAsync() =>
+            GetKubernetesResourcesAsync("deployments", "Deployment", BuildKubernetesDeploymentSummary, item => ResolveKubernetesDeploymentState(item));
+
+        public Task<List<DockerContainer>> GetKubernetesReplicaSetsAsync() =>
+            GetKubernetesResourcesAsync("replicasets", "ReplicaSet", BuildKubernetesReplicaSetSummary, item => ResolveKubernetesReplicaSetState(item));
+
+        public Task<List<DockerContainer>> GetKubernetesServicesAsync() =>
+            GetKubernetesResourcesAsync("services", "Service", BuildKubernetesServiceSummary, item => item["spec"]?["type"]?.ToString() ?? "Service");
+
+        public Task<List<DockerContainer>> GetKubernetesConfigMapsAsync() =>
+            GetKubernetesResourcesAsync("configmaps", "ConfigMap", item => BuildKubernetesKeyCountSummary(item, "data"), _ => "ConfigMap");
+
+        public Task<List<DockerContainer>> GetKubernetesSecretsAsync() =>
+            GetKubernetesResourcesAsync("secrets", "Secret", BuildKubernetesSecretSummary, _ => "Secret");
+
+        public Task<List<DockerContainer>> GetKubernetesIngressesAsync() =>
+            GetKubernetesResourcesAsync("ingresses", "Ingress", BuildKubernetesIngressSummary, _ => "Ingress");
+
+        public Task<List<DockerContainer>> GetKubernetesPersistentVolumeClaimsAsync() =>
+            GetKubernetesResourcesAsync("persistentvolumeclaims", "PVC", BuildKubernetesPvcSummary, item => item["status"]?["phase"]?.ToString() ?? "PVC");
+
+        private static async Task<List<DockerContainer>> GetKubernetesResourcesAsync(
+            string apiResource,
+            string kind,
+            Func<JObject, string> summaryFactory,
+            Func<JObject, string> stateFactory)
+        {
+            string json = await RunKubectlAsync("get", apiResource, "--all-namespaces", "-o", "json");
+            var root = JObject.Parse(json);
+            var result = new List<DockerContainer>();
+
+            foreach (var item in root["items"]?.OfType<JObject>() ?? Enumerable.Empty<JObject>())
+            {
+                string name = item["metadata"]?["name"]?.ToString() ?? string.Empty;
+                string ns = item["metadata"]?["namespace"]?.ToString() ?? "default";
+                string uid = item["metadata"]?["uid"]?.ToString() ?? $"{apiResource}:{ns}/{name}";
+                string state = stateFactory(item);
+                int desiredReplicas = item["spec"]?["replicas"]?.Value<int>() ?? 0;
+                int readyReplicas = item["status"]?["readyReplicas"]?.Value<int>() ?? 0;
+
+                result.Add(new DockerContainer
+                {
+                    Id = uid,
+                    Name = $"{ns}/{name}",
+                    Image = kind,
+                    State = state,
+                    Ports = summaryFactory(item),
+                    StateColor = GetKubernetesStatusColor(state),
+                    IsKubernetesPod = false,
+                    KubernetesKind = kind,
+                    KubernetesApiResource = apiResource,
+                    KubernetesApiVersion = item["apiVersion"]?.ToString() ?? string.Empty,
+                    KubernetesNamespace = ns,
+                    KubernetesDesiredReplicas = desiredReplicas,
+                    KubernetesReadyReplicas = readyReplicas,
+                    KubernetesRawJson = item.ToString(Formatting.Indented)
+                });
+            }
+
+            return result.OrderBy(resource => resource.KubernetesNamespace).ThenBy(resource => resource.Name).ToList();
+        }
+
+        public async Task<List<DockerKubernetesNode>> GetKubernetesNodesAsync()
+        {
+            string json = await RunKubectlAsync("get", "nodes", "-o", "json");
+            var root = JObject.Parse(json);
+            var result = new List<DockerKubernetesNode>();
+
+            foreach (var item in root["items"]?.OfType<JObject>() ?? Enumerable.Empty<JObject>())
+            {
+                string name = item["metadata"]?["name"]?.ToString() ?? string.Empty;
+                var labels = item["metadata"]?["labels"] as JObject;
+                string role = ResolveKubernetesNodeRole(labels);
+                string status = ResolveKubernetesNodeStatus(item);
+                string internalIp = item["status"]?["addresses"]?
+                    .OfType<JObject>()
+                    .FirstOrDefault(address => string.Equals(address["type"]?.ToString(), "InternalIP", StringComparison.OrdinalIgnoreCase))?["address"]?.ToString() ?? string.Empty;
+
+                result.Add(new DockerKubernetesNode
+                {
+                    Id = item["metadata"]?["uid"]?.ToString() ?? name,
+                    Name = name,
+                    Role = role,
+                    Status = status,
+                    Version = item["status"]?["nodeInfo"]?["kubeletVersion"]?.ToString() ?? string.Empty,
+                    InternalIp = internalIp,
+                    OsImage = item["status"]?["nodeInfo"]?["osImage"]?.ToString() ?? string.Empty,
+                    StateColor = GetKubernetesStatusColor(status)
+                });
+            }
+
+            return result.OrderBy(node => node.Name).ToList();
+        }
+
+        public async Task<object> InspectKubernetesPodRawAsync(string namespaceName, string podName)
+        {
+            if (string.IsNullOrWhiteSpace(namespaceName))
+                throw new ArgumentException("Kubernetes namespace가 비어 있습니다.", nameof(namespaceName));
+            if (string.IsNullOrWhiteSpace(podName))
+                throw new ArgumentException("Kubernetes pod 이름이 비어 있습니다.", nameof(podName));
+
+            string json = await RunKubectlAsync("get", "pod", podName, "-n", namespaceName, "-o", "json");
+            return JObject.Parse(json);
+        }
+
+        public async Task<object> InspectKubernetesResourceRawAsync(string apiResource, string namespaceName, string resourceName)
+        {
+            ValidateKubernetesResourceTarget(apiResource, namespaceName, resourceName);
+            string json = await RunKubectlAsync("get", apiResource, resourceName, "-n", namespaceName, "-o", "json");
+            return JObject.Parse(json);
+        }
+
+        public async Task<string> GetKubernetesResourceYamlAsync(string apiResource, string namespaceName, string resourceName)
+        {
+            ValidateKubernetesResourceTarget(apiResource, namespaceName, resourceName);
+            return await RunKubectlAsync("get", apiResource, resourceName, "-n", namespaceName, "-o", "yaml");
+        }
+
+        public async Task<string> DescribeKubernetesResourceAsync(string apiResource, string namespaceName, string resourceName)
+        {
+            ValidateKubernetesResourceTarget(apiResource, namespaceName, resourceName);
+            return await RunKubectlAsync("describe", apiResource, resourceName, "-n", namespaceName);
+        }
+
+        public async Task<string> GetKubernetesPodYamlAsync(string namespaceName, string podName)
+        {
+            ValidateKubernetesPodTarget(namespaceName, podName);
+            return await RunKubectlAsync("get", "pod", podName, "-n", namespaceName, "-o", "yaml");
+        }
+
+        public async Task<string> DescribeKubernetesPodAsync(string namespaceName, string podName)
+        {
+            ValidateKubernetesPodTarget(namespaceName, podName);
+            return await RunKubectlAsync("describe", "pod", podName, "-n", namespaceName);
+        }
+
+        public async Task<string> GetKubernetesPodLogsAsync(string namespaceName, string podName, int tailCount = 500)
+        {
+            ValidateKubernetesPodTarget(namespaceName, podName);
+            return await RunKubectlAsync(
+                "logs",
+                podName,
+                "-n",
+                namespaceName,
+                "--all-containers=true",
+                "--tail",
+                Math.Max(1, tailCount).ToString());
+        }
+
+        public async Task ScaleKubernetesDeploymentAsync(string namespaceName, string deploymentName, int replicas)
+        {
+            ValidateKubernetesResourceTarget("deployment", namespaceName, deploymentName);
+            if (replicas < 0)
+                throw new ArgumentOutOfRangeException(nameof(replicas), "Replica 수는 0 이상이어야 합니다.");
+
+            await RunKubectlAsync(
+                "scale",
+                "deployment",
+                deploymentName,
+                "-n",
+                namespaceName,
+                "--replicas",
+                replicas.ToString());
+        }
+
+        public async Task RolloutRestartKubernetesResourceAsync(string apiResource, string namespaceName, string resourceName)
+        {
+            ValidateKubernetesResourceTarget(apiResource, namespaceName, resourceName);
+            await RunKubectlAsync(
+                "rollout",
+                "restart",
+                NormalizeKubernetesTarget(apiResource),
+                resourceName,
+                "-n",
+                namespaceName);
+        }
+
+        public async Task DeleteKubernetesResourceAsync(string apiResource, string namespaceName, string resourceName)
+        {
+            ValidateKubernetesResourceTarget(apiResource, namespaceName, resourceName);
+            await RunKubectlAsync(
+                "delete",
+                NormalizeKubernetesTarget(apiResource),
+                resourceName,
+                "-n",
+                namespaceName);
+        }
+
+        public async Task ApplyKubernetesManifestAsync(string manifestPath)
+        {
+            if (string.IsNullOrWhiteSpace(manifestPath))
+                throw new ArgumentException("Kubernetes manifest 경로가 비어 있습니다.", nameof(manifestPath));
+            if (!File.Exists(manifestPath))
+                throw new FileNotFoundException("Kubernetes manifest 파일을 찾을 수 없습니다.", manifestPath);
+
+            await RunKubectlAsync("apply", "-f", manifestPath);
+        }
+
+        public void OpenKubernetesLogsFollow(string namespaceName, string podName)
+        {
+            ValidateKubernetesPodTarget(namespaceName, podName);
+            OpenKubectlConsole(
+                "logs",
+                podName,
+                "-n",
+                namespaceName,
+                "--all-containers=true",
+                "-f");
+        }
+
+        public void OpenKubernetesPortForward(string apiResource, string namespaceName, string resourceName, int localPort, int remotePort)
+        {
+            ValidateKubernetesResourceTarget(apiResource, namespaceName, resourceName);
+            if (!IsValidPort(localPort))
+                throw new ArgumentOutOfRangeException(nameof(localPort), "Local port는 1~65535 사이여야 합니다.");
+            if (!IsValidPort(remotePort))
+                throw new ArgumentOutOfRangeException(nameof(remotePort), "Remote port는 1~65535 사이여야 합니다.");
+
+            string target = $"{NormalizeKubernetesTarget(apiResource)}/{resourceName}";
+            OpenKubectlConsole(
+                "port-forward",
+                "-n",
+                namespaceName,
+                target,
+                $"{localPort}:{remotePort}");
+        }
+
+        private static void ValidateKubernetesPodTarget(string namespaceName, string podName)
+        {
+            if (string.IsNullOrWhiteSpace(namespaceName))
+                throw new ArgumentException("Kubernetes namespace가 비어 있습니다.", nameof(namespaceName));
+            if (string.IsNullOrWhiteSpace(podName))
+                throw new ArgumentException("Kubernetes pod 이름이 비어 있습니다.", nameof(podName));
+        }
+
+        private static void ValidateKubernetesResourceTarget(string apiResource, string namespaceName, string resourceName)
+        {
+            if (string.IsNullOrWhiteSpace(apiResource))
+                throw new ArgumentException("Kubernetes resource type이 비어 있습니다.", nameof(apiResource));
+            if (string.IsNullOrWhiteSpace(namespaceName))
+                throw new ArgumentException("Kubernetes namespace가 비어 있습니다.", nameof(namespaceName));
+            if (string.IsNullOrWhiteSpace(resourceName))
+                throw new ArgumentException("Kubernetes resource 이름이 비어 있습니다.", nameof(resourceName));
+        }
+
+        private static bool IsValidPort(int port) => port is >= 1 and <= 65535;
+
+        private static string NormalizeKubernetesTarget(string apiResource)
+        {
+            return apiResource.Trim().ToLowerInvariant() switch
+            {
+                "pod" or "pods" => "pod",
+                "deployment" or "deployments" => "deployment",
+                "service" or "services" or "svc" => "service",
+                "replicaset" or "replicasets" or "rs" => "replicaset",
+                "configmap" or "configmaps" or "cm" => "configmap",
+                "secret" or "secrets" => "secret",
+                "ingress" or "ingresses" or "ing" => "ingress",
+                "persistentvolumeclaim" or "persistentvolumeclaims" or "pvc" => "pvc",
+                var value => value
+            };
+        }
+
+        private static void OpenKubectlConsole(params string[] args)
+        {
+            string command = "kubectl " + string.Join(" ", args.Select(QuoteCommandArgument));
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/k " + command,
+                UseShellExecute = true
+            });
+        }
+
+        private static string QuoteCommandArgument(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return "\"\"";
+
+            return value.Any(char.IsWhiteSpace) || value.Contains('"')
+                ? "\"" + value.Replace("\"", "\\\"") + "\""
+                : value;
+        }
+
+        private static async Task<string> RunKubectlAsync(params string[] args)
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "kubectl",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            foreach (string arg in args)
+                startInfo.ArgumentList.Add(arg);
+
+            using var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("kubectl 프로세스를 시작할 수 없습니다.");
+
+            string stdout = await process.StandardOutput.ReadToEndAsync();
+            string stderr = await process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(stderr) ? $"kubectl failed with exit code {process.ExitCode}." : stderr.Trim());
+
+            return stdout;
+        }
+
+        private static string BuildKubernetesPodSummary(string ns, int ready, int total, int restarts, string podIp, string nodeName)
+        {
+            string readyText = total > 0 ? $"{ready}/{total} ready" : "ready unknown";
+            var parts = new List<string> { ns, readyText, $"restarts {restarts}" };
+            if (!string.IsNullOrWhiteSpace(podIp))
+                parts.Add(podIp);
+            if (!string.IsNullOrWhiteSpace(nodeName))
+                parts.Add(nodeName);
+            return string.Join(" | ", parts);
+        }
+
+        private static string ResolveKubernetesDeploymentState(JObject item)
+        {
+            int replicas = item["status"]?["replicas"]?.Value<int>() ?? item["spec"]?["replicas"]?.Value<int>() ?? 0;
+            int available = item["status"]?["availableReplicas"]?.Value<int>() ?? 0;
+            return replicas == 0
+                ? "Scaled 0"
+                : available >= replicas ? "Available" : "Progressing";
+        }
+
+        private static string BuildKubernetesDeploymentSummary(JObject item)
+        {
+            int desired = item["spec"]?["replicas"]?.Value<int>() ?? 0;
+            int ready = item["status"]?["readyReplicas"]?.Value<int>() ?? 0;
+            int available = item["status"]?["availableReplicas"]?.Value<int>() ?? 0;
+            int updated = item["status"]?["updatedReplicas"]?.Value<int>() ?? 0;
+            return $"ready {ready}/{desired} | available {available} | updated {updated}";
+        }
+
+        private static string ResolveKubernetesReplicaSetState(JObject item)
+        {
+            int replicas = item["status"]?["replicas"]?.Value<int>() ?? item["spec"]?["replicas"]?.Value<int>() ?? 0;
+            int ready = item["status"]?["readyReplicas"]?.Value<int>() ?? 0;
+            return replicas == 0
+                ? "Scaled 0"
+                : ready >= replicas ? "Available" : "Progressing";
+        }
+
+        private static string BuildKubernetesReplicaSetSummary(JObject item)
+        {
+            int desired = item["spec"]?["replicas"]?.Value<int>() ?? 0;
+            int ready = item["status"]?["readyReplicas"]?.Value<int>() ?? 0;
+            int available = item["status"]?["availableReplicas"]?.Value<int>() ?? 0;
+            return $"ready {ready}/{desired} | available {available}";
+        }
+
+        private static string BuildKubernetesServiceSummary(JObject item)
+        {
+            string type = item["spec"]?["type"]?.ToString() ?? "ClusterIP";
+            string clusterIp = item["spec"]?["clusterIP"]?.ToString() ?? "-";
+            var ports = item["spec"]?["ports"]?
+                .OfType<JObject>()
+                .Select(port =>
+                {
+                    string protocol = port["protocol"]?.ToString() ?? "TCP";
+                    string portText = port["port"]?.ToString() ?? "-";
+                    string target = port["targetPort"]?.ToString() ?? portText;
+                    string nodePort = port["nodePort"]?.ToString() ?? string.Empty;
+                    return string.IsNullOrWhiteSpace(nodePort)
+                        ? $"{portText}->{target}/{protocol}"
+                        : $"{portText}:{nodePort}->{target}/{protocol}";
+                })
+                .Where(text => !string.IsNullOrWhiteSpace(text)) ?? Enumerable.Empty<string>();
+            return $"{type} | {clusterIp} | {string.Join(", ", ports)}";
+        }
+
+        private static string BuildKubernetesKeyCountSummary(JObject item, string propertyName)
+        {
+            int count = (item[propertyName] as JObject)?.Properties().Count() ?? 0;
+            return $"{count} keys";
+        }
+
+        private static string BuildKubernetesSecretSummary(JObject item)
+        {
+            string type = item["type"]?.ToString() ?? "Opaque";
+            int count = (item["data"] as JObject)?.Properties().Count() ?? 0;
+            return $"{type} | {count} keys";
+        }
+
+        private static string BuildKubernetesIngressSummary(JObject item)
+        {
+            var hosts = item["spec"]?["rules"]?
+                .OfType<JObject>()
+                .Select(rule => rule["host"]?.ToString())
+                .Where(host => !string.IsNullOrWhiteSpace(host))
+                .Take(4)
+                .ToList() ?? [];
+
+            return hosts.Count > 0 ? string.Join(", ", hosts) : "no hosts";
+        }
+
+        private static string BuildKubernetesPvcSummary(JObject item)
+        {
+            string phase = item["status"]?["phase"]?.ToString() ?? "Unknown";
+            string storageClass = item["spec"]?["storageClassName"]?.ToString() ?? "-";
+            string requested = item["spec"]?["resources"]?["requests"]?["storage"]?.ToString() ?? "-";
+            string capacity = item["status"]?["capacity"]?["storage"]?.ToString() ?? requested;
+            return $"{phase} | {storageClass} | {capacity}";
+        }
+
+        private static string ResolveKubernetesNodeRole(JObject? labels)
+        {
+            if (labels == null)
+                return "node";
+
+            var roleLabel = labels.Properties()
+                .FirstOrDefault(prop => prop.Name.StartsWith("node-role.kubernetes.io/", StringComparison.OrdinalIgnoreCase));
+            if (roleLabel == null)
+                return "node";
+
+            string role = roleLabel.Name["node-role.kubernetes.io/".Length..];
+            return string.IsNullOrWhiteSpace(role) ? "control-plane" : role;
+        }
+
+        private static string ResolveKubernetesNodeStatus(JObject item)
+        {
+            var ready = item["status"]?["conditions"]?
+                .OfType<JObject>()
+                .FirstOrDefault(condition => string.Equals(condition["type"]?.ToString(), "Ready", StringComparison.OrdinalIgnoreCase));
+
+            return string.Equals(ready?["status"]?.ToString(), "True", StringComparison.OrdinalIgnoreCase)
+                ? "Ready"
+                : "NotReady";
+        }
+
+        private static string GetKubernetesStatusColor(string state)
+        {
+            return state.ToLowerInvariant() switch
+            {
+                "running" or "ready" or "succeeded" or "available" or "bound" or "service" or "configmap" or "secret" or "ingress" => "#28a745",
+                "pending" or "containercreating" or "progressing" or "scaled 0" => "#ffc107",
+                "failed" or "notready" or "unknown" or "lost" => "#dc3545",
+                _ => "#808080"
+            };
+        }
+
+        private static string NormalizeImageReference(string image)
+        {
+            int digestIndex = image.IndexOf('@');
+            return digestIndex > 0 ? image[..digestIndex] : image;
+        }
+
+        private static string BuildSwarmServiceSummary(
+            string mode,
+            ulong running,
+            ulong desired,
+            IReadOnlyCollection<SwarmServicePortResponse>? ports)
+        {
+            string replicaText = mode.Equals("global", StringComparison.OrdinalIgnoreCase)
+                ? $"global {running} running"
+                : $"replicas {running}/{desired}";
+            if (ports == null || ports.Count == 0)
+                return replicaText;
+
+            var portText = ports
+                .Where(port => port.PublishedPort > 0 || port.TargetPort > 0)
+                .Select(port =>
+                {
+                    string protocol = string.IsNullOrWhiteSpace(port.Protocol) ? "tcp" : port.Protocol;
+                    return port.PublishedPort > 0
+                        ? $"{port.PublishedPort}->{port.TargetPort}/{protocol}"
+                        : $"{port.TargetPort}/{protocol}";
+                });
+
+            return $"{replicaText} | {string.Join(", ", portText)}";
+        }
+
+        private static string GetSwarmTaskStatusColor(string state)
+        {
+            return state.ToLowerInvariant() switch
+            {
+                "running" or "complete" => "#28a745",
+                "new" or "pending" or "assigned" or "accepted" or "preparing" or "ready" or "starting" => "#ffc107",
+                "failed" or "rejected" or "shutdown" or "orphaned" or "remove" => "#dc3545",
+                _ => "#808080"
+            };
+        }
+
+        private static string GetSwarmNodeStatusColor(string state)
+        {
+            return state.ToLowerInvariant() switch
+            {
+                "ready" => "#28a745",
+                "down" or "disconnected" or "unknown" => "#dc3545",
+                _ => "#808080"
+            };
         }
 
         // =========================================================
@@ -353,8 +1155,16 @@ namespace DockerDiagram.Helpers
                     Name = v.Name,
                     Id = v.Name,
                     Labels = labels,
-                    ComposeProjectName = GetLabel(labels, "com.docker.compose.project"),
-                    ComposeResourceName = GetLabel(labels, "com.docker.compose.volume")
+                    ComposeProjectName = FirstNonEmpty(
+                        GetLabel(labels, "com.docker.compose.project"),
+                        GetLabel(labels, "com.dockerdiagram.project")),
+                    ComposeResourceName = FirstNonEmpty(
+                        GetLabel(labels, "com.docker.compose.volume"),
+                        GetLabel(labels, "com.dockerdiagram.resource"),
+                        v.Name),
+                    ProjectSource = string.IsNullOrWhiteSpace(GetLabel(labels, "com.docker.compose.project"))
+                        ? (string.IsNullOrWhiteSpace(GetLabel(labels, "com.dockerdiagram.project")) ? string.Empty : "Template")
+                        : "Compose"
                 };
             }).ToList();
         }
@@ -378,8 +1188,16 @@ namespace DockerDiagram.Helpers
                     Id = n.ID,
                     Driver = n.Driver,
                     Labels = labels,
-                    ComposeProjectName = GetLabel(labels, "com.docker.compose.project"),
-                    ComposeResourceName = GetLabel(labels, "com.docker.compose.network")
+                    ComposeProjectName = FirstNonEmpty(
+                        GetLabel(labels, "com.docker.compose.project"),
+                        GetLabel(labels, "com.dockerdiagram.project")),
+                    ComposeResourceName = FirstNonEmpty(
+                        GetLabel(labels, "com.docker.compose.network"),
+                        GetLabel(labels, "com.dockerdiagram.resource"),
+                        n.Name),
+                    ProjectSource = string.IsNullOrWhiteSpace(GetLabel(labels, "com.docker.compose.project"))
+                        ? (string.IsNullOrWhiteSpace(GetLabel(labels, "com.dockerdiagram.project")) ? string.Empty : "Template")
+                        : "Compose"
                 };
             }).ToList();
         }
@@ -394,6 +1212,17 @@ namespace DockerDiagram.Helpers
         private static string GetLabel(IReadOnlyDictionary<string, string> labels, string key)
         {
             return labels.TryGetValue(key, out string? value) ? value ?? string.Empty : string.Empty;
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (string value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                    return value;
+            }
+
+            return string.Empty;
         }
 
         private static int ParseComposeContainerNumber(string value)
@@ -590,7 +1419,7 @@ namespace DockerDiagram.Helpers
         public async Task<string> CreateAndStartContainerAsync(
     string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes,
     string restartPolicy, long memoryMb, double cpuCount,
-    string command = "", bool tty = false, string networkName = "")
+    string command = "", bool tty = false, string networkName = "", Dictionary<string, string>? labels = null)
         {
             (image, tag) = DockerImageReferenceParser.Split(image, tag);
             string fullImageName = $"{image}:{tag}";
@@ -658,7 +1487,8 @@ namespace DockerDiagram.Helpers
                 },
                 // 대화형 컨테이너는 TTY와 표준 입력을 유지합니다.
                 Tty = tty,
-                OpenStdin = tty
+                OpenStdin = tty,
+                Labels = labels is { Count: > 0 } ? labels : null
             };
 
             if (!string.IsNullOrWhiteSpace(command))
@@ -1585,6 +2415,127 @@ namespace DockerDiagram.Helpers
         public async Task<SystemInfoResponse> GetSystemInfoAsync()
         {
             return await _client.System.GetSystemInfoAsync();
+        }
+
+        private sealed class SwarmServiceResponse
+        {
+            public string ID { get; set; } = string.Empty;
+            public SwarmServiceSpecResponse? Spec { get; set; }
+            public SwarmServiceEndpointResponse? Endpoint { get; set; }
+            public SwarmServiceStatusResponse? ServiceStatus { get; set; }
+        }
+
+        private sealed class SwarmServiceSpecResponse
+        {
+            public string Name { get; set; } = string.Empty;
+            public Dictionary<string, string>? Labels { get; set; }
+            public SwarmServiceTaskTemplateResponse? TaskTemplate { get; set; }
+            public SwarmServiceModeResponse? Mode { get; set; }
+        }
+
+        private sealed class SwarmServiceTaskTemplateResponse
+        {
+            public SwarmServiceContainerSpecResponse? ContainerSpec { get; set; }
+        }
+
+        private sealed class SwarmServiceContainerSpecResponse
+        {
+            public string Image { get; set; } = string.Empty;
+        }
+
+        private sealed class SwarmServiceModeResponse
+        {
+            public SwarmServiceReplicatedModeResponse? Replicated { get; set; }
+            public object? Global { get; set; }
+        }
+
+        private sealed class SwarmServiceReplicatedModeResponse
+        {
+            public ulong Replicas { get; set; }
+        }
+
+        private sealed class SwarmServiceEndpointResponse
+        {
+            public SwarmServiceEndpointSpecResponse? Spec { get; set; }
+        }
+
+        private sealed class SwarmServiceEndpointSpecResponse
+        {
+            public List<SwarmServicePortResponse>? Ports { get; set; }
+        }
+
+        private sealed class SwarmServicePortResponse
+        {
+            public string Protocol { get; set; } = string.Empty;
+            public uint TargetPort { get; set; }
+            public uint PublishedPort { get; set; }
+        }
+
+        private sealed class SwarmServiceStatusResponse
+        {
+            public ulong RunningTasks { get; set; }
+            public ulong DesiredTasks { get; set; }
+        }
+
+        private sealed class SwarmTaskResponse
+        {
+            public string ID { get; set; } = string.Empty;
+            public ulong Slot { get; set; }
+            public string NodeID { get; set; } = string.Empty;
+            public string DesiredState { get; set; } = string.Empty;
+            public SwarmServiceTaskTemplateResponse? Spec { get; set; }
+            public SwarmTaskStatusResponse? Status { get; set; }
+        }
+
+        private sealed class SwarmTaskStatusResponse
+        {
+            public string State { get; set; } = string.Empty;
+            public string Message { get; set; } = string.Empty;
+            public string Err { get; set; } = string.Empty;
+            public SwarmTaskContainerStatusResponse? ContainerStatus { get; set; }
+        }
+
+        private sealed class SwarmTaskContainerStatusResponse
+        {
+            public string ContainerID { get; set; } = string.Empty;
+        }
+
+        private sealed class SwarmNodeResponse
+        {
+            public string ID { get; set; } = string.Empty;
+            public SwarmNodeSpecResponse? Spec { get; set; }
+            public SwarmNodeDescriptionResponse? Description { get; set; }
+            public SwarmNodeStatusResponse? Status { get; set; }
+            public SwarmNodeManagerStatusResponse? ManagerStatus { get; set; }
+        }
+
+        private sealed class SwarmNodeSpecResponse
+        {
+            public string Role { get; set; } = string.Empty;
+            public string Availability { get; set; } = string.Empty;
+        }
+
+        private sealed class SwarmNodeDescriptionResponse
+        {
+            public string Hostname { get; set; } = string.Empty;
+            public SwarmNodeEngineResponse? Engine { get; set; }
+        }
+
+        private sealed class SwarmNodeEngineResponse
+        {
+            public string EngineVersion { get; set; } = string.Empty;
+        }
+
+        private sealed class SwarmNodeStatusResponse
+        {
+            public string State { get; set; } = string.Empty;
+            public string Addr { get; set; } = string.Empty;
+        }
+
+        private sealed class SwarmNodeManagerStatusResponse
+        {
+            public bool Leader { get; set; }
+            public string Reachability { get; set; } = string.Empty;
         }
     }
 }

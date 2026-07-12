@@ -158,7 +158,7 @@ namespace DockerDiagram.Helpers
                         {
                             Name = networkName,
                             Driver = string.IsNullOrWhiteSpace(network.Driver) ? "bridge" : network.Driver,
-                            Labels = CreateTemplateLabels(template, options.ProjectName)
+                            Labels = CreateTemplateLabels(template, options.ProjectName, network.Key, "network")
                         });
                         application.NetworkIds.Add(networkId);
                     }
@@ -179,6 +179,7 @@ namespace DockerDiagram.Helpers
                     {
                         Id = networkId,
                         Driver = string.IsNullOrWhiteSpace(network.Driver) ? "bridge" : network.Driver,
+                        ComposeNetworkName = networkName,
                         IsDockerConnected = options.DeployToDocker
                     };
 
@@ -199,7 +200,7 @@ namespace DockerDiagram.Helpers
                             Name = volumeName,
                             DockerVolumeName = volumeName,
                             Driver = driver,
-                            Labels = CreateTemplateLabels(template, options.ProjectName)
+                            Labels = CreateTemplateLabels(template, options.ProjectName, volume.Key, "volume")
                         });
                         application.VolumeNames.Add(volumeName);
                     }
@@ -209,6 +210,8 @@ namespace DockerDiagram.Helpers
                         ParentSheet = sheet,
                         Name = volumeName,
                         DockerVolumeName = volumeName,
+                        ComposeProjectName = options.ProjectName,
+                        ComposeServiceName = volume.Key,
                         Type = NodeType.Volume,
                         Driver = driver,
                         ImageName = driver,
@@ -240,6 +243,9 @@ namespace DockerDiagram.Helpers
                         ParentSheet = sheet,
                         Name = options.DeployToDocker ? $"{containerName} (Queued...)" : containerName,
                         ImageName = imageReference,
+                        ComposeProjectName = options.ProjectName,
+                        ComposeServiceName = container.Key,
+                        ComposeContainerNumber = 1,
                         Type = NodeType.Container,
                         X = originX + container.X,
                         Y = originY + container.Y,
@@ -255,6 +261,8 @@ namespace DockerDiagram.Helpers
                     };
 
                     sheet.Nodes.Add(node);
+                    if (options.DeployToDocker)
+                        node.SetCreationProgress("Queued");
                     containerNodesByKey[container.Key] = node;
                     application.Nodes.Add(node);
 
@@ -340,14 +348,26 @@ namespace DockerDiagram.Helpers
                         if (pulledImages.Add(imageReference))
                         {
                             node.Name = $"{containerName} (Pulling...)";
-                            node.DetailStatus = $"Pulling image ({application.ContainerIds.Count + 1}/{creationOrder.Count})";
                             node.StatusColor = "#0D6EFD";
-                            await _dockerService.PullImageAsync(image, tag);
+                            node.SetCreationProgress($"Pulling image ({application.ContainerIds.Count + 1}/{creationOrder.Count})");
+
+                            var tracker = new DockerPullProgressTracker();
+                            var progress = new Progress<Docker.DotNet.Models.JSONMessage>(message =>
+                            {
+                                var snapshot = tracker.Update(message);
+                                node.SetCreationProgress(
+                                    $"Pulling image ({application.ContainerIds.Count + 1}/{creationOrder.Count}) - {snapshot.Message}",
+                                    snapshot.Percent);
+                                node.StatusColor = snapshot.Percent.HasValue ? "#0D6EFD" : "#FFC107";
+                            });
+
+                            await _dockerService.PullImageWithProgressAsync(image, tag, progress);
+                            node.SetCreationProgress($"Image pull complete ({application.ContainerIds.Count + 1}/{creationOrder.Count})", 100);
                         }
 
                         node.Name = $"{containerName} (Creating...)";
-                        node.DetailStatus = $"Creating container ({application.ContainerIds.Count + 1}/{creationOrder.Count})";
                         node.StatusColor = "#FFC107";
+                        node.SetCreationProgress($"Creating container ({application.ContainerIds.Count + 1}/{creationOrder.Count})");
                         string containerId = await _dockerService.CreateAndStartContainerAsync(
                             containerName,
                             image,
@@ -360,7 +380,15 @@ namespace DockerDiagram.Helpers
                             0,
                             Resolve(container.Command, values),
                             false,
-                            primaryNetworkName);
+                            primaryNetworkName,
+                            CreateTemplateLabels(
+                                template,
+                                options.ProjectName,
+                                container.Key,
+                                "container",
+                                template.Dependencies
+                                    .Where(dependency => dependency.Source.Equals(container.Key, StringComparison.OrdinalIgnoreCase))
+                                    .Select(dependency => dependency.Target)));
                         application.ContainerIds.Add(containerId);
 
                         node.Name = containerName;
@@ -370,6 +398,8 @@ namespace DockerDiagram.Helpers
                         node.IsRunning = true;
                         node.DetailStatus = "Running";
                         node.StatusColor = "#28A745";
+                        node.CreationProgressValue = 100;
+                        node.CreationProgressMessage = "Created";
 
                         for (int networkIndex = 1; networkIndex < enabledNetworks.Count; networkIndex++)
                         {
@@ -820,11 +850,25 @@ namespace DockerDiagram.Helpers
 
         private static Dictionary<string, string> CreateTemplateLabels(
             StackTemplateDefinition template,
-            string projectName) => new()
+            string projectName,
+            string resourceName,
+            string resourceType,
+            IEnumerable<string>? dependsOn = null)
         {
-            ["com.dockerdiagram.template"] = template.Id,
-            ["com.dockerdiagram.project"] = projectName
-        };
+            var labels = new Dictionary<string, string>
+            {
+                ["com.dockerdiagram.template"] = template.Id,
+                ["com.dockerdiagram.project"] = projectName,
+                ["com.dockerdiagram.resource"] = resourceName,
+                ["com.dockerdiagram.resource-type"] = resourceType
+            };
+
+            string dependsOnValue = string.Join(",", dependsOn ?? Enumerable.Empty<string>());
+            if (!string.IsNullOrWhiteSpace(dependsOnValue))
+                labels["com.dockerdiagram.depends_on"] = dependsOnValue;
+
+            return labels;
+        }
 
         private static (string Image, string Tag) SplitImageReference(string imageReference)
         {

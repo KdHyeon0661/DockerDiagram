@@ -15,6 +15,7 @@ namespace DockerDiagram.ViewModels
         public ConnectionProfile Profile { get; } = profile;
         public IDockerService DockerService { get; } = dockerService;
         public ObservableCollection<SheetViewModel> Sheets { get; } = [];
+        public RuntimeKind RuntimeKind => Profile.RuntimeKind;
 
         public string DisplayName
         {
@@ -34,6 +35,14 @@ namespace DockerDiagram.ViewModels
             EndpointType.SshRemote => "SSH",
             EndpointType.DockerContext => "CONTEXT",
             _ => Profile.Type.ToString()
+        };
+
+        public string RuntimeLabel => RuntimeKind switch
+        {
+            RuntimeKind.DockerEngine => "Docker",
+            RuntimeKind.DockerSwarm => "Swarm",
+            RuntimeKind.Kubernetes => "Kubernetes",
+            _ => RuntimeKind.ToString()
         };
 
         public string HostSummary => Profile.Type switch

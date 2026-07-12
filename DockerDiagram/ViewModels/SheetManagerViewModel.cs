@@ -26,6 +26,7 @@ namespace DockerDiagram.ViewModels
 
         private ConnectionWorkspaceViewModel? _activeWorkspace;
         private bool _isWorkspaceLayer = true;
+        private bool _suppressCreationSwitchPrompt;
 
         public bool IsWorkspaceLayer
         {
@@ -46,10 +47,24 @@ namespace DockerDiagram.ViewModels
             get => _activeWorkspace;
             set
             {
+                if (!_suppressCreationSwitchPrompt && value != _activeWorkspace && HasActiveCreationTasks && !ConfirmLeaveActiveCreationTasks("작업 중인 시트를 벗어나시겠습니까?"))
+                {
+                    OnPropertyChanged();
+                    return;
+                }
+
                 if (SetProperty(ref _activeWorkspace, value))
                 {
                     OnPropertyChanged(nameof(Sheets));
-                    ActiveSheet = _activeWorkspace?.ActiveSheet ?? _activeWorkspace?.Sheets.FirstOrDefault();
+                    _suppressCreationSwitchPrompt = true;
+                    try
+                    {
+                        ActiveSheet = _activeWorkspace?.ActiveSheet ?? _activeWorkspace?.Sheets.FirstOrDefault();
+                    }
+                    finally
+                    {
+                        _suppressCreationSwitchPrompt = false;
+                    }
                     _mainVm.Explorer?.UpdateAvailableItems();
                 }
             }
@@ -68,6 +83,8 @@ namespace DockerDiagram.ViewModels
 
         public ObservableCollection<SheetViewModel> Sheets => ActiveWorkspace?.Sheets ?? _emptySheets;
         public IEnumerable<SheetViewModel> AllSheets => Workspaces.SelectMany(w => w.Sheets);
+        public bool HasActiveCreationTasks => AllSheets.Any(sheet => sheet.Nodes.Any(node => node.IsBusyCreating));
+        public int ActiveCreationTaskCount => AllSheets.Sum(sheet => sheet.Nodes.Count(node => node.IsBusyCreating));
 
         private SheetViewModel? _activeSheet;
         public SheetViewModel? ActiveSheet
@@ -75,6 +92,12 @@ namespace DockerDiagram.ViewModels
             get => _activeSheet;
             set
             {
+                if (!_suppressCreationSwitchPrompt && value != _activeSheet && HasActiveCreationTasks && !ConfirmLeaveActiveCreationTasks("다른 시트로 이동하시겠습니까?"))
+                {
+                    OnPropertyChanged();
+                    return;
+                }
+
                 if (value != null)
                 {
                     var owner = FindWorkspaceContaining(value);
@@ -253,7 +276,9 @@ namespace DockerDiagram.ViewModels
             var existing = FindWorkspaceByProfile(profile);
             if (existing != null)
             {
-                if (dockerService != existing.DockerService && dockerService != _defaultDockerService)
+                if (dockerService != existing.DockerService &&
+                    dockerService != _defaultDockerService &&
+                    !IsServiceUsedByAnyWorkspace(dockerService))
                 {
                     App.ActiveDockerServices.Remove(dockerService);
                     dockerService.Dispose();
@@ -279,8 +304,49 @@ namespace DockerDiagram.ViewModels
             return workspace;
         }
 
+        public ConnectionWorkspaceViewModel CreateRuntimeWorkspace(
+            ConnectionWorkspaceViewModel sourceWorkspace,
+            RuntimeKind runtimeKind,
+            bool activate = true)
+        {
+            if (sourceWorkspace.RuntimeKind == runtimeKind)
+            {
+                if (activate)
+                {
+                    ActiveWorkspace = sourceWorkspace;
+                    ActiveSheet = sourceWorkspace.ActiveSheet ?? sourceWorkspace.Sheets.FirstOrDefault();
+                }
+                return sourceWorkspace;
+            }
+
+            var profile = CloneProfile(sourceWorkspace.Profile);
+            profile.RuntimeKind = runtimeKind;
+
+            var workspace = AddWorkspace(
+                profile,
+                sourceWorkspace.DockerService,
+                activate: false,
+                createInitialSheet: false);
+
+            if (workspace.Sheets.Count == 0)
+            {
+                AddSheetToWorkspace(workspace, $"{GetRuntimeLabel(runtimeKind)} Sheet 1", activate: false);
+            }
+
+            if (activate)
+            {
+                ActiveWorkspace = workspace;
+                ActiveSheet = workspace.ActiveSheet ?? workspace.Sheets.FirstOrDefault();
+                IsWorkspaceLayer = false;
+            }
+
+            MarkAsModified();
+            return workspace;
+        }
+
         public void AddExistingSheet(SheetViewModel sheet, bool activate = true)
         {
+            sheet.Profile.RuntimeKind = sheet.RuntimeKind;
             var workspace = FindWorkspaceByProfile(sheet.Profile);
             if (workspace == null)
             {
@@ -302,7 +368,7 @@ namespace DockerDiagram.ViewModels
 
         private SheetViewModel AddSheetToWorkspace(ConnectionWorkspaceViewModel workspace, string title, bool activate)
         {
-            var newSheet = new SheetViewModel(title, workspace.Profile, workspace.DockerService, _dialogService);
+            var newSheet = new SheetViewModel(title, workspace.Profile, workspace.DockerService, _dialogService, workspace.RuntimeKind);
             workspace.Sheets.Add(newSheet);
             workspace.ActiveSheet = newSheet;
 
@@ -378,10 +444,36 @@ namespace DockerDiagram.ViewModels
 
         private void Nodes_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
-            if (e.NewItems != null) foreach (NodeViewModel node in e.NewItems) node.OnModified += Node_OnModified;
-            if (e.OldItems != null) foreach (NodeViewModel node in e.OldItems) node.OnModified -= Node_OnModified;
+            var ownerSheet = AllSheets.FirstOrDefault(sheet => ReferenceEquals(sheet.Nodes, sender));
+            if (e.NewItems != null)
+            {
+                foreach (NodeViewModel node in e.NewItems)
+                {
+                    node.OnModified += Node_OnModified;
+                    if (ownerSheet != null)
+                        node.ParentSheet = ownerSheet;
+                }
+            }
+
+            if (e.OldItems != null)
+            {
+                foreach (NodeViewModel node in e.OldItems)
+                {
+                    node.OnModified -= Node_OnModified;
+                    if (ownerSheet != null && ReferenceEquals(node.ParentSheet, ownerSheet))
+                        node.ParentSheet = null;
+                }
+            }
             _mainVm.Explorer?.UpdateAvailableItems();
             MarkAsModified();
+        }
+
+        private bool ConfirmLeaveActiveCreationTasks(string action)
+        {
+            int count = ActiveCreationTaskCount;
+            return _dialogService.ShowConfirm(
+                $"현재 생성 작업이 진행 중입니다. ({count}개)\n{action}\n\n작업 중에 화면을 벗어나면 Docker 리소스가 일부 생성된 상태로 남을 수 있습니다.",
+                "작업 진행 중");
         }
 
         private void Groups_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
@@ -426,7 +518,11 @@ namespace DockerDiagram.ViewModels
 
         public bool RemoveWorkspace(ConnectionWorkspaceViewModel workspace)
         {
-            if (workspace == null || workspace.Profile.Type == EndpointType.Local || Workspaces.Count <= 1)
+            if (workspace == null || Workspaces.Count <= 1)
+                return false;
+
+            if (workspace.Profile.Type == EndpointType.Local &&
+                workspace.RuntimeKind == RuntimeKind.DockerEngine)
                 return false;
 
             foreach (var sheet in workspace.Sheets.ToList())
@@ -434,7 +530,12 @@ namespace DockerDiagram.ViewModels
                 UnsubscribeSheetEvents(sheet);
             }
 
-            if (workspace.Profile.Type == EndpointType.SshRemote && !string.IsNullOrWhiteSpace(workspace.Profile.HostIp))
+            bool serviceUsedElsewhere = Workspaces.Any(w =>
+                w != workspace && ReferenceEquals(w.DockerService, workspace.DockerService));
+
+            if (!serviceUsedElsewhere &&
+                workspace.Profile.Type == EndpointType.SshRemote &&
+                !string.IsNullOrWhiteSpace(workspace.Profile.HostIp))
             {
                 SshTunnelManager.ReleaseTunnel(
                     workspace.Profile.HostIp,
@@ -443,7 +544,7 @@ namespace DockerDiagram.ViewModels
                 );
             }
 
-            if (workspace.DockerService != _defaultDockerService)
+            if (!serviceUsedElsewhere && workspace.DockerService != _defaultDockerService)
             {
                 App.ActiveDockerServices.Remove(workspace.DockerService);
                 workspace.DockerService.Dispose();
@@ -496,6 +597,7 @@ namespace DockerDiagram.ViewModels
         private static bool IsSameProfile(ConnectionProfile left, ConnectionProfile right)
         {
             if (left.Type != right.Type) return false;
+            if (left.RuntimeKind != right.RuntimeKind) return false;
             if (left.Type == EndpointType.Local) return true;
             if (left.Type == EndpointType.DockerContext)
             {
@@ -508,6 +610,36 @@ namespace DockerDiagram.ViewModels
                 && string.Equals(left.SshUsername, right.SshUsername, StringComparison.OrdinalIgnoreCase)
                 && left.SshPort == right.SshPort;
         }
+
+        private bool IsServiceUsedByAnyWorkspace(IDockerService dockerService)
+        {
+            return Workspaces.Any(workspace => ReferenceEquals(workspace.DockerService, dockerService));
+        }
+
+        private static ConnectionProfile CloneProfile(ConnectionProfile source)
+        {
+            return new ConnectionProfile
+            {
+                ProfileId = Guid.NewGuid().ToString(),
+                Name = source.Name,
+                Type = source.Type,
+                RuntimeKind = source.RuntimeKind,
+                HostIp = source.HostIp,
+                SshUsername = source.SshUsername,
+                SshPort = source.SshPort,
+                LocalTunnelPort = source.LocalTunnelPort,
+                SshKeyFilePath = source.SshKeyFilePath,
+                DockerEndpoint = source.DockerEndpoint
+            };
+        }
+
+        private static string GetRuntimeLabel(RuntimeKind runtimeKind) => runtimeKind switch
+        {
+            RuntimeKind.DockerEngine => "Docker",
+            RuntimeKind.DockerSwarm => "Swarm",
+            RuntimeKind.Kubernetes => "Kubernetes",
+            _ => runtimeKind.ToString()
+        };
 
         private void Node_OnModified(object? sender, EventArgs e) => MarkAsModified();
         private void Connector_OnModified(object? sender, EventArgs e) => MarkAsModified();

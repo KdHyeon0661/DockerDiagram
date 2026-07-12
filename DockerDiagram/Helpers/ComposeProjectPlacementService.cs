@@ -245,6 +245,11 @@ namespace DockerDiagram.Helpers
             if (!labels.TryGetValue("com.docker.compose.depends_on", out string? value) ||
                 string.IsNullOrWhiteSpace(value))
             {
+                labels.TryGetValue("com.dockerdiagram.depends_on", out value);
+            }
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
                 return Array.Empty<string>();
             }
 
