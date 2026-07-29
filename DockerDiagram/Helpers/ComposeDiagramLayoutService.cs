@@ -390,8 +390,8 @@ namespace DockerDiagram.Helpers
 
                 group.X = content.Left - GroupSidePadding - ringPadding;
                 group.Y = content.Top - GroupTopPadding - ringPadding;
-                group.Width = Math.Max(220, content.Width + (GroupSidePadding + ringPadding) * 2);
-                group.Height = Math.Max(150, content.Height + GroupTopPadding + GroupBottomPadding + ringPadding * 2);
+                group.Width = Math.Max(GroupViewModel.MinimumWidth, content.Width + (GroupSidePadding + ringPadding) * 2);
+                group.Height = Math.Max(GroupViewModel.MinimumHeight, content.Height + GroupTopPadding + GroupBottomPadding + ringPadding * 2);
                 return new Rect(group.X, group.Y, group.Width, group.Height);
             }
 
@@ -461,8 +461,8 @@ namespace DockerDiagram.Helpers
             {
                 group.X = currentX;
                 group.Y = currentY;
-                group.Width = Math.Max(220, group.Width);
-                group.Height = Math.Max(150, group.Height);
+                group.Width = Math.Max(GroupViewModel.MinimumWidth, group.Width);
+                group.Height = Math.Max(GroupViewModel.MinimumHeight, group.Height);
                 if (isHorizontal)
                     currentX += group.Width + HorizontalGap;
                 else

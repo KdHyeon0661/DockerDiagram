@@ -18,6 +18,9 @@ namespace DockerDiagram.ViewModels
     /// </summary>
     public class GroupViewModel : ConnectableItemViewModel
     {
+        public const double MinimumWidth = 300;
+        public const double MinimumHeight = 200;
+
         #region Fields & Services
         private readonly INetworkService _networkService;
         private readonly IDialogService _dialogService;
@@ -97,6 +100,12 @@ namespace DockerDiagram.ViewModels
         public double Area => Width * Height;
         public override bool UsePointRouting => true;
 
+        protected override double NormalizeWidth(double value) =>
+            Math.Max(MinimumWidth, value);
+
+        protected override double NormalizeHeight(double value) =>
+            Math.Max(MinimumHeight, value);
+
         protected override void OnBoundsChanged(string propertyName)
         {
             if (propertyName == nameof(Width) || propertyName == nameof(Height))
@@ -133,7 +142,7 @@ namespace DockerDiagram.ViewModels
                               IDialogService dialogService,
                               string title = "New Group",
                               GroupType type = GroupType.General) // 기본값은 일반 폴더
-            : base(x, y, w, h)
+            : base(x, y, Math.Max(MinimumWidth, w), Math.Max(MinimumHeight, h))
         {
             _networkService = networkService;
             _dialogService = dialogService;
@@ -435,8 +444,8 @@ namespace DockerDiagram.ViewModels
                 // 최상위 루트 노드부터 재귀 정렬 시작
                 LayoutTree(this, this.Y, 0);
 
-                this.Width = Math.Max(this.Width, 150);
-                this.Height = Math.Max(this.Height, 100);
+                this.Width = Math.Max(this.Width, MinimumWidth);
+                this.Height = Math.Max(this.Height, MinimumHeight);
 
                 RaiseModified();
             }

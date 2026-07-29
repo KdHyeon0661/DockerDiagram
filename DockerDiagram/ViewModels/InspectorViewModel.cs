@@ -71,6 +71,9 @@ namespace DockerDiagram.ViewModels
 
         // 상세 정보 사이드 패널의 열림/닫힘 상태
         public bool IsDetailPanelOpen => _selectedElement != null;
+        public NodeViewModel? SelectedFailedCreationNode =>
+            SelectedElement is NodeViewModel { IsCreationFailed: true } node ? node : null;
+        public bool IsSelectedCreationFailed => SelectedFailedCreationNode != null;
         public bool IsSelectedDockerDisconnected => SelectedElement switch
         {
             NodeViewModel node => node.IsDockerDisconnected,
@@ -89,6 +92,8 @@ namespace DockerDiagram.ViewModels
                 e.PropertyName == nameof(NodeViewModel.IsDockerDisconnected) ||
                 e.PropertyName == nameof(NodeViewModel.IsOfflineSnapshot) ||
                 e.PropertyName == nameof(NodeViewModel.IsRuntimeUnavailable) ||
+                e.PropertyName == nameof(NodeViewModel.IsCreationFailed) ||
+                e.PropertyName == nameof(NodeViewModel.LastCreationError) ||
                 e.PropertyName == nameof(GroupViewModel.IsDockerConnected) ||
                 e.PropertyName == nameof(GroupViewModel.IsDockerDisconnected))
             {
@@ -102,6 +107,8 @@ namespace DockerDiagram.ViewModels
             OnPropertyChanged(nameof(IsSelectedDockerConnected));
             OnPropertyChanged(nameof(IsSelectedOfflineSnapshot));
             OnPropertyChanged(nameof(IsSelectedRuntimeDisconnected));
+            OnPropertyChanged(nameof(SelectedFailedCreationNode));
+            OnPropertyChanged(nameof(IsSelectedCreationFailed));
             ReconnectCommand?.RaiseCanExecuteChanged();
         }
 

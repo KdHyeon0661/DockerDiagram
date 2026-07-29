@@ -361,11 +361,38 @@ namespace DockerDiagram
         /// </summary>
         private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
         {
+            if (e.Key == Key.Escape && CancelAreaDrawingMode())
+            {
+                e.Handled = true;
+                return;
+            }
+
             if (e.Key == Key.Delete)
             {
                 (DataContext as MainViewModel)?.Inspector.DeleteCommand.Execute(null);
                 e.Handled = true;
             }
+        }
+
+        private bool CancelAreaDrawingMode()
+        {
+            if (!_isGroupingMode && !_isNetworkDrawingMode)
+                return false;
+
+            if (ViewportCanvas.IsMouseCaptured)
+                ViewportCanvas.ReleaseMouseCapture();
+
+            if (TempGroupRect != null)
+            {
+                TempGroupRect.Visibility = Visibility.Collapsed;
+                TempGroupRect.Width = 0;
+                TempGroupRect.Height = 0;
+            }
+
+            _isGroupingMode = false;
+            _isNetworkDrawingMode = false;
+            Mouse.OverrideCursor = null;
+            return true;
         }
 
         // --- 옵션 팝업 및 기능 버튼 ---
@@ -1068,24 +1095,32 @@ namespace DockerDiagram
 
                     if (_resizeDir.Contains("Right"))
                     {
-                        double minW = (_resizingGroup.ContainedNodes.Count > 0 ? (contentBounds.Right - _resizeStartGroupRect.X) + padding : 50);
+                        double minW = _resizingGroup.ContainedNodes.Count > 0
+                            ? Math.Max(GroupViewModel.MinimumWidth, (contentBounds.Right - _resizeStartGroupRect.X) + padding)
+                            : GroupViewModel.MinimumWidth;
                         _resizingGroup.Width = Math.Max(minW, _resizeStartGroupRect.Width + diffX);
                     }
                     if (_resizeDir.Contains("Bottom"))
                     {
-                        double minH = (_resizingGroup.ContainedNodes.Count > 0 ? (contentBounds.Bottom - _resizeStartGroupRect.Y) + padding : 50);
+                        double minH = _resizingGroup.ContainedNodes.Count > 0
+                            ? Math.Max(GroupViewModel.MinimumHeight, (contentBounds.Bottom - _resizeStartGroupRect.Y) + padding)
+                            : GroupViewModel.MinimumHeight;
                         _resizingGroup.Height = Math.Max(minH, _resizeStartGroupRect.Height + diffY);
                     }
                     if (_resizeDir.Contains("Left"))
                     {
-                        double maxAllowedX = _resizingGroup.ContainedNodes.Count > 0 ? contentBounds.Left - padding : _resizeStartGroupRect.Right - 50;
+                        double maxAllowedX = _resizingGroup.ContainedNodes.Count > 0
+                            ? Math.Min(contentBounds.Left - padding, _resizeStartGroupRect.Right - GroupViewModel.MinimumWidth)
+                            : _resizeStartGroupRect.Right - GroupViewModel.MinimumWidth;
                         double cX = Math.Min(_resizeStartGroupRect.X + diffX, maxAllowedX);
                         _resizingGroup.X = cX;
                         _resizingGroup.Width = _resizeStartGroupRect.Right - cX;
                     }
                     if (_resizeDir.Contains("Top"))
                     {
-                        double maxAllowedY = _resizingGroup.ContainedNodes.Count > 0 ? contentBounds.Top - padding : _resizeStartGroupRect.Bottom - 50;
+                        double maxAllowedY = _resizingGroup.ContainedNodes.Count > 0
+                            ? Math.Min(contentBounds.Top - padding, _resizeStartGroupRect.Bottom - GroupViewModel.MinimumHeight)
+                            : _resizeStartGroupRect.Bottom - GroupViewModel.MinimumHeight;
                         double cY = Math.Min(_resizeStartGroupRect.Y + diffY, maxAllowedY);
                         _resizingGroup.Y = cY;
                         _resizingGroup.Height = _resizeStartGroupRect.Bottom - cY;
