@@ -1,8 +1,10 @@
-using DockerDiagram.Helpers;
+using DockerDiagram.Contracts;
+using DockerDiagram.Common;
 using DockerDiagram.Models;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -15,6 +17,7 @@ namespace DockerDiagram.ViewModels
     /// </summary>
     public sealed class VolumeNodeViewModel : ViewModelBase
     {
+        private const int SidebarUsageLimit = 3;
         private readonly NodeViewModel _node;
         private readonly IVolumeService _volumeService;
         private readonly IDialogService _dialogService;
@@ -26,6 +29,7 @@ namespace DockerDiagram.ViewModels
         private string _driverOptionsText = "None";
         private string _sizeText = "Unknown";
         private long _refCount;
+        private int _usedContainerCount;
 
         public VolumeNodeViewModel(
             NodeViewModel node,
@@ -39,11 +43,13 @@ namespace DockerDiagram.ViewModels
             BackupCommand = new AsyncRelayCommand(ExecuteBackupAsync, _ => _node.Type == NodeType.Volume);
             RestoreCommand = new AsyncRelayCommand(ExecuteRestoreAsync, _ => _node.Type == NodeType.Volume);
             RecreateCommand = new AsyncRelayCommand(ExecuteRecreateAsync, _ => _node.Type == NodeType.Volume);
+            OpenDetailCommand = new AsyncRelayCommand(OpenDetailAsync, _ => _node.Type == NodeType.Volume && _node.IsDockerConnected);
         }
 
         public ICommand BackupCommand { get; }
         public ICommand RestoreCommand { get; }
         public ICommand RecreateCommand { get; }
+        public ICommand OpenDetailCommand { get; }
 
         public string DockerVolumeName
         {
@@ -58,8 +64,14 @@ namespace DockerDiagram.ViewModels
         public bool External
         {
             get => _external;
-            set => SetProperty(ref _external, value);
+            set
+            {
+                if (SetProperty(ref _external, value))
+                    OnPropertyChanged(nameof(ExternalText));
+            }
         }
+
+        public string ExternalText => External ? "Yes" : "No";
 
         public Dictionary<string, string> Labels
         {
@@ -96,8 +108,17 @@ namespace DockerDiagram.ViewModels
         public string SizeText
         {
             get => _sizeText;
-            private set => SetProperty(ref _sizeText, value);
+            private set
+            {
+                if (SetProperty(ref _sizeText, value))
+                    OnPropertyChanged(nameof(DisplaySizeText));
+            }
         }
+
+        public string DisplaySizeText =>
+            string.Equals(SizeText, "Unknown", StringComparison.OrdinalIgnoreCase)
+                ? "Not available"
+                : SizeText;
 
         public long RefCount
         {
@@ -105,11 +126,45 @@ namespace DockerDiagram.ViewModels
             private set => SetProperty(ref _refCount, value);
         }
 
+        public int UsedContainerCount
+        {
+            get => _usedContainerCount;
+            private set
+            {
+                if (!SetProperty(ref _usedContainerCount, value)) return;
+
+                OnPropertyChanged(nameof(UsedContainerCountText));
+                OnPropertyChanged(nameof(HasVolumeUsage));
+                OnPropertyChanged(nameof(HasSidebarUsageOverflow));
+                OnPropertyChanged(nameof(SidebarUsageOverflowText));
+            }
+        }
+
+        public string UsedContainerCountText =>
+            $"{UsedContainerCount} container{(UsedContainerCount == 1 ? string.Empty : "s")}";
+
+        public bool HasVolumeUsage => UsedContainerCount > 0;
+        public bool HasSidebarUsageOverflow => UsedContainerCount > SidebarUsageLimit;
+        public string SidebarUsageOverflowText => $"+{Math.Max(0, UsedContainerCount - SidebarUsageLimit)} more";
+
         public string EffectiveVolumeName =>
             string.IsNullOrWhiteSpace(DockerVolumeName) ? _node.Name : DockerVolumeName;
 
         public ObservableCollection<string> UsedByContainers { get; } = new();
         public ObservableCollection<VolumeUsageInfo> UsageDetails { get; } = new();
+        public IReadOnlyList<VolumeUsageInfo> SidebarUsageDetails => UsageDetails
+            .GroupBy(usage => usage.ContainerName, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .Take(SidebarUsageLimit)
+            .ToList();
+
+        private async Task OpenDetailAsync(object? parameter)
+        {
+            await _node.RefreshDetailsAsync();
+
+            if (_node.IsDockerConnected)
+                _dialogService.ShowVolumeDetail(_node);
+        }
 
         public async Task RefreshDetailsAsync()
         {
@@ -128,7 +183,17 @@ namespace DockerDiagram.ViewModels
                 ? created.ToString("yyyy-MM-dd HH:mm:ss")
                 : volume.CreatedAt;
 
-            var usageDetails = await _volumeService.GetVolumeUsageDetailsAsync(volumeName);
+            List<VolumeUsageInfo> usageDetails;
+            try
+            {
+                usageDetails = await _volumeService.GetVolumeUsageDetailsAsync(volumeName);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[VolumeDetails] Usage lookup failed for '{volumeName}': {ex.Message}");
+                usageDetails = new List<VolumeUsageInfo>();
+            }
+
             var users = usageDetails
                 .Select(usage => usage.ContainerName)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -145,13 +210,25 @@ namespace DockerDiagram.ViewModels
             foreach (var usage in usageDetails)
                 UsageDetails.Add(usage);
 
+            UsedContainerCount = users.Count;
+            OnPropertyChanged(nameof(SidebarUsageDetails));
+
             if (_volumeService is ISystemService systemService)
             {
-                var diskUsage = await systemService.GetSystemDiskUsageAsync();
-                var volumeUsage = diskUsage.Volumes.FirstOrDefault(item =>
-                    string.Equals(item.Name, volumeName, StringComparison.OrdinalIgnoreCase));
-                SizeText = volumeUsage?.FormattedSize ?? "Unknown";
-                RefCount = volumeUsage?.RefCount ?? usageDetails.Count;
+                try
+                {
+                    var diskUsage = await systemService.GetSystemDiskUsageAsync();
+                    var volumeUsage = diskUsage.Volumes.FirstOrDefault(item =>
+                        string.Equals(item.Name, volumeName, StringComparison.OrdinalIgnoreCase));
+                    SizeText = volumeUsage?.FormattedSize ?? "Unknown";
+                    RefCount = volumeUsage?.RefCount ?? usageDetails.Count;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[VolumeDetails] Disk usage lookup failed for '{volumeName}': {ex.Message}");
+                    SizeText = "Unknown";
+                    RefCount = usageDetails.Count;
+                }
             }
             else
             {
@@ -266,7 +343,7 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                Mouse.OverrideCursor = Cursors.Wait;
+                _dialogService.SetBusyCursor(true);
 
                 if (newOptions.External)
                 {
@@ -383,7 +460,7 @@ namespace DockerDiagram.ViewModels
             }
             finally
             {
-                Mouse.OverrideCursor = null;
+                _dialogService.SetBusyCursor(false);
             }
         }
 

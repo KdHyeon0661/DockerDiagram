@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace DockerDiagram.Models
 {
@@ -22,10 +22,24 @@ namespace DockerDiagram.Models
 
         public int LocalTunnelPort { get; set; } // SSH 터널이 로컬에서 수신하는 포트
         public string? SshKeyFilePath { get; set; } // 자동 재접속을 위한 SSH 프라이빗 키(.pem) 파일 경로
+        public string RemoteDockerSocketPath { get; set; } = "/var/run/docker.sock"; // 원격 호스트의 Docker Unix 소켓
 
         // =====================================
         // [Docker CLI context 직접 연결 전용 데이터]
         // =====================================
         public string? DockerEndpoint { get; set; } // npipe://, unix://, tcp:// 등 Docker context의 endpoint
+    }
+
+    public class DockerContextInfo
+    {
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string DockerEndpoint { get; set; } = "";
+        public string Error { get; set; } = "";
+        public bool IsCurrent { get; set; }
+
+        public bool IsDefault => string.Equals(Name, "default", System.StringComparison.OrdinalIgnoreCase);
+        public string CurrentText => IsCurrent ? "*" : "";
+        public string StatusText => string.IsNullOrWhiteSpace(Error) ? "Ready" : Error;
     }
 }

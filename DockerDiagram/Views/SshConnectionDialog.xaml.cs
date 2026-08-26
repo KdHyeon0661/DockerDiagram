@@ -1,7 +1,8 @@
-﻿using System;
+using DockerDiagram.Infrastructure;
+using DockerDiagram.Contracts;
+using System;
 using System.Windows;
 using Microsoft.Win32;
-using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
@@ -61,20 +62,36 @@ namespace DockerDiagram.Views
 
             if (!int.TryParse(txtPort.Text, out int sshPort)) sshPort = 22;
 
+            string socketPath;
+            try
+            {
+                socketPath = SshTunnelManager.NormalizeRemoteDockerSocketPath(txtRemoteSocketPath.Text);
+            }
+            catch (ArgumentException ex)
+            {
+                _dialogService.ShowMessage(ex.Message);
+                return;
+            }
+
             // UI 상태 변경 (로딩 표시)
             btnConnect.IsEnabled = false;
             txtStatus.Visibility = Visibility.Visible;
             txtStatus.Text = "SSH 터널 연결 중...";
 
+            string ip = txtIp.Text.Trim();
+            string user = txtUser.Text.Trim();
+            string keyPath = txtKeyPath.Text.Trim();
+            string profileName = txtName.Text.Trim();
+            IDockerService? remoteDockerService = null;
+            bool tunnelAcquired = false;
+            bool connectionHandled = false;
+            string failureStage = "SSH 인증 및 터널 생성";
+
             try
             {
-                string ip = txtIp.Text.Trim();
-                string user = txtUser.Text.Trim();
-                string keyPath = txtKeyPath.Text.Trim();
-                string profileName = txtName.Text.Trim();
-
                 // 기존 터널이 있으면 로컬 포트를 재사용합니다.
-                int localPort = await SshTunnelManager.GetOrStartTunnelAsync(ip, sshPort, user, keyPath, _dialogService);
+                int localPort = await SshTunnelManager.GetOrStartTunnelAsync(ip, sshPort, user, keyPath, socketPath, _dialogService);
+                tunnelAcquired = true;
 
                 // 생성된 터널을 사용하는 연결 프로필
                 var remoteProfile = new ConnectionProfile
@@ -87,45 +104,110 @@ namespace DockerDiagram.Views
                     LocalTunnelPort = localPort,
 
                     // 다음 실행에서 재연결할 수 있도록 개인 키 경로를 저장합니다.
-                    SshKeyFilePath = keyPath
+                    SshKeyFilePath = keyPath,
+                    RemoteDockerSocketPath = socketPath
                 };
 
                 // 원격 연결 전용 Docker 서비스
-                txtStatus.Text = "도커 엔진 확인 중...";
-                var remoteDockerService = new DockerApiService(remoteProfile);
+                txtStatus.Text = "Docker 소켓 및 권한 확인 중...";
+                failureStage = "원격 Docker 소켓 및 권한 확인";
+                remoteDockerService = _mainVm.DockerServiceFactory.Create(remoteProfile);
 
-                // [STEP 4] 실제로 도커가 살아있는지 최종 확인 (Ping)
-                bool isAlive = await remoteDockerService.PingAsync();
-
-                if (isAlive)
+                try
                 {
-                    // 연결된 원격 호스트의 워크스페이스를 추가합니다.
-
-                    // 앱 전역 서비스 리스트에 등록 (나중에 앱 끌 때 한꺼번에 닫기 위함)
-                    App.ActiveDockerServices.Add(remoteDockerService);
-                    _mainVm.SheetManager.AddWorkspace(remoteProfile, remoteDockerService, activate: true, createInitialSheet: true);
-
-                    _dialogService.ShowInfo($"'{profileName}' 서버에 연결되었습니다.", "연결 성공");
-                    this.DialogResult = true;
-                    this.Close();
+                    if (remoteDockerService is DockerApiService dockerApiService)
+                    {
+                        await dockerApiService.VerifyConnectionAsync();
+                    }
+                    else if (!await remoteDockerService.PingAsync())
+                    {
+                        throw new InvalidOperationException("Docker Engine이 Ping에 응답하지 않았습니다.");
+                    }
                 }
-                else
+                catch (Exception pingException)
                 {
-                    // SSH는 뚫렸는데 도커가 안 켜져 있는 경우
-                    SshTunnelManager.ReleaseTunnel(ip, sshPort, user); // 참조 카운트 감소
-                    remoteDockerService.Dispose();
-                    _dialogService.ShowMessage("SSH 연결은 성공했으나, 원격 서버에서 도커 엔진을 찾을 수 없습니다.");
+                    // SSH가 원격 Unix 소켓을 열면서 남긴 오류가 도착할 시간을 잠시 줍니다.
+                    await System.Threading.Tasks.Task.Delay(150);
+                    string tunnelError = SshTunnelManager.GetRecentTunnelError(ip, sshPort, user, socketPath);
+                    failureStage = ClassifyDockerFailureStage(tunnelError);
+                    throw new InvalidOperationException(BuildDockerFailureMessage(socketPath, tunnelError, pingException), pingException);
                 }
+
+                txtStatus.Text = "Docker Engine 응답 확인 완료";
+                failureStage = "Docker Engine 응답 확인";
+
+                // 연결된 원격 호스트의 워크스페이스를 추가합니다.
+                _mainVm.SheetManager.AddWorkspace(remoteProfile, remoteDockerService, activate: true, createInitialSheet: true);
+                connectionHandled = true;
+
+                _dialogService.ShowInfo($"'{profileName}' 서버에 연결되었습니다.", "연결 성공");
+                this.DialogResult = true;
+                this.Close();
             }
             catch (Exception ex)
             {
-                _dialogService.ShowMessage($"연결 실패:\n{ex.Message}");
+                _dialogService.ShowMessage($"연결 실패 단계: {failureStage}\n\n{ex.Message}");
             }
             finally
             {
+                if (!connectionHandled)
+                {
+                    if (remoteDockerService != null && !_mainVm.DockerServiceFactory.Release(remoteDockerService))
+                    {
+                        remoteDockerService.Dispose();
+                    }
+
+                    if (tunnelAcquired)
+                        SshTunnelManager.ReleaseTunnel(ip, sshPort, user, socketPath);
+                }
+
                 btnConnect.IsEnabled = true;
                 txtStatus.Visibility = Visibility.Collapsed;
             }
         }
+
+        private static string ClassifyDockerFailureStage(string tunnelError)
+        {
+            if (ContainsIgnoreCase(tunnelError, "Permission denied"))
+                return "원격 Docker 소켓 권한 확인";
+
+            if (ContainsIgnoreCase(tunnelError, "No such file") ||
+                ContainsIgnoreCase(tunnelError, "connect failed"))
+                return "원격 Docker 소켓 경로 확인";
+
+            return "Docker Engine 응답 확인";
+        }
+
+        private static string BuildDockerFailureMessage(string socketPath, string tunnelError, Exception exception)
+        {
+            if (ContainsIgnoreCase(tunnelError, "Permission denied"))
+            {
+                return $"SSH 연결은 성공했지만 계정에 Docker 소켓 접근 권한이 없습니다.\n" +
+                       $"소켓: {socketPath}\n" +
+                       "원격 계정을 docker 그룹에 추가한 뒤 다시 로그인하거나, 해당 소켓의 소유권/권한을 확인해 주세요.";
+            }
+
+            if (ContainsIgnoreCase(tunnelError, "No such file"))
+            {
+                return $"SSH 연결은 성공했지만 원격 Docker 소켓을 찾을 수 없습니다.\n" +
+                       $"입력 경로: {socketPath}\n" +
+                       "Docker Engine 실행 여부를 확인하고, Rootless Docker라면 /run/user/사용자ID/docker.sock 경로를 사용해 보세요.";
+            }
+
+            if (ContainsIgnoreCase(tunnelError, "connect failed"))
+            {
+                return $"SSH 연결은 성공했지만 원격 Docker 소켓에 연결하지 못했습니다.\n" +
+                       $"소켓: {socketPath}\n" +
+                       $"SSH 상세: {tunnelError.Trim()}";
+            }
+
+            return $"SSH 터널과 소켓 경로는 설정되었지만 Docker Engine이 API 요청에 응답하지 않았습니다.\n" +
+                   $"소켓: {socketPath}\n" +
+                   $"상세: {exception.GetBaseException().Message}\n" +
+                   "원격 Docker 서비스가 실행 중인지 확인해 주세요.";
+        }
+
+        private static bool ContainsIgnoreCase(string value, string expected)
+            => value.Contains(expected, StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -1,5 +1,6 @@
-using DockerDiagram.Helpers;
 using DockerDiagram.ViewModels;
+using DockerDiagram.Models;
+using System.Threading.Tasks;
 using System;
 using System.Text;
 using System.Windows;
@@ -8,17 +9,18 @@ namespace DockerDiagram.Views
 {
     public partial class ContainerExecWindow : Window
     {
-        private readonly IDockerService _dockerService;
-        private readonly NodeViewModel _node;
+        private readonly Func<string, Task<ExecCommandResult>> _executeCommand;
 
-        public ContainerExecWindow(IDockerService dockerService, NodeViewModel node)
+        public ContainerExecWindow(
+            string containerName,
+            string containerId,
+            Func<string, Task<ExecCommandResult>> executeCommand)
         {
             InitializeComponent();
-            _dockerService = dockerService;
-            _node = node;
+            _executeCommand = executeCommand ?? throw new ArgumentNullException(nameof(executeCommand));
 
-            ContainerTitleText.Text = $"Exec Command - {_node.Name}";
-            ContainerIdText.Text = _node.ContainerId;
+            ContainerTitleText.Text = $"Exec Command - {containerName}";
+            ContainerIdText.Text = containerId;
             CommandBox.Text = "pwd && ls -la";
             CommandBox.Focus();
             CommandBox.SelectAll();
@@ -40,7 +42,7 @@ namespace DockerDiagram.Views
                 StatusText.Text = "Running...";
 
                 var startedAt = DateTime.Now;
-                var result = await _dockerService.ExecuteCommandWithOutputAsync(_node.ContainerId, command);
+                var result = await _executeCommand(command);
                 var elapsed = DateTime.Now - startedAt;
 
                 var output = new StringBuilder();

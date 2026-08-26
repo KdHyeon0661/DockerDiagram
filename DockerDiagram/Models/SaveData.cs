@@ -1,6 +1,6 @@
-﻿using System;
+using DockerDiagram.Diagram;
+using System;
 using System.Collections.Generic;
-using DockerDiagram.Helpers;
 
 namespace DockerDiagram.Models
 {
@@ -10,7 +10,7 @@ namespace DockerDiagram.Models
     /// </summary>
     public class DiagramFile
     {
-        public string Version { get; set; } = "1.35"; // 파일 구조의 버전 (하위 호환성 체크용)
+        public string Version { get; set; } = "1.36"; // 파일 구조의 버전 (하위 호환성 체크용)
         public DateTime SavedAt { get; set; } = DateTime.Now; // 파일이 마지막으로 저장된 시간
         public List<SheetData> Sheets { get; set; } = new List<SheetData>(); // 파일에 포함된 모든 시트(도화지) 목록
         public int ActiveSheetIndex { get; set; } = 0; // 파일을 다시 열었을 때 포커스를 맞출 시트의 인덱스
@@ -28,9 +28,10 @@ namespace DockerDiagram.Models
         // --- 화면 뷰(줌/팬) 상태 ---
         public double MapWidth { get; set; } // 도화지 전체 가로 길이
         public double MapHeight { get; set; } // 도화지 전체 세로 길이
-        public double OffsetX { get; set; } // 화면 가로 스크롤 위치
-        public double OffsetY { get; set; } // 화면 세로 스크롤 위치
         public double Scale { get; set; } // 화면 확대/축소 비율
+        public bool HasViewportCenter { get; set; } // 마지막 화면 중심 정보가 저장되어 있는지 여부
+        public double ViewportCenterX { get; set; } // 화면 중앙이 가리키던 캔버스 X 좌표
+        public double ViewportCenterY { get; set; } // 화면 중앙이 가리키던 캔버스 Y 좌표
         public string ComposeRawYaml { get; set; } = string.Empty; // Compose import 원본 YAML
 
         // --- 다이어그램 구성 요소 데이터 ---
@@ -69,9 +70,11 @@ namespace DockerDiagram.Models
         public Dictionary<string, string> VolumeDriverOptions { get; set; } = new Dictionary<string, string>(); // 볼륨 드라이버 옵션
         public string RestartPolicy { get; set; } = "no"; // 재시작 정책 (no, always 등)
         public string ComposeProjectName { get; set; } = string.Empty;
+        public string ComposeProjectIdentity { get; set; } = string.Empty;
         public string ComposeServiceName { get; set; } = string.Empty; // 원본 compose service 키
         public int ComposeContainerNumber { get; set; }
         public string ComposeLayoutInstanceId { get; set; } = string.Empty;
+        public string ComposePlacementWarning { get; set; } = string.Empty;
         public string ComposeRawServiceYaml { get; set; } = string.Empty; // 원본 service YAML
         public string ComposeRawVolumeYaml { get; set; } = string.Empty; // 원본 volume YAML
         public bool IsSwarmService { get; set; } // Docker Swarm service를 읽기 전용 노드로 표시
@@ -105,6 +108,9 @@ namespace DockerDiagram.Models
         public PortDirection TargetDir { get; set; } // 도착점 노드에 선이 들어간 방향
 
         public RelationType RelationType { get; set; } // 연결의 논리적 의미 (네트워크 연결, 볼륨 마운트 등)
+        public bool IsBidirectional { get; set; }
+        public string SourceDataLabel { get; set; } = string.Empty;
+        public string TargetDataLabel { get; set; } = string.Empty;
 
         public string? MountPath { get; set; } // 볼륨 연결인 경우 컨테이너 내부의 마운트 경로
         public string? IpAddress { get; set; } // 네트워크 연결인 경우 할당된 정적 IP (있을 경우)
@@ -128,6 +134,7 @@ namespace DockerDiagram.Models
         public bool EnableIPv6 { get; set; }
         public bool External { get; set; }
         public string ComposeNetworkName { get; set; } = string.Empty;
+        public string ComposeProjectIdentity { get; set; } = string.Empty;
         public string ComposeLayoutInstanceId { get; set; } = string.Empty;
         public string ComposeRawNetworkYaml { get; set; } = string.Empty;
         public Dictionary<string, string> Labels { get; set; } = new();

@@ -1,4 +1,5 @@
-using DockerDiagram.Helpers;
+using DockerDiagram.Contracts;
+using DockerDiagram.Common;
 using DockerDiagram.Models;
 using System.Threading.Tasks;
 using System.Windows;

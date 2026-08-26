@@ -1,12 +1,49 @@
-﻿using System.Collections.Generic;
+using DockerDiagram.Diagram;
+using DockerDiagram.Contracts;
+using DockerDiagram.Common;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Windows;
-using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
+    internal sealed class ConnectorCollection : ObservableCollection<ConnectorViewModel>
+    {
+        protected override void InsertItem(int index, ConnectorViewModel item)
+        {
+            if (index < 0 || index > Count) throw new ArgumentOutOfRangeException(nameof(index));
+            item.Attach();
+            base.InsertItem(index, item);
+        }
+
+        protected override void RemoveItem(int index)
+        {
+            this[index].Detach();
+            base.RemoveItem(index);
+        }
+
+        protected override void SetItem(int index, ConnectorViewModel item)
+        {
+            if (index < 0 || index >= Count) throw new ArgumentOutOfRangeException(nameof(index));
+
+            ConnectorViewModel previous = this[index];
+            if (ReferenceEquals(previous, item)) return;
+
+            previous.Detach();
+            item.Attach();
+            base.SetItem(index, item);
+        }
+
+        protected override void ClearItems()
+        {
+            foreach (ConnectorViewModel connector in this)
+                connector.Detach();
+            base.ClearItems();
+        }
+    }
+
     /// <summary>
     /// 다이어그램이 그려지는 하나의 도화지(시트) 상태를 관리하는 뷰모델입니다.
     /// 노드, 그룹, 연결선 데이터를 관리하고 화면의 줌/팬(이동) 및 선택 상태를 제어합니다.
@@ -52,11 +89,14 @@ namespace DockerDiagram.ViewModels
         private readonly IDialogService _dialogService;
 
         private string _title = "Sheet";
-        private double _mapWidth = 2000;
-        private double _mapHeight = 1500;
-        private double _scale = 1.0;
+        private double _mapWidth = 5000;
+        private double _mapHeight = 3000;
+        private double _scale = 1.2;
         private double _offsetX = 0;
         private double _offsetY = 0;
+        private bool _hasViewportCenter;
+        private double _viewportCenterX;
+        private double _viewportCenterY;
         private bool _isRuntimeUnavailable;
         private string _runtimeStatusMessage = string.Empty;
 
@@ -97,7 +137,7 @@ namespace DockerDiagram.ViewModels
 
         #region Map Data (Collections)
         public ObservableCollection<NodeViewModel> Nodes { get; set; } = new(); // 도화지 위의 모든 노드(컨테이너, 볼륨 등)
-        public ObservableCollection<ConnectorViewModel> Connectors { get; set; } = new(); // 노드들을 연결하는 모든 선
+        public ObservableCollection<ConnectorViewModel> Connectors { get; } = new ConnectorCollection(); // 노드들을 연결하는 모든 선
         public ObservableCollection<GroupViewModel> Groups { get; set; } = new(); // 노드들을 묶는 모든 그룹(네트워크 등)
         #endregion
 
@@ -108,11 +148,63 @@ namespace DockerDiagram.ViewModels
         }
 
         #region Map Settings & View State (Zoom/Pan)
-        public double MapWidth { get => _mapWidth; set => SetProperty(ref _mapWidth, value); } // 도화지의 전체 가로 길이
-        public double MapHeight { get => _mapHeight; set => SetProperty(ref _mapHeight, value); } // 도화지의 전체 세로 길이
-        public double Scale { get => _scale; set => SetProperty(ref _scale, value); } // 현재 화면의 확대/축소 비율
+        public const double MapInputScale = 10.0;
+        public const double MinimumMapInputWidth = 500.0;
+        public const double MinimumMapInputHeight = 300.0;
+        public const double MinimumMapWidth = MinimumMapInputWidth * MapInputScale;
+        public const double MinimumMapHeight = MinimumMapInputHeight * MapInputScale;
+        public const double MaximumScale = 1.8;
+
+        public double MapWidth { get => _mapWidth; set => SetProperty(ref _mapWidth, Math.Max(MinimumMapWidth, value)); } // 도화지의 전체 가로 길이
+        public double MapHeight { get => _mapHeight; set => SetProperty(ref _mapHeight, Math.Max(MinimumMapHeight, value)); } // 도화지의 전체 세로 길이
+        public double Scale { get => _scale; set => SetProperty(ref _scale, Math.Min(MaximumScale, value)); } // 현재 화면의 확대/축소 비율
         public double OffsetX { get => _offsetX; set => SetProperty(ref _offsetX, value); } // 화면의 가로 스크롤 위치
         public double OffsetY { get => _offsetY; set => SetProperty(ref _offsetY, value); } // 화면의 세로 스크롤 위치
+        public bool HasViewportCenter { get => _hasViewportCenter; set => _hasViewportCenter = value; }
+        public double ViewportCenterX { get => _viewportCenterX; set => _viewportCenterX = value; }
+        public double ViewportCenterY { get => _viewportCenterY; set => _viewportCenterY = value; }
+        public bool IsViewportInitialized { get; set; } // 실행 중 최초 화면 위치 복원 여부이며 파일에는 저장하지 않음
+
+        public bool CaptureViewportCenter(double viewportWidth, double viewportHeight)
+        {
+            if (!double.IsFinite(viewportWidth) || !double.IsFinite(viewportHeight) ||
+                viewportWidth <= 0 || viewportHeight <= 0 ||
+                !double.IsFinite(Scale) || Scale <= 0)
+            {
+                return false;
+            }
+
+            double centerX = ((viewportWidth / 2.0) - OffsetX) / Scale;
+            double centerY = ((viewportHeight / 2.0) - OffsetY) / Scale;
+            if (!double.IsFinite(centerX) || !double.IsFinite(centerY))
+                return false;
+
+            bool changed = !HasViewportCenter ||
+                           Math.Abs(ViewportCenterX - centerX) > 0.001 ||
+                           Math.Abs(ViewportCenterY - centerY) > 0.001;
+
+            ViewportCenterX = centerX;
+            ViewportCenterY = centerY;
+            HasViewportCenter = true;
+            return changed;
+        }
+
+        public bool RestoreViewportOffset(double viewportWidth, double viewportHeight)
+        {
+            if (!HasViewportCenter ||
+                !double.IsFinite(viewportWidth) || !double.IsFinite(viewportHeight) ||
+                viewportWidth <= 0 || viewportHeight <= 0 ||
+                !double.IsFinite(Scale) || Scale <= 0)
+            {
+                return false;
+            }
+
+            double centerX = Math.Clamp(ViewportCenterX, 0, MapWidth);
+            double centerY = Math.Clamp(ViewportCenterY, 0, MapHeight);
+            OffsetX = (viewportWidth / 2.0) - (centerX * Scale);
+            OffsetY = (viewportHeight / 2.0) - (centerY * Scale);
+            return true;
+        }
         #endregion
 
         #region Selection Management
@@ -310,6 +402,37 @@ namespace DockerDiagram.ViewModels
                 source.RefreshConnections();
                 target.RefreshConnections();
             }
+        }
+
+        public bool TryAddDirectedConnection(
+            NodeViewModel source,
+            NodeViewModel target,
+            RelationType relationType,
+            string? mountPath = null,
+            string? ipAddress = null,
+            bool allowSelfConnection = false)
+        {
+            if (!allowSelfConnection && ReferenceEquals(source, target))
+            {
+                return false;
+            }
+
+            bool exists = Connectors.Any(connector =>
+                connector.RelationType == relationType &&
+                ReferenceEquals(connector.Source, source) &&
+                ReferenceEquals(connector.Target, target));
+            if (exists)
+            {
+                return false;
+            }
+
+            Connectors.Add(new ConnectorViewModel(source, target, PortDirection.Right, PortDirection.Left, _dialogService)
+            {
+                RelationType = relationType,
+                MountPath = mountPath,
+                IpAddress = ipAddress
+            });
+            return true;
         }
         #endregion
 

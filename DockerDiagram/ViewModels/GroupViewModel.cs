@@ -1,4 +1,6 @@
-﻿using DockerDiagram.Helpers;
+using DockerDiagram.Infrastructure;
+using DockerDiagram.Contracts;
+using DockerDiagram.Common;
 using DockerDiagram.Models;
 using System;
 using System.Collections.Generic;
@@ -16,7 +18,7 @@ namespace DockerDiagram.ViewModels
     /// 단순히 시각적인 정리를 위한 '일반 폴더(General)' 역할뿐만 아니라, 컨테이너들을 묶어 
     /// 실제 도커 통신망을 구성하고 제어하는 **'도커 네트워크(Network)'**의 핵심 역할도 함께 수행합니다.
     /// </summary>
-    public class GroupViewModel : ConnectableItemViewModel
+    public partial class GroupViewModel : ConnectableItemViewModel
     {
         public const double MinimumWidth = 300;
         public const double MinimumHeight = 200;
@@ -53,6 +55,7 @@ namespace DockerDiagram.ViewModels
         public bool EnableIPv6 { get; set; }
         public bool External { get; set; }
         public string ComposeNetworkName { get; set; } = "";
+        public string ComposeProjectIdentity { get; set; } = "";
         public string ComposeLayoutInstanceId { get; set; } = "";
         public string ComposeRawNetworkYaml { get; set; } = "";
         public Dictionary<string, string> Labels { get; set; } = new();
@@ -514,6 +517,8 @@ namespace DockerDiagram.ViewModels
 
             foreach (var conn in ParentSheet.Connectors)
             {
+                if (conn.RelationType != RelationType.Dependency) continue;
+
                 if (conn.Source is NodeViewModel sourceNode && conn.Target is NodeViewModel targetNode)
                 {
                     // 그룹 안의 컨테이너들끼리의 연결선만 분석

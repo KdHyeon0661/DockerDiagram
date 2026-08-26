@@ -1,4 +1,4 @@
-﻿using DockerDiagram.Helpers;
+﻿using DockerDiagram.Common;
 
 namespace DockerDiagram.Models
 {

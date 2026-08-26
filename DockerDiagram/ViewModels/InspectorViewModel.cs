@@ -1,11 +1,13 @@
-﻿using System;
+﻿using DockerDiagram.Diagram;
+using DockerDiagram.Contracts;
+using DockerDiagram.Common;
+using System;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using DockerDiagram.Models;
-using DockerDiagram.Helpers;
 
 namespace DockerDiagram.ViewModels
 {
@@ -20,6 +22,8 @@ namespace DockerDiagram.ViewModels
         // 커맨드
         public ICommand ClosePanelCommand { get; }
         public ICommand DeleteCommand { get; }
+        public ICommand SetConnectorDirectionCommand { get; }
+        public ICommand ReverseConnectorDirectionCommand { get; }
         public AsyncRelayCommand ReconnectCommand { get; }
 
         public InspectorViewModel(MainViewModel mainVm, IDialogService dialogService)
@@ -29,7 +33,80 @@ namespace DockerDiagram.ViewModels
 
             ClosePanelCommand = new RelayCommand(_ => ClearSelection());
             DeleteCommand = new AsyncRelayCommand(_ => DeleteSelectedAsync());
+            SetConnectorDirectionCommand = new RelayCommand(SetConnectorDirection);
+            ReverseConnectorDirectionCommand = new RelayCommand(_ => ReverseConnectorDirection());
             ReconnectCommand = new AsyncRelayCommand(_ => ReconnectSelectedAsync(), _ => IsSelectedRuntimeDisconnected);
+        }
+
+        private readonly record struct ConnectorDirectionState(
+            IConnectableItem Source,
+            PortDirection SourceDirection,
+            IConnectableItem Target,
+            PortDirection TargetDirection,
+            bool IsBidirectional,
+            string SourceDataLabel,
+            string TargetDataLabel);
+
+        private static ConnectorDirectionState CaptureDirection(ConnectorViewModel connector) =>
+            new(
+                connector.Source,
+                connector.SourceDir,
+                connector.Target,
+                connector.TargetDir,
+                connector.IsBidirectional,
+                connector.SourceDataLabel,
+                connector.TargetDataLabel);
+
+        private static void ApplyDirection(ConnectorViewModel connector, ConnectorDirectionState state)
+        {
+            connector.UpdateConnection(state.Source, state.SourceDirection, state.Target, state.TargetDirection);
+            connector.IsBidirectional = state.IsBidirectional;
+            connector.SourceDataLabel = state.SourceDataLabel;
+            connector.TargetDataLabel = state.TargetDataLabel;
+        }
+
+        private void SetConnectorDirection(object? parameter)
+        {
+            if (SelectedElement is not ConnectorViewModel connector) return;
+
+            bool isBidirectional = string.Equals(parameter?.ToString(), "Bidirectional", StringComparison.Ordinal);
+            if (connector.IsBidirectional == isBidirectional) return;
+
+            ConnectorDirectionState before = CaptureDirection(connector);
+            connector.IsBidirectional = isBidirectional;
+            ConnectorDirectionState after = CaptureDirection(connector);
+            RecordConnectorDirectionChange(connector, before, after, "Change connector direction mode");
+        }
+
+        private void ReverseConnectorDirection()
+        {
+            if (SelectedElement is not ConnectorViewModel connector) return;
+
+            ConnectorDirectionState before = CaptureDirection(connector);
+            connector.ReverseDirection();
+            ConnectorDirectionState after = CaptureDirection(connector);
+            RecordConnectorDirectionChange(connector, before, after, "Reverse connector direction");
+        }
+
+        private void RecordConnectorDirectionChange(
+            ConnectorViewModel connector,
+            ConnectorDirectionState before,
+            ConnectorDirectionState after,
+            string description)
+        {
+            _mainVm.History.RecordExecuted(new DelegateHistoryCommand(
+                description,
+                affectsDocker: false,
+                undo: () =>
+                {
+                    ApplyDirection(connector, before);
+                    return Task.CompletedTask;
+                },
+                redo: () =>
+                {
+                    ApplyDirection(connector, after);
+                    return Task.CompletedTask;
+                }));
         }
 
         // 캔버스 위에서 현재 선택된 요소(노드, 선, 그룹 등)
@@ -66,11 +143,19 @@ namespace DockerDiagram.ViewModels
                     if (nodeVm.IsDockerConnected && !nodeVm.IsKubernetesResource)
                         _ = nodeVm.RefreshDetailsAsync();
                 }
+                else if (_selectedElement is GroupViewModel { Type: GroupType.Network, IsDockerConnected: true } networkVm)
+                {
+                    _ = networkVm.RefreshNetworkDetailsAsync();
+                }
             }
         }
 
         // 상세 정보 사이드 패널의 열림/닫힘 상태
         public bool IsDetailPanelOpen => _selectedElement != null;
+        public NodeViewModel? SelectedOfflineSnapshotNode =>
+            SelectedElement is NodeViewModel { IsOfflineSnapshot: true } node ? node : null;
+        public ICommand? SelectedOfflineSnapshotDetailCommand =>
+            SelectedOfflineSnapshotNode?.OpenDetailWindowCommand;
         public NodeViewModel? SelectedFailedCreationNode =>
             SelectedElement is NodeViewModel { IsCreationFailed: true } node ? node : null;
         public bool IsSelectedCreationFailed => SelectedFailedCreationNode != null;
@@ -83,6 +168,8 @@ namespace DockerDiagram.ViewModels
         public bool IsSelectedOfflineSnapshot => SelectedElement is NodeViewModel { IsOfflineSnapshot: true };
         public bool IsSelectedRuntimeDisconnected => IsSelectedDockerDisconnected && !IsSelectedOfflineSnapshot;
         public bool IsSelectedDockerConnected => !IsSelectedDockerDisconnected;
+        public bool CanDeleteSelected =>
+            SelectedElement is not GroupViewModel { Type: GroupType.Network, IsBuiltInDockerNetwork: true };
 
         public void ClearSelection() => SelectedElement = null;
 
@@ -95,7 +182,8 @@ namespace DockerDiagram.ViewModels
                 e.PropertyName == nameof(NodeViewModel.IsCreationFailed) ||
                 e.PropertyName == nameof(NodeViewModel.LastCreationError) ||
                 e.PropertyName == nameof(GroupViewModel.IsDockerConnected) ||
-                e.PropertyName == nameof(GroupViewModel.IsDockerDisconnected))
+                e.PropertyName == nameof(GroupViewModel.IsDockerDisconnected) ||
+                e.PropertyName == nameof(GroupViewModel.IsBuiltInDockerNetwork))
             {
                 RaiseSelectionStateChanged();
             }
@@ -105,8 +193,11 @@ namespace DockerDiagram.ViewModels
         {
             OnPropertyChanged(nameof(IsSelectedDockerDisconnected));
             OnPropertyChanged(nameof(IsSelectedDockerConnected));
+            OnPropertyChanged(nameof(CanDeleteSelected));
             OnPropertyChanged(nameof(IsSelectedOfflineSnapshot));
             OnPropertyChanged(nameof(IsSelectedRuntimeDisconnected));
+            OnPropertyChanged(nameof(SelectedOfflineSnapshotNode));
+            OnPropertyChanged(nameof(SelectedOfflineSnapshotDetailCommand));
             OnPropertyChanged(nameof(SelectedFailedCreationNode));
             OnPropertyChanged(nameof(IsSelectedCreationFailed));
             ReconnectCommand?.RaiseCanExecuteChanged();
@@ -123,6 +214,9 @@ namespace DockerDiagram.ViewModels
 
             if (reconnected)
             {
+                if (SelectedElement is GroupViewModel { Type: GroupType.Network } network)
+                    await network.RefreshNetworkDetailsAsync();
+
                 _mainVm.Explorer.UpdateAvailableItems();
                 RaiseSelectionStateChanged();
             }
@@ -160,13 +254,20 @@ namespace DockerDiagram.ViewModels
                         "[취소(Cancel)] : 작업 취소",
                         "볼륨 연결 해제");
 
-                    if (result == System.Windows.MessageBoxResult.Cancel) return;
+                    if (result == DialogChoice.Cancel) return;
 
-                    if (result == System.Windows.MessageBoxResult.Yes)
+                    if (result == DialogChoice.Yes)
                     {
-                        if (conn.Source is NodeViewModel srcNode && conn.Target is NodeViewModel tgtNode)
+                        NodeViewModel? containerNode = new[] { conn.Source, conn.Target }
+                            .OfType<NodeViewModel>()
+                            .FirstOrDefault(node => node.Type == NodeType.Container);
+                        NodeViewModel? volumeNode = new[] { conn.Source, conn.Target }
+                            .OfType<NodeViewModel>()
+                            .FirstOrDefault(node => node.Type == NodeType.Volume);
+
+                        if (containerNode != null && volumeNode != null)
                         {
-                            bool success = await UnmountVolumeFromContainerAsync(srcNode, tgtNode, containerService);
+                            bool success = await UnmountVolumeFromContainerAsync(containerNode, volumeNode, containerService);
                             if (success) sheet.Connectors.Remove(conn);
                         }
                         else
@@ -219,9 +320,9 @@ namespace DockerDiagram.ViewModels
                     "[취소(Cancel)] : 취소",
                     "삭제 옵션");
 
-                if (result == System.Windows.MessageBoxResult.Cancel) return;
+                if (result == DialogChoice.Cancel) return;
 
-                bool deleteDocker = result == System.Windows.MessageBoxResult.Yes;
+                bool deleteDocker = result == DialogChoice.Yes;
                 bool forceVolumeDelete = false;
 
                 if (deleteDocker && node.Type == NodeType.Volume && !node.VolumeExternal)
@@ -240,6 +341,14 @@ namespace DockerDiagram.ViewModels
             // =========================================================
             else if (SelectedElement is GroupViewModel group)
             {
+                if (group.Type == GroupType.Network && group.IsBuiltInDockerNetwork)
+                {
+                    _dialogService.ShowInfo(
+                        $"'{group.DockerNetworkName}' is a built-in Docker network and cannot be deleted.",
+                        "Delete Network");
+                    return;
+                }
+
                 if (group.IsDockerDisconnected)
                 {
                     if (!_dialogService.ShowConfirm(
@@ -288,7 +397,7 @@ namespace DockerDiagram.ViewModels
             bool keepBackup = false;
             string tempHostPath = Path.Combine(Path.GetTempPath(), "docker_backup_" + Guid.NewGuid());
 
-            Mouse.OverrideCursor = Cursors.Wait;
+            _dialogService.SetBusyCursor(true);
             try
             {
                 if (containerNode.IsRunning) await containerService.StopContainerAsync(containerId);
@@ -370,7 +479,7 @@ namespace DockerDiagram.ViewModels
             }
             finally
             {
-                Mouse.OverrideCursor = null;
+                _dialogService.SetBusyCursor(false);
                 if (!keepBackup && Directory.Exists(tempHostPath))
                 {
                     try { Directory.Delete(tempHostPath, true); } catch { }

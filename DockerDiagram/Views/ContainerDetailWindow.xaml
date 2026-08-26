@@ -10,6 +10,33 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+        <Style x:Key="ContainerControlButtonBase" TargetType="Button">
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#E3E7EB"/>
+                    <Setter Property="Foreground" Value="#68737D"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="StartContainerButton" TargetType="Button" BasedOn="{StaticResource ContainerControlButtonBase}">
+            <Setter Property="Background" Value="#28A745"/>
+        </Style>
+        <Style x:Key="StopContainerButton" TargetType="Button" BasedOn="{StaticResource ContainerControlButtonBase}">
+            <Setter Property="Background" Value="#DC3545"/>
+        </Style>
+        <Style x:Key="PauseContainerButton" TargetType="Button" BasedOn="{StaticResource ContainerControlButtonBase}">
+            <Setter Property="Background" Value="#FFC107"/>
+            <Setter Property="Foreground" Value="#333333"/>
+        </Style>
+        <Style x:Key="RestartContainerButton" TargetType="Button" BasedOn="{StaticResource ContainerControlButtonBase}">
+            <Setter Property="Background" Value="#17A2B8"/>
+        </Style>
     </Window.Resources>
 
     <Grid>
@@ -39,7 +66,7 @@
             </Grid>
         </Border>
 
-        <TabControl Grid.Row="1" Margin="15" Background="White" BorderBrush="#DDD" BorderThickness="1">
+        <TabControl x:Name="DetailTabControl" Grid.Row="1" Margin="15" Background="White" BorderBrush="#DDD" BorderThickness="1">
 
             <TabItem Header="☷ Swarm Service" FontSize="14" Padding="15,8"
                      Visibility="{Binding IsSwarmService, Converter={StaticResource BooleanToVisibilityConverter}}">
@@ -328,6 +355,16 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
 
+                        <TextBlock Text="Container Controls" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
+                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="5" Margin="0,0,0,20">
+                            <UniformGrid Rows="1">
+                                <Button Command="{Binding StartCommand}" Content="▶ Start" Style="{StaticResource StartContainerButton}"/>
+                                <Button Command="{Binding StopCommand}" Content="■ Stop" Style="{StaticResource StopContainerButton}"/>
+                                <Button Command="{Binding PauseCommand}" Content="⏸ Pause" Style="{StaticResource PauseContainerButton}" ToolTip="Pause/Unpause"/>
+                                <Button Command="{Binding RestartCommand}" Content="🔄 Restart" Style="{StaticResource RestartContainerButton}"/>
+                            </UniformGrid>
+                        </Border>
+
                         <TextBlock Text="Resource Usage (Live)" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
                         <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,20">
                             <Grid>
@@ -340,33 +377,36 @@
                                 <Grid Grid.Column="0">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="60"/>
+                                        <RowDefinition Height="85"/>
                                     </Grid.RowDefinitions>
                                     <Grid Grid.Row="0" Margin="0,0,0,2">
                                         <TextBlock Text="CPU Usage" Foreground="#888" FontSize="12"/>
-                                        <TextBlock Text="{Binding CpuUsage}" Foreground="#28a745" FontWeight="Bold" FontFamily="Consolas" HorizontalAlignment="Right"/>
+                                        <TextBlock Text="{Binding Monitoring.CpuUsage}" Foreground="#28a745" FontWeight="Bold" FontFamily="Consolas" HorizontalAlignment="Right"/>
                                     </Grid>
 
-                                    <oxy:PlotView Grid.Row="1" Model="{Binding CpuPlotModel}" Background="Transparent" Margin="0,5,0,0"/>
+                                    <oxy:PlotView x:Name="cpuPlotView" Grid.Row="1" Model="{Binding Monitoring.CpuPlotModel}" Background="Transparent" Margin="0,5,0,0"/>
                                 </Grid>
 
                                 <Grid Grid.Column="2">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="60"/>
+                                        <RowDefinition Height="85"/>
                                     </Grid.RowDefinitions>
                                     <Grid Grid.Row="0" Margin="0,0,0,2">
                                         <TextBlock Text="Memory Usage" Foreground="#888" FontSize="12"/>
-                                        <TextBlock Text="{Binding MemoryUsage}" Foreground="#007ACC" FontWeight="Bold" FontFamily="Consolas" HorizontalAlignment="Right"/>
+                                        <TextBlock Text="{Binding Monitoring.MemoryUsage}" Foreground="#007ACC" FontWeight="Bold" FontFamily="Consolas" HorizontalAlignment="Right"/>
                                     </Grid>
 
-                                    <oxy:PlotView Grid.Row="1" Model="{Binding MemoryPlotModel}" Background="Transparent" Margin="0,5,0,0"/>
+                                    <oxy:PlotView x:Name="memoryPlotView" Grid.Row="1" Model="{Binding Monitoring.MemoryPlotModel}" Background="Transparent" Margin="0,5,0,0"/>
                                 </Grid>
                             </Grid>
                         </Border>
 
-                        <TextBlock Text="Live Resource Limiter (동적 자원 제한)" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                        <Border Background="#F8F0FF" BorderBrush="#E5D0FF" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,20">
+                        <Expander IsExpanded="False" Margin="0,0,0,8">
+                        <Expander.Header>
+                            <TextBlock Text="Runtime Resource Limits" FontWeight="Bold" FontSize="14" Foreground="#555"/>
+                        </Expander.Header>
+                        <Border Background="#F7F8FA" BorderBrush="#D9DEE3" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,8,0,12">
                             <StackPanel>
                                 <Grid Margin="0,0,0,15">
                                     <Grid.RowDefinitions>
@@ -381,15 +421,22 @@
 
                                     <TextBlock Text="CPU" FontWeight="Bold" Foreground="#333" VerticalAlignment="Center"/>
 
-                                    <Slider Grid.Column="1" Minimum="0.1" Maximum="{Binding MaxCpuCount}" IsSnapToTickEnabled="False" 
-                                            SmallChange="0.1" LargeChange="1.0" Value="{Binding TargetCpuCount}" Margin="10,0" VerticalAlignment="Center"/>
+                                    <Slider Grid.Column="1" Minimum="0.1" Maximum="{Binding Monitoring.MaxCpuCount}" IsSnapToTickEnabled="False"
+                                            SmallChange="{Binding Monitoring.CpuAdjustmentStep}" LargeChange="1.0"
+                                            Value="{Binding Monitoring.CpuSliderValue}" Margin="10,0" VerticalAlignment="Center"/>
 
                                     <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                        <TextBox Text="{Binding TargetCpuCount, UpdateSourceTrigger=PropertyChanged}" Width="45" Padding="2" TextAlignment="Right" VerticalContentAlignment="Center" BorderBrush="#CCC"/>
+                                        <TextBox Text="{Binding Monitoring.TargetCpuCount, UpdateSourceTrigger=PropertyChanged}" Width="45" Padding="2" TextAlignment="Right" VerticalContentAlignment="Center" BorderBrush="#CCC"/>
                                         <TextBlock Text=" Core" FontWeight="SemiBold" Foreground="#6f42c1" VerticalAlignment="Center" Margin="3,0,0,0"/>
                                     </StackPanel>
 
-                                    <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Text="정확한 값을 직접 입력하거나 슬라이더로 대략적으로 조절하세요." FontSize="11" Foreground="#888" Margin="10,5,0,0"/>
+                                    <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="10,6,0,0">
+                                        <TextBlock Text="Step:" FontSize="11" Foreground="#777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <RadioButton Content="0.25" GroupName="CpuResourceStep" IsChecked="{Binding Monitoring.IsCpuStepQuarter, Mode=TwoWay}" FontSize="11" Margin="0,0,10,0"/>
+                                        <RadioButton Content="0.5" GroupName="CpuResourceStep" IsChecked="{Binding Monitoring.IsCpuStepHalf, Mode=TwoWay}" FontSize="11" Margin="0,0,10,0"/>
+                                        <RadioButton Content="1" GroupName="CpuResourceStep" IsChecked="{Binding Monitoring.IsCpuStepOne, Mode=TwoWay}" FontSize="11"/>
+                                        <TextBlock Text=" Core" FontSize="11" Foreground="#777" VerticalAlignment="Center"/>
+                                    </StackPanel>
                                 </Grid>
 
                                 <Grid Margin="0,0,0,15">
@@ -405,18 +452,26 @@
 
                                     <TextBlock Text="Memory" FontWeight="Bold" Foreground="#333" VerticalAlignment="Center"/>
 
-                                    <Slider Grid.Column="1" Minimum="64" Maximum="{Binding MaxMemoryMb}" IsSnapToTickEnabled="False" 
-                                            SmallChange="128" LargeChange="1024" Value="{Binding TargetMemoryMb}" Margin="10,0" VerticalAlignment="Center"/>
+                                    <Slider Grid.Column="1" Minimum="64" Maximum="{Binding Monitoring.MaxMemoryMb}" IsSnapToTickEnabled="False"
+                                            SmallChange="{Binding Monitoring.MemoryAdjustmentStepMb}" LargeChange="1024"
+                                            Value="{Binding Monitoring.MemorySliderValue}" Margin="10,0" VerticalAlignment="Center"/>
 
                                     <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                        <TextBox Text="{Binding TargetMemoryMb, UpdateSourceTrigger=PropertyChanged}" Width="55" Padding="2" TextAlignment="Right" VerticalContentAlignment="Center" BorderBrush="#CCC"/>
+                                        <TextBox Text="{Binding Monitoring.TargetMemoryMb, UpdateSourceTrigger=PropertyChanged}" Width="55" Padding="2" TextAlignment="Right" VerticalContentAlignment="Center" BorderBrush="#CCC"/>
                                         <TextBlock Text=" MB" FontWeight="SemiBold" Foreground="#6f42c1" VerticalAlignment="Center" Margin="3,0,0,0"/>
                                     </StackPanel>
 
-                                    <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Text="예: 1024, 2048 등 정확한 MB 단위 용량을 직접 텍스트 박스에 입력하세요." FontSize="11" Foreground="#888" Margin="10,5,0,0"/>
+                                    <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="10,6,0,0">
+                                        <TextBlock Text="Step:" FontSize="11" Foreground="#777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <RadioButton Content="64" GroupName="MemoryResourceStep" IsChecked="{Binding Monitoring.IsMemoryStep64, Mode=TwoWay}" FontSize="11" Margin="0,0,10,0"/>
+                                        <RadioButton Content="128" GroupName="MemoryResourceStep" IsChecked="{Binding Monitoring.IsMemoryStep128, Mode=TwoWay}" FontSize="11" Margin="0,0,10,0"/>
+                                        <RadioButton Content="256" GroupName="MemoryResourceStep" IsChecked="{Binding Monitoring.IsMemoryStep256, Mode=TwoWay}" FontSize="11"/>
+                                        <TextBlock Text=" MB" FontSize="11" Foreground="#777" VerticalAlignment="Center"/>
+                                    </StackPanel>
                                 </Grid>
 
-                                <Button Command="{Binding UpdateResourcesCommand}" Content="⚡ 무중단 즉시 적용 (Apply Live)" Background="#6f42c1" Foreground="White" BorderThickness="0" Padding="15,8" Cursor="Hand" FontWeight="Bold" HorizontalAlignment="Right">
+                                <TextBlock Text="Changes are applied without restarting the container." FontSize="11" Foreground="#777" Margin="0,0,0,8" HorizontalAlignment="Right"/>
+                                <Button Command="{Binding UpdateResourcesCommand}" Content="Apply Changes" Background="#455A64" Foreground="White" BorderThickness="0" Padding="14,7" Cursor="Hand" FontWeight="SemiBold" HorizontalAlignment="Right">
                                     <Button.Resources>
                                         <Style TargetType="Border">
                                             <Setter Property="CornerRadius" Value="4"/>
@@ -425,16 +480,7 @@
                                 </Button>
                             </StackPanel>
                         </Border>
-
-                        <TextBlock Text="Container Controls" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="5" Margin="0,0,0,20">
-                            <UniformGrid Rows="1">
-                                <Button Command="{Binding StartCommand}" Content="▶ Start" Background="#28a745" Foreground="White" BorderThickness="0" Padding="10,8" Margin="2" Cursor="Hand" FontWeight="Bold"/>
-                                <Button Command="{Binding StopCommand}" Content="■ Stop" Background="#dc3545" Foreground="White" BorderThickness="0" Padding="10,8" Margin="2" Cursor="Hand" FontWeight="Bold"/>
-                                <Button Command="{Binding PauseCommand}" Content="⏸ Pause" Background="#ffc107" Foreground="#333" BorderThickness="0" Padding="10,8" Margin="2" Cursor="Hand" FontWeight="Bold" ToolTip="Pause/Unpause"/>
-                                <Button Command="{Binding RestartCommand}" Content="🔄 Restart" Background="#17a2b8" Foreground="White" BorderThickness="0" Padding="10,8" Margin="2" Cursor="Hand" FontWeight="Bold"/>
-                            </UniformGrid>
-                        </Border>
+                        </Expander>
 
                         <TextBlock Text="Lifecycle &amp; Policies" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
                         <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,10">
@@ -444,7 +490,7 @@
                                     <TextBlock Text="{Binding StartedAt}" FontFamily="Consolas" Foreground="#333" FontSize="13" TextWrapping="Wrap"/>
                                 </StackPanel>
                                 <StackPanel Margin="0,0,10,0">
-                                    <TextBlock Text="Finished At" Foreground="#888" FontSize="11" Margin="0,0,0,2"/>
+                                    <TextBlock Text="Last Finished At" Foreground="#888" FontSize="11" Margin="0,0,0,2"/>
                                     <TextBlock Text="{Binding FinishedAt}" FontFamily="Consolas" Foreground="#333" FontSize="13" TextWrapping="Wrap"/>
                                 </StackPanel>
                                 <StackPanel Margin="0,0,10,0">
@@ -463,36 +509,121 @@
 
             <TabItem Header="⚙️ Configuration" FontSize="14" Padding="15,8"
                      Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <Grid Margin="15">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="15" Grid.IsSharedSizeScope="True">
+                        <TextBlock FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8">
+                            <Run Text="Environment Variables  "/>
+                            <Run Text="{Binding ContainerOperations.EnvironmentItems.Count, Mode=OneWay}" Foreground="#007ACC"/>
+                        </TextBlock>
+                        <Border Background="#FAFAFA" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="4" Margin="0,0,0,20">
+                            <StackPanel>
+                                <Grid Background="#F1F3F5" Height="32">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="220" SharedSizeGroup="ConfigKey"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Key" FontWeight="SemiBold" Foreground="#555" Margin="12,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="Value" FontWeight="SemiBold" Foreground="#555" Margin="12,0" VerticalAlignment="Center"/>
+                                </Grid>
+                                <ListBox ItemsSource="{Binding ContainerOperations.EnvironmentItems}"
+                                         BorderThickness="0" Background="Transparent"
+                                         ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                         PreviewKeyDown="ConfigurationList_OnPreviewKeyDown">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                            <Setter Property="Padding" Value="0"/>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid MinHeight="34">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="220" SharedSizeGroup="ConfigKey"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Key}" FontFamily="Consolas" FontSize="12" FontWeight="SemiBold" Foreground="#B42369" Margin="12,7" TextTrimming="CharacterEllipsis" ToolTip="{Binding Key}"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding Value}" FontFamily="Consolas" FontSize="12" Foreground="#333" Margin="12,7" TextTrimming="CharacterEllipsis" ToolTip="{Binding Value}"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock Text="환경 변수가 없습니다." Foreground="#888" Margin="12" FontStyle="Italic">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ContainerOperations.EnvironmentItems.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
 
-                    <TextBlock Grid.Row="0" Text="Environment Variables" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                    <ListBox Grid.Row="1" ItemsSource="{Binding EnvironmentVariables}" 
-                             BorderBrush="#EEE" Background="#FAFAFA" Margin="0,0,0,20" 
-                             ScrollViewer.VerticalScrollBarVisibility="Auto">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="12" Foreground="#D63384" Padding="3"/>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-
-                    <TextBlock Grid.Row="2" Text="Port Bindings" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                    <ListBox Grid.Row="3" ItemsSource="{Binding PortBindings}" 
-                             BorderBrush="#EEE" Background="#FAFAFA" Margin="0,0,0,0" 
-                             ScrollViewer.VerticalScrollBarVisibility="Auto">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="12" Padding="3"/>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                </Grid>
+                        <TextBlock FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8">
+                            <Run Text="Port Bindings  "/>
+                            <Run Text="{Binding ContainerOperations.PortItems.Count, Mode=OneWay}" Foreground="#007ACC"/>
+                        </TextBlock>
+                        <Border Background="#FAFAFA" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="4">
+                            <StackPanel>
+                                <Grid Background="#F1F3F5" Height="32">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="90"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Host IP" FontWeight="SemiBold" Foreground="#555" Margin="12,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="Host Port" FontWeight="SemiBold" Foreground="#555" Margin="12,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="2" Text="Container Port" FontWeight="SemiBold" Foreground="#555" Margin="12,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="3" Text="Protocol" FontWeight="SemiBold" Foreground="#555" Margin="12,0" VerticalAlignment="Center"/>
+                                </Grid>
+                                <ListBox ItemsSource="{Binding ContainerOperations.PortItems}"
+                                         BorderThickness="0" Background="Transparent"
+                                         ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                         PreviewKeyDown="ConfigurationList_OnPreviewKeyDown">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                            <Setter Property="Padding" Value="0"/>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid MinHeight="34">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="90"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding HostIp}" FontFamily="Consolas" Margin="12,7" TextTrimming="CharacterEllipsis" ToolTip="{Binding HostIp}"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding HostPort}" FontFamily="Consolas" Margin="12,7"/>
+                                                <TextBlock Grid.Column="2" Text="{Binding ContainerPort}" FontFamily="Consolas" Margin="12,7"/>
+                                                <TextBlock Grid.Column="3" Text="{Binding Protocol}" FontFamily="Consolas" Margin="12,7"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock Text="게시된 포트가 없습니다." Foreground="#888" Margin="12" FontStyle="Italic">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ContainerOperations.PortItems.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
             </TabItem>
 
             <TabItem Header="🌐 Networks" FontSize="14" Padding="15,8"
@@ -500,41 +631,63 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
                         <TextBlock Text="Connected Networks" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                        <TextBlock Text="Static addresses, aliases and endpoint driver options are applied by reconnecting this container to the selected network."
+                        <TextBlock Text="Review current addresses here. Expand a network only when its connection settings need to change."
                                    Foreground="#777" TextWrapping="Wrap" Margin="0,0,0,12"/>
-                        <ItemsControl ItemsSource="{Binding NetworkDetailList}">
+                        <ItemsControl ItemsSource="{Binding Network.Details}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Border Background="#FAFAFA" BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="4" Padding="14" Margin="0,0,0,10">
-                                        <Grid>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                                <RowDefinition Height="Auto"/>
-                                            </Grid.RowDefinitions>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="105"/>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="105"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.ColumnSpan="3" Text="{Binding NetworkName}" FontWeight="Bold" FontSize="13" Foreground="#333" VerticalAlignment="Center"/>
-                                            <Button Grid.Column="3" Content="Apply" Command="{Binding ApplyCommand}" Width="80" Padding="8,4" HorizontalAlignment="Right" Background="#007ACC" Foreground="White" BorderThickness="0"/>
-                                            <TextBlock Grid.Row="1" Text="Current IPv4" Foreground="#777" Margin="0,10,8,0" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding IPv4}" FontFamily="Consolas" Margin="0,10,12,0" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Row="1" Grid.Column="2" Text="Current IPv6" Foreground="#777" Margin="0,10,8,0" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding IPv6}" FontFamily="Consolas" Margin="0,10,0,0" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Row="2" Text="Static IPv4" Foreground="#555" Margin="0,8,8,0" VerticalAlignment="Center"/>
-                                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding StaticIPv4, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Padding="5,3" Margin="0,8,12,0"/>
-                                            <TextBlock Grid.Row="2" Grid.Column="2" Text="Static IPv6" Foreground="#555" Margin="0,8,8,0" VerticalAlignment="Center"/>
-                                            <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding StaticIPv6, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Padding="5,3" Margin="0,8,0,0"/>
-                                            <TextBlock Grid.Row="3" Text="Aliases" Foreground="#555" Margin="0,8,8,0" VerticalAlignment="Center"/>
-                                            <TextBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding AliasesText, UpdateSourceTrigger=PropertyChanged}" Padding="5,3" Margin="0,8,0,0"/>
-                                            <TextBlock Grid.Row="4" Text="Endpoint options" Foreground="#555" Margin="0,8,8,0" VerticalAlignment="Center"/>
-                                            <TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding DriverOptionsText, UpdateSourceTrigger=PropertyChanged}" Padding="5,3" Margin="0,8,0,0"/>
-                                        </Grid>
+                                        <StackPanel>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding NetworkName}" FontWeight="Bold" FontSize="14" Foreground="#333" VerticalAlignment="Center"/>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <TextBlock Text="IPv4 " Foreground="#888"/>
+                                                    <TextBlock Text="{Binding IPv4}" FontFamily="Consolas" FontWeight="SemiBold" Foreground="#333"/>
+                                                    <TextBlock Text="   ·   IPv6 " Foreground="#AAA"/>
+                                                    <TextBlock Text="{Binding IPv6}" FontFamily="Consolas" FontWeight="SemiBold" Foreground="#333"/>
+                                                </StackPanel>
+                                            </Grid>
+
+                                            <Expander IsExpanded="{Binding IsAdvancedExpanded, Mode=TwoWay}" Margin="0,12,0,0">
+                                                <Expander.Header>
+                                                    <TextBlock Text="Advanced network settings" FontWeight="SemiBold" Foreground="#555"/>
+                                                </Expander.Header>
+                                                <StackPanel Margin="0,8,0,0">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="125"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto"/>
+                                                            <RowDefinition Height="Auto"/>
+                                                            <RowDefinition Height="Auto"/>
+                                                            <RowDefinition Height="Auto"/>
+                                                        </Grid.RowDefinitions>
+                                                        <TextBlock Text="Static IPv4" Foreground="#555" Margin="0,0,10,8" VerticalAlignment="Center"/>
+                                                        <TextBox Grid.Column="1" Text="{Binding StaticIPv4, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Padding="5,3" Margin="0,0,0,8"/>
+                                                        <TextBlock Grid.Row="1" Text="Static IPv6" Foreground="#555" Margin="0,0,10,8" VerticalAlignment="Center"/>
+                                                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding StaticIPv6, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Padding="5,3" Margin="0,0,0,8"/>
+                                                        <TextBlock Grid.Row="2" Text="Aliases" Foreground="#555" Margin="0,0,10,8" VerticalAlignment="Center"/>
+                                                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding AliasesText, UpdateSourceTrigger=PropertyChanged}" Padding="5,3" Margin="0,0,0,8"/>
+                                                        <TextBlock Grid.Row="3" Text="Endpoint options" Foreground="#555" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                                        <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding DriverOptionsText, UpdateSourceTrigger=PropertyChanged}" Padding="5,3"/>
+                                                    </Grid>
+                                                    <Grid Margin="0,12,0,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="Applying changes briefly reconnects this network. Confirmation is required." Foreground="#9A6700" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                                        <Button Grid.Column="1" Content="Apply Changes" Command="{Binding ApplyCommand}" Padding="12,6" Background="#007ACC" Foreground="White" BorderThickness="0" Cursor="Hand"/>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Expander>
+                                        </StackPanel>
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
@@ -545,83 +698,163 @@
 
             <TabItem Header="💾 Volumes" FontSize="14" Padding="15,8"
                      Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <Grid Margin="15">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <Grid Grid.Row="0" Margin="0,0,0,15">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="15">
+                        <TextBlock FontWeight="Bold" FontSize="14" Foreground="#007ACC" Margin="0,0,0,3">
+                            <Run Text="📦 Named Volumes  "/>
+                            <Run Text="{Binding ContainerOperations.NamedVolumeItems.Count, Mode=OneWay}"/>
+                        </TextBlock>
+                        <TextBlock Text="Docker가 관리하는 볼륨과 컨테이너 내부 연결 위치입니다." Foreground="#888" FontSize="11" Margin="0,0,0,10"/>
+                        <ItemsControl ItemsSource="{Binding ContainerOperations.NamedVolumeItems}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#FAFAFA" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="28"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="60"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="Volume" Foreground="#888" FontSize="10"/>
+                                                <TextBlock Text="{Binding Source}" FontFamily="Consolas" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Source}"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="→" Foreground="#888" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,1"/>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="Container path" Foreground="#888" FontSize="10"/>
+                                                <TextBlock Text="{Binding Target}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" ToolTip="{Binding Target}"/>
+                                            </StackPanel>
+                                            <Border Grid.Column="3" Background="#E8F3FF" CornerRadius="3" Padding="6,2" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Mode}" FontFamily="Consolas" Foreground="#0067A8"/>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="연결된 Named Volume이 없습니다." Foreground="#888" FontStyle="Italic" Margin="12,6,0,18">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ContainerOperations.NamedVolumeItems.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
 
-                        <StackPanel VerticalAlignment="Center">
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
-                                <TextBlock Text="Current View : " FontWeight="Bold" FontSize="14" Foreground="#555"/>
-                                <TextBlock FontWeight="Bold" FontSize="14">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Text" Value="📦 Named Volumes"/>
-                                            <Setter Property="Foreground" Value="#007ACC"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding VolumeDisplayMode}" Value="1">
-                                                    <Setter Property="Text" Value="🔗 Bind Mounts"/>
-                                                    <Setter Property="Foreground" Value="#E67E22"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                            </StackPanel>
-
-                            <TextBlock FontSize="11" Foreground="#888">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Text" Value="도커 엔진에서 관리하는 볼륨 목록입니다."/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding VolumeDisplayMode}" Value="1">
-                                                <Setter Property="Text" Value="호스트 PC의 경로와 연결된 바인드 마운트 목록입니다."/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </StackPanel>
-
-                        <Button Grid.Column="1" Command="{Binding ToggleVolumeModeCommand}" Content="🔄 Switch Type" Background="#F0F0F0" BorderBrush="#CCC" BorderThickness="1" Foreground="#333" Padding="15,5" Cursor="Hand" VerticalAlignment="Center"/>
-                    </Grid>
-
-                    <ListBox Grid.Row="1" ItemsSource="{Binding MountedVolumeList}" 
-                             BorderBrush="#EEE" Background="#FAFAFA" Margin="0,0,0,0" 
-                             ScrollViewer.VerticalScrollBarVisibility="Auto">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="12" Foreground="#333" Padding="5"/>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                </Grid>
+                        <Separator Margin="0,10,0,16"/>
+                        <TextBlock FontWeight="Bold" FontSize="14" Foreground="#E67E22" Margin="0,0,0,3">
+                            <Run Text="🔗 Bind Mounts  "/>
+                            <Run Text="{Binding ContainerOperations.BindMountItems.Count, Mode=OneWay}"/>
+                        </TextBlock>
+                        <TextBlock Text="호스트 경로와 컨테이너 내부 연결 위치입니다." Foreground="#888" FontSize="11" Margin="0,0,0,10"/>
+                        <ItemsControl ItemsSource="{Binding ContainerOperations.BindMountItems}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#FAFAFA" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="28"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="60"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="Host path" Foreground="#888" FontSize="10"/>
+                                                <TextBlock Text="{Binding Source}" FontFamily="Consolas" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Source}"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="→" Foreground="#888" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,1"/>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="Container path" Foreground="#888" FontSize="10"/>
+                                                <TextBlock Text="{Binding Target}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" ToolTip="{Binding Target}"/>
+                                            </StackPanel>
+                                            <Border Grid.Column="3" Background="#FFF1E5" CornerRadius="3" Padding="6,2" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Mode}" FontFamily="Consolas" Foreground="#B45309"/>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="연결된 Bind Mount가 없습니다." Foreground="#888" FontStyle="Italic" Margin="12,6,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding ContainerOperations.BindMountItems.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </ScrollViewer>
             </TabItem>
 
             <TabItem Header="📁 File Transfer" FontSize="14" Padding="15,8"
                      Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <StackPanel Margin="15">
-                    <TextBlock Text="컨테이너 내부와 호스트(내 PC) 간에 파일/폴더를 복사합니다." Foreground="#888" Margin="0,0,0,20"/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="15">
+                        <TextBlock Text="컨테이너와 이 PC 사이에서 파일 또는 폴더를 복사합니다." Foreground="#777" Margin="0,0,0,12"/>
+                        <Border Background="White" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="5" Padding="16" MaxWidth="900" HorizontalAlignment="Stretch">
+                            <StackPanel>
+                                <TextBlock Text="Host Path (내 PC 경로)" FontWeight="Bold" Foreground="#555" Margin="0,0,0,5"/>
+                                <Grid Margin="0,0,0,14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding HostFilePath, UpdateSourceTrigger=PropertyChanged}" Padding="7,5" ToolTip="업로드할 파일/폴더 또는 다운로드할 대상 폴더"/>
+                                    <Button Grid.Column="1" Command="{Binding ContainerOperations.BrowseHostFileCommand}" Content="File…" Padding="12,5" Margin="6,0,0,0" Background="#F1F3F5" BorderBrush="#C8CDD2" Cursor="Hand"/>
+                                    <Button Grid.Column="2" Command="{Binding ContainerOperations.BrowseHostFolderCommand}" Content="Folder…" Padding="12,5" Margin="6,0,0,0" Background="#F1F3F5" BorderBrush="#C8CDD2" Cursor="Hand"/>
+                                </Grid>
 
-                    <TextBlock Text="Host Path (내 PC 경로)" FontWeight="Bold" Foreground="#555" Margin="0,0,0,5"/>
-                    <TextBox Text="{Binding HostFilePath, UpdateSourceTrigger=PropertyChanged}" Padding="5" Margin="0,0,0,15" ToolTip="예: C:\temp\dump.sql"/>
+                                <TextBlock Text="Container Path (컨테이너 내부 경로)" FontWeight="Bold" Foreground="#555" Margin="0,0,0,5"/>
+                                <TextBox Text="{Binding ContainerFilePath, UpdateSourceTrigger=PropertyChanged}" Padding="7,5" Margin="0,0,0,12" ToolTip="예: /var/lib/mysql 또는 /app/data"/>
 
-                    <TextBlock Text="Container Path (컨테이너 내부 경로)" FontWeight="Bold" Foreground="#555" Margin="0,0,0,5"/>
-                    <TextBox Text="{Binding ContainerFilePath, UpdateSourceTrigger=PropertyChanged}" Padding="5" Margin="0,0,0,20" ToolTip="예: /var/lib/mysql/dump.sql"/>
+                                <Border Background="#F5F7F9" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="3" Padding="10,7" Margin="0,0,0,14">
+                                    <TextBlock Text="{Binding ContainerOperations.TransferStatus}" Foreground="#555" TextWrapping="Wrap"/>
+                                </Border>
 
-                    <UniformGrid Columns="2">
-                        <Button Command="{Binding CopyToContainerCommand}" Content="⬆️ Copy To Container (업로드)" Background="#28a745" Foreground="White" BorderThickness="0" Padding="10" Margin="0,0,5,0" Cursor="Hand" FontWeight="Bold"/>
-                        <Button Command="{Binding CopyFromContainerCommand}" Content="⬇️ Copy From Container (다운로드)" Background="#007ACC" Foreground="White" BorderThickness="0" Padding="10" Margin="5,0,0,0" Cursor="Hand" FontWeight="Bold"/>
-                    </UniformGrid>
-                </StackPanel>
+                                <UniformGrid Columns="2">
+                                    <Button Command="{Binding CopyToContainerCommand}" Content="⬆ Copy To Container (업로드)" Background="#28A745" Foreground="White" BorderThickness="0" Padding="10" Margin="0,0,5,0" Cursor="Hand" FontWeight="Bold"/>
+                                    <Button Command="{Binding CopyFromContainerCommand}" Content="⬇ Copy From Container (다운로드)" Background="#007ACC" Foreground="White" BorderThickness="0" Padding="10" Margin="5,0,0,0" Cursor="Hand" FontWeight="Bold"/>
+                                </UniformGrid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
             </TabItem>
 
+            <TabItem Header="⚡ Actions" FontSize="14" Padding="15,8"
+                     Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="15">
+                        <TextBlock Text="Container Actions" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
+                        <TextBlock Text="이 컨테이너에 직접 적용되는 작업입니다." Foreground="#777" Margin="0,0,0,14"/>
+
+                        <Border Background="White" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="5" Padding="16" Margin="0,0,0,14">
+                            <UniformGrid Columns="2">
+                                <Button Content="Aa  이름 변경" Command="{Binding RenameContainerCommand}" Padding="12,10" Margin="0,0,6,8" Background="#F1F3F5" BorderBrush="#C8CDD2" Cursor="Hand" FontWeight="SemiBold"/>
+                                <Button Content="&gt;_  명령 실행" Command="{Binding ExecContainerCommand}" Padding="12,10" Margin="6,0,0,8" Background="#007ACC" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                <Button Content="⬆  이미지로 저장" Command="{Binding CommitContainerCommand}" Padding="12,10" Margin="0,0,6,0" Background="#28A745" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                <Button Content="!  강제 종료" Command="{Binding KillContainerCommand}" Padding="12,10" Margin="6,0,0,0" Background="#DC3545" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                            </UniformGrid>
+                        </Border>
+
+                        <TextBlock Text="Advanced / Debug" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,8,0,8"/>
+                        <Border Background="#FAFAFA" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="5" Padding="16">
+                            <Button Content="{}  Docker 원본 JSON 보기" Command="{Binding ViewRawInspectCommand}" Padding="12,9" Background="#F1F3F5" BorderBrush="#C8CDD2" Cursor="Hand" HorizontalAlignment="Left"/>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
             <TabItem Header="📄 Logs" FontSize="14" Padding="15,8">
                 <Grid Background="#1E1E1E">
                     <Grid.RowDefinitions>
@@ -639,36 +872,48 @@
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="🔍 Find:" Foreground="#CCC" VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="Bold"/>
                                 <TextBox x:Name="txtLogSearch" Width="150" Padding="3,2" Background="#444" Foreground="White" BorderThickness="1" BorderBrush="#555" VerticalContentAlignment="Center" 
-                                         TextChanged="TxtLogSearch_TextChanged" ToolTip="검색어 입력 시 실시간으로 노란색 하이라이트됩니다."/>
+                                         TextChanged="TxtLogSearch_TextChanged" ToolTip="검색어가 포함된 로그만 표시하고 일치 부분을 강조합니다."/>
                             </StackPanel>
 
                             <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
-                                <Button Command="{Binding CopyLogsCommand}" Content="📋 Copy" Background="#444" Foreground="White" BorderThickness="0" Padding="10,5" Margin="0,0,5,0" Cursor="Hand"/>
+                                <Button Content="📋 Copy" Click="CopyVisibleLogs_Click" Background="#444" Foreground="White" BorderThickness="0" Padding="10,5" Margin="0,0,5,0" Cursor="Hand" ToolTip="현재 화면에 표시된 로그를 복사합니다."/>
                                 <Button Command="{Binding ExportLogsCommand}" Content="💾 Export" Background="#444" Foreground="White" BorderThickness="0" Padding="10,5" Margin="0,0,10,0" Cursor="Hand"/>
-                                <Button Command="{Binding RefreshLogsCommand}" Content="🔄 Refresh" Background="#007ACC" Foreground="White" BorderThickness="0" Padding="10,5" Cursor="Hand"/>
                             </StackPanel>
                         </Grid>
                     </Border>
 
-                    <ListBox x:Name="lbLogs" Grid.Row="1" Background="Transparent" BorderThickness="0" Padding="10"
-                             ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                             VirtualizingStackPanel.IsVirtualizing="True" 
-                             VirtualizingStackPanel.VirtualizationMode="Recycling">
+                    <ListBox x:Name="lstLogs" Grid.Row="1"
+                             Background="Transparent" Foreground="#D4D4D4" BorderThickness="0" Padding="10"
+                             FontFamily="Consolas" FontSize="12" Focusable="False"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                             ScrollViewer.CanContentScroll="True"
+                             VirtualizingPanel.IsVirtualizing="True"
+                             VirtualizingPanel.VirtualizationMode="Recycling">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <VirtualizingStackPanel/>
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
                         <ListBox.ItemContainerStyle>
-                            <Style TargetType="ListBoxItem">
+                            <Style TargetType="{x:Type ListBoxItem}">
                                 <Setter Property="Focusable" Value="False"/>
-                                <Setter Property="Padding" Value="0,1"/>
-                                <Setter Property="Margin" Value="0"/>
-                                <Setter Property="Background" Value="Transparent"/>
+                                <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                                <Setter Property="VerticalContentAlignment" Value="Center"/>
                                 <Setter Property="Template">
                                     <Setter.Value>
-                                        <ControlTemplate TargetType="ListBoxItem">
-                                            <ContentPresenter/>
+                                        <ControlTemplate TargetType="{x:Type ListBoxItem}">
+                                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
                                         </ControlTemplate>
                                     </Setter.Value>
                                 </Setter>
                             </Style>
                         </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" Foreground="#D4D4D4" Margin="0,1" TextWrapping="NoWrap"/>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
                     </ListBox>
                 </Grid>
             </TabItem>
@@ -676,7 +921,7 @@
         </TabControl>
 
         <Border Grid.Row="2" Background="White" BorderBrush="#E0E0E0" BorderThickness="0,1,0,0" Padding="15">
-            <Button Content="Close" Width="100" Height="35" HorizontalAlignment="Right" Background="#DDD" BorderThickness="0" Cursor="Hand" IsCancel="True"/>
+            <Button Content="Close" Width="100" Height="35" HorizontalAlignment="Right" Background="#DDD" BorderThickness="0" Cursor="Hand" Click="Close_Click"/>
         </Border>
     </Grid>
 </Window>

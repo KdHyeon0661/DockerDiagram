@@ -1,7 +1,9 @@
-﻿using DockerDiagram.Helpers;
+﻿using DockerDiagram.Views;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Infrastructure;
+using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
-using System.Collections.Generic;
 using System.Runtime.Versioning;
 using System.Windows;
 
@@ -10,7 +12,7 @@ namespace DockerDiagram
     [SupportedOSPlatform("windows")]
     public partial class App : Application
     {
-        public static List<IDockerService> ActiveDockerServices { get; } = [];
+        private IDockerServiceFactory? _dockerServiceFactory;
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -27,19 +29,12 @@ namespace DockerDiagram
             };
 
             // 기본 로컬 Docker 서비스 생성
-            var defaultDockerService = new DockerApiService(localProfile);
+            _dockerServiceFactory = new DockerServiceFactory();
+            var defaultDockerService = _dockerServiceFactory.Create(localProfile);
 
-            // 종료 시 해제할 서비스로 등록
-            ActiveDockerServices.Add(defaultDockerService);
+            var mainViewModel = new MainViewModel(defaultDockerService, dialogService, _dockerServiceFactory);
 
-            var mainViewModel = new MainViewModel(defaultDockerService, dialogService);
-
-            var mainWindow = new MainWindow(
-                mainViewModel,
-                defaultDockerService,
-                dialogService
-            );
-
+            var mainWindow = new MainWindow(mainViewModel, dialogService);
             mainWindow.Show();
         }
 
@@ -48,11 +43,9 @@ namespace DockerDiagram
         {
             VolumeUndoBackupStore.CleanupActiveBackups();
 
-            foreach (var service in ActiveDockerServices)
-            {
-                service?.Dispose();
-            }
-            ActiveDockerServices.Clear();
+            _dockerServiceFactory?.Dispose();
+            _dockerServiceFactory = null;
+            SshTunnelManager.CloseAllTunnels();
 
             base.OnExit(e);
         }

@@ -1,8 +1,9 @@
+using DockerDiagram.Infrastructure;
+using DockerDiagram.Contracts;
 using System.Windows;
 using System.Windows.Controls;
 using System.Collections.ObjectModel;
 using System;
-using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
@@ -170,21 +171,24 @@ namespace DockerDiagram.Views
                 return;
             }
 
+            ConnectionProfile? profile = null;
+            IDockerService? service = null;
+            bool connectionHandled = false;
+
             try
             {
                 DockerContextStatusText.Text = $"Opening workspace for {context.Name}...";
-                var profile = await CreateProfileFromContextAsync(context);
-                var service = new DockerApiService(profile);
+                profile = await CreateProfileFromContextAsync(context);
+                service = _mainVm.DockerServiceFactory.Create(profile);
 
                 if (!await service.PingAsync())
                 {
-                    CleanupFailedContextService(profile, service);
                     _dialogService.ShowError($"'{context.Name}' context의 Docker 엔진에 연결할 수 없습니다.", "Docker Context");
                     return;
                 }
 
-                App.ActiveDockerServices.Add(service);
                 _mainVm.SheetManager.AddWorkspace(profile, service, activate: true, createInitialSheet: true);
+                connectionHandled = true;
                 ConnectionGrid.Items.Refresh();
                 DockerContextStatusText.Text = $"Workspace opened: {context.Name}";
                 _dialogService.ShowInfo($"'{context.Name}' context를 앱 워크스페이스로 열었습니다.", "Docker Context");
@@ -193,6 +197,13 @@ namespace DockerDiagram.Views
             {
                 DockerContextStatusText.Text = "Open workspace failed.";
                 _dialogService.ShowError($"Docker context 워크스페이스 열기 실패:\n{ex.Message}", "Docker Context");
+            }
+            finally
+            {
+                if (!connectionHandled && profile != null)
+                {
+                    CleanupFailedContextService(profile, service);
+                }
             }
         }
 
@@ -238,7 +249,11 @@ namespace DockerDiagram.Views
                 var username = string.IsNullOrWhiteSpace(endpointUri.UserInfo) ? "root" : endpointUri.UserInfo;
                 var host = endpointUri.Host;
                 var sshPort = endpointUri.Port > 0 ? endpointUri.Port : 22;
-                var localPort = await SshTunnelManager.GetOrStartTunnelAsync(host, sshPort, username, keyPath, _dialogService);
+                var remoteSocketPath = endpointUri.AbsolutePath.Length > 1
+                    ? Uri.UnescapeDataString(endpointUri.AbsolutePath)
+                    : SshTunnelManager.DefaultRemoteDockerSocketPath;
+                var localPort = await SshTunnelManager.GetOrStartTunnelAsync(
+                    host, sshPort, username, keyPath, remoteSocketPath, _dialogService);
 
                 return new ConnectionProfile
                 {
@@ -248,7 +263,8 @@ namespace DockerDiagram.Views
                     SshUsername = username,
                     SshPort = sshPort,
                     LocalTunnelPort = localPort,
-                    SshKeyFilePath = keyPath
+                    SshKeyFilePath = keyPath,
+                    RemoteDockerSocketPath = remoteSocketPath
                 };
             }
 
@@ -269,17 +285,21 @@ namespace DockerDiagram.Views
             throw new NotSupportedException($"지원하지 않는 Docker context endpoint입니다: {endpointUri.Scheme}");
         }
 
-        private static void CleanupFailedContextService(ConnectionProfile profile, IDockerService service)
+        private void CleanupFailedContextService(ConnectionProfile profile, IDockerService? service)
         {
             if (profile.Type == EndpointType.SshRemote && !string.IsNullOrWhiteSpace(profile.HostIp))
             {
                 SshTunnelManager.ReleaseTunnel(
                     profile.HostIp,
                     profile.SshPort,
-                    profile.SshUsername ?? "root");
+                    profile.SshUsername ?? "root",
+                    profile.RemoteDockerSocketPath);
             }
 
-            service.Dispose();
+            if (service != null && !_mainVm.DockerServiceFactory.Release(service))
+            {
+                service.Dispose();
+            }
         }
 
         private void SyncNameBox()

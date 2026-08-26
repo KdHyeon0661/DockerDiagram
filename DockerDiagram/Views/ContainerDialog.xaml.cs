@@ -1,9 +1,10 @@
-﻿using System.Collections.Generic;
+﻿using DockerDiagram.ApplicationServices;
+using DockerDiagram.Contracts;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 using System.Linq;
 using System;

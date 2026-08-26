@@ -4,123 +4,117 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Threading;
 using DockerDiagram.ViewModels;
 
 namespace DockerDiagram
 {
     public partial class ContainerDetailWindow : Window
     {
-        private readonly DispatcherTimer _timer;
+        private const int MaxLogLines = 500;
 
-        private readonly ObservableCollection<TextBlock> _logItems = new ObservableCollection<TextBlock>();
         private readonly List<string> _rawLogLines = new List<string>();
-        private const int MAX_LOG_LINES = 2000; // 앱이 뻗지 않도록 최대 2000줄만 유지
+        private readonly ObservableCollection<string> _visibleLogLines = new ObservableCollection<string>();
         private NodeViewModel? _nodeVm;
+        private bool _isClosed;
 
         public ContainerDetailWindow()
         {
             InitializeComponent();
+            lstLogs.ItemsSource = _visibleLogLines;
 
-            // 가상화 ListBox에 스트리밍용 리스트를 연결
-            lbLogs.ItemsSource = _logItems;
 
-            _timer = new DispatcherTimer();
-            _timer.Interval = TimeSpan.FromSeconds(1);
-            _timer.Tick += Timer_Tick;
-
-            this.Loaded += ContainerDetailWindow_Loaded;
-            this.Closed += ContainerDetailWindow_Closed;
+            Loaded += ContainerDetailWindow_Loaded;
+            Closed += ContainerDetailWindow_Closed;
         }
 
         private void ContainerDetailWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            _timer.Start();
+            _isClosed = false;
 
-            if (this.DataContext is NodeViewModel vm)
+            if (DataContext is NodeViewModel vm)
             {
                 _nodeVm = vm;
+                DetailTabControl.SelectedIndex = vm.IsSwarmService
+                    ? 0
+                    : vm.IsKubernetesPod
+                        ? 1
+                        : vm.IsGenericKubernetesResource
+                            ? 2
+                            : 3;
                 _nodeVm.PropertyChanged += NodeVm_PropertyChanged;
                 ReplaceLogs(vm.ContainerLogs);
 
-                // 컨테이너 로그 스트리밍을 시작합니다.
-                _ = vm.StartLogStreamAsync(OnLogChunkReceived);
+                // 최근 500줄은 창을 열기 전에 가져왔으므로 이후에 생기는 새 로그만 받습니다.
+                _ = vm.StartLogStreamAsync(OnLogChunkReceived, initialTailCount: 0);
             }
         }
 
         private void ContainerDetailWindow_Closed(object? sender, EventArgs e)
         {
-            _timer.Stop();
+            _isClosed = true;
+            Loaded -= ContainerDetailWindow_Loaded;
+            Closed -= ContainerDetailWindow_Closed;
+
+            // OxyPlot의 PlotModel은 한 번에 하나의 PlotView에만 연결될 수 있습니다.
+            cpuPlotView.Model = null;
+            memoryPlotView.Model = null;
 
             if (_nodeVm != null)
             {
-                // 창이 닫히면 로그 스트리밍을 중지합니다.
                 _nodeVm.PropertyChanged -= NodeVm_PropertyChanged;
                 _nodeVm.StopLogStream();
                 _nodeVm = null;
             }
+
+            DataContext = null;
+        }
+
+        private void Close_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
         }
 
         private void NodeVm_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
+            if (_isClosed) return;
+
             if (e.PropertyName == nameof(NodeViewModel.ContainerLogs) && sender is NodeViewModel vm)
             {
-                Dispatcher.InvokeAsync(() => ReplaceLogs(vm.ContainerLogs));
+                Dispatcher.InvokeAsync(() =>
+                {
+                    if (!_isClosed) ReplaceLogs(vm.ContainerLogs);
+                });
             }
         }
 
-        private async void Timer_Tick(object? sender, EventArgs e)
-        {
-            // 사용자가 텍스트 박스에 타이핑 중이거나 슬라이더 조작 중이면 상태 갱신 건너뛰기
-            if (Keyboard.FocusedElement is TextBox || Keyboard.FocusedElement is Slider)
-            {
-                return;
-            }
-
-            if (this.DataContext is NodeViewModel nodeVm)
-            {
-                await nodeVm.RefreshDetailsAsync();
-            }
-        }
-
-        // ==============================================================================
-        // 백그라운드 스트림에서 수신한 로그를 UI 컬렉션에 추가합니다.
-        // ==============================================================================
         private void OnLogChunkReceived(string logChunk)
         {
-            // 백그라운드 스레드에서 UI를 건드리면 크래시가 나므로, UI 스레드(Dispatcher)에 작업을 위임합니다.
+            if (_isClosed) return;
+
             Dispatcher.InvokeAsync(() =>
             {
+                if (_isClosed) return;
+
                 string searchTerm = txtLogSearch.Text;
                 var lines = logChunk.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
-                var scrollViewer = GetScrollViewer(lbLogs);
-                bool isScrolledToEnd = scrollViewer != null && (scrollViewer.VerticalOffset >= scrollViewer.ScrollableHeight - 5);
-
+                // Docker가 한 청크 안의 로그를 과거순으로 주므로 앞에 차례로 삽입하면 최신순이 됩니다.
                 foreach (var line in lines)
                 {
-                    // 원본 데이터 저장 (나중에 검색할 때 쓰기 위함)
-                    _rawLogLines.Add(line);
-
-                    // UI TextBlock 하나 생성 후 바로 리스트에 쏙! (Append)
-                    var tb = CreateLogTextBlock(line, searchTerm);
-                    _logItems.Add(tb);
+                    _rawLogLines.Insert(0, line);
+                    if (MatchesSearch(line, searchTerm))
+                        _visibleLogLines.Insert(0, line);
                 }
 
-                // 메모리 보호: 2000줄이 넘어가면 가장 오래된 옛날 로그부터 지워서 앱을 가볍게 유지
-                while (_rawLogLines.Count > MAX_LOG_LINES)
+                // 최신 500줄만 유지하고 가장 오래된 항목은 목록의 아래에서 제거합니다.
+                while (_rawLogLines.Count > MaxLogLines)
                 {
-                    _rawLogLines.RemoveAt(0);
-                    _logItems.RemoveAt(0);
-                }
+                    string removedLine = _rawLogLines[^1];
+                    _rawLogLines.RemoveAt(_rawLogLines.Count - 1);
 
-                // 사용자가 맨 밑을 보고 있었다면, 새 로그가 들어왔을 때 자동으로 스크롤 내려주기
-                if (isScrolledToEnd && _logItems.Count > 0)
-                {
-                    lbLogs.ScrollIntoView(_logItems[_logItems.Count - 1]);
+                    if (MatchesSearch(removedLine, searchTerm) && _visibleLogLines.Count > 0)
+                        _visibleLogLines.RemoveAt(_visibleLogLines.Count - 1);
                 }
             });
         }
@@ -128,145 +122,63 @@ namespace DockerDiagram
         private void ReplaceLogs(string? logs)
         {
             _rawLogLines.Clear();
-            _logItems.Clear();
 
-            if (string.IsNullOrWhiteSpace(logs))
-                return;
-
-            string searchTerm = txtLogSearch.Text;
-            var lines = logs.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-
-            foreach (var line in lines)
+            if (!string.IsNullOrWhiteSpace(logs))
             {
-                _rawLogLines.Add(line);
-                _logItems.Add(CreateLogTextBlock(line, searchTerm));
+                var lines = logs.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                for (int index = lines.Length - 1; index >= 0 && _rawLogLines.Count < MaxLogLines; index--)
+                    _rawLogLines.Add(lines[index]);
             }
 
-            while (_rawLogLines.Count > MAX_LOG_LINES)
-            {
-                _rawLogLines.RemoveAt(0);
-                _logItems.RemoveAt(0);
-            }
-
-            if (_logItems.Count > 0)
-                lbLogs.ScrollIntoView(_logItems[_logItems.Count - 1]);
+            RenderVisibleLogs(txtLogSearch.Text);
         }
 
-        /// <summary>
-        /// 검색어가 바뀌면 현재 로그의 강조 표시를 갱신합니다.
-        /// </summary>
         private void TxtLogSearch_TextChanged(object sender, TextChangedEventArgs e)
         {
-            string searchTerm = txtLogSearch.Text;
-            _logItems.Clear();
-
-            // 보관해둔 원본 로그 라인을 꺼내서 검색어에 맞게 다시 형광펜 칠해서 넣기
-            foreach (var line in _rawLogLines)
-            {
-                _logItems.Add(CreateLogTextBlock(line, searchTerm));
-            }
-
-            if (_logItems.Count > 0)
-            {
-                lbLogs.ScrollIntoView(_logItems[_logItems.Count - 1]);
-            }
+            RenderVisibleLogs(txtLogSearch.Text);
         }
 
-        /// <summary>
-        /// 로그 문자열 한 줄을 예쁜 UI(TextBlock)로 만들어 반환합니다.
-        /// </summary>
-        private TextBlock CreateLogTextBlock(string line, string searchTerm)
+        private void ConfigurationList_OnPreviewKeyDown(object sender, KeyEventArgs e)
         {
-            var tb = new TextBlock
+            if (e.Key != Key.C || !Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+                return;
+            if (sender is not ListBox listBox || listBox.SelectedItem == null)
+                return;
+
+            string? text = listBox.SelectedItem switch
             {
-                FontFamily = new FontFamily("Consolas"),
-                FontSize = 12
+                EnvironmentVariableDisplayItem environment => environment.CopyText,
+                PortBindingDisplayItem port => port.CopyText,
+                _ => null
             };
 
-            bool isError = line.Contains("ERROR", StringComparison.OrdinalIgnoreCase) ||
-                           line.Contains("Exception", StringComparison.OrdinalIgnoreCase) ||
-                           line.Contains("Fail", StringComparison.OrdinalIgnoreCase);
-
-            bool isWarning = line.Contains("WARN", StringComparison.OrdinalIgnoreCase);
-
-            if (!string.IsNullOrWhiteSpace(searchTerm) && line.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
-            {
-                HighlightSearchTermFast(tb, line, searchTerm, isError, isWarning);
-            }
-            else
-            {
-                var run = new Run(line);
-                ApplyBaseStyle(run, isError, isWarning);
-                tb.Inlines.Add(run);
-            }
-
-            return tb;
+            if (string.IsNullOrEmpty(text)) return;
+            Clipboard.SetText(text);
+            e.Handled = true;
         }
 
-        /// <summary>
-        /// TextBlock 내부의 Inlines 속성을 이용하여 검색된 단어만 노란 형광펜을 칠합니다.
-        /// </summary>
-        private void HighlightSearchTermFast(TextBlock tb, string line, string searchTerm, bool isError, bool isWarning)
+
+        private void CopyVisibleLogs_Click(object sender, RoutedEventArgs e)
         {
-            int index = line.IndexOf(searchTerm, StringComparison.OrdinalIgnoreCase);
+            if (_visibleLogLines.Count == 0) return;
 
-            while (index != -1)
-            {
-                if (index > 0)
-                {
-                    var runBefore = new Run(line.Substring(0, index));
-                    ApplyBaseStyle(runBefore, isError, isWarning);
-                    tb.Inlines.Add(runBefore);
-                }
-
-                var runMatch = new Run(line.Substring(index, searchTerm.Length))
-                {
-                    Background = Brushes.Yellow,
-                    Foreground = Brushes.Black,
-                    FontWeight = FontWeights.Bold
-                };
-                tb.Inlines.Add(runMatch);
-
-                line = line.Substring(index + searchTerm.Length);
-                index = line.IndexOf(searchTerm, StringComparison.OrdinalIgnoreCase);
-            }
-
-            if (!string.IsNullOrEmpty(line))
-            {
-                var runAfter = new Run(line);
-                ApplyBaseStyle(runAfter, isError, isWarning);
-                tb.Inlines.Add(runAfter);
-            }
+            Clipboard.SetText(string.Join(Environment.NewLine, _visibleLogLines));
         }
-
-        private void ApplyBaseStyle(Run run, bool isError, bool isWarning)
+        private void RenderVisibleLogs(string searchTerm)
         {
-            if (isError)
+            _visibleLogLines.Clear();
+            foreach (var line in _rawLogLines)
             {
-                run.Foreground = Brushes.Tomato;
-                run.FontWeight = FontWeights.Bold;
+                if (MatchesSearch(line, searchTerm))
+                    _visibleLogLines.Add(line);
             }
-            else if (isWarning)
-            {
-                run.Foreground = Brushes.Gold;
-            }
-            else
-            {
-                run.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#D4D4D4"));
-            }
+
+            if (_visibleLogLines.Count > 0)
+                lstLogs.ScrollIntoView(_visibleLogLines[0]);
         }
 
-        private ScrollViewer? GetScrollViewer(DependencyObject depObj)
-        {
-            if (depObj is ScrollViewer scrollViewer) return scrollViewer;
-
-            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(depObj); i++)
-            {
-                var child = VisualTreeHelper.GetChild(depObj, i);
-                var result = GetScrollViewer(child);
-                if (result != null) return result;
-            }
-            return null;
-        }
+        private static bool MatchesSearch(string line, string searchTerm) =>
+            string.IsNullOrWhiteSpace(searchTerm) ||
+            line.Contains(searchTerm, StringComparison.OrdinalIgnoreCase);
     }
 }

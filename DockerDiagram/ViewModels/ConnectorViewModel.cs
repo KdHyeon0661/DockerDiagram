@@ -1,9 +1,11 @@
-﻿using System;
+using DockerDiagram.Diagram;
+using DockerDiagram.Contracts;
+using DockerDiagram.Common;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Media;
-using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
@@ -19,8 +21,13 @@ namespace DockerDiagram.ViewModels
 
         private PointCollection _points = new PointCollection();
         private PointCollection _arrowPoints = new PointCollection();
+        private PointCollection _sourceArrowPoints = new PointCollection();
         private int _zIndex = 50;
         private bool _isSelected;
+        private bool _isBidirectional;
+        private bool _isAttached;
+        private string _sourceDataLabel = string.Empty;
+        private string _targetDataLabel = string.Empty;
 
         private RelationType _relationType;
         private string? _mountPath;
@@ -44,8 +51,8 @@ namespace DockerDiagram.ViewModels
         public PortDirection TargetDir { get; private set; }
 
         // 노드나 그룹의 경계선 상에서 선이 출발/도착할 정확한 X, Y 좌표를 계산하여 반환합니다.
-        public Point SourcePos => GetExactBorderPoint(Source, SourceDir);
-        public Point TargetPos => GetExactBorderPoint(Target, TargetDir);
+        public Point SourcePos => ConnectorRoutePlanner.GetBorderPoint(Source, SourceDir);
+        public Point TargetPos => ConnectorRoutePlanner.GetBorderPoint(Target, TargetDir);
         #endregion
 
         #region Visual Properties
@@ -58,6 +65,16 @@ namespace DockerDiagram.ViewModels
         /// 선 끝부분에 그려질 화살표 머리(삼각형)의 좌표 모음입니다.
         /// </summary>
         public PointCollection ArrowPoints { get => _arrowPoints; set => SetProperty(ref _arrowPoints, value); }
+
+        /// <summary>
+        /// 양방향 연결일 때 시작점에 표시할 화살표 머리입니다.
+        /// </summary>
+        public PointCollection SourceArrowPoints { get => _sourceArrowPoints; set => SetProperty(ref _sourceArrowPoints, value); }
+
+        public double SourceLabelX => GetEndpointLabelPosition(sourceSide: true).X;
+        public double SourceLabelY => GetEndpointLabelPosition(sourceSide: true).Y;
+        public double TargetLabelX => GetEndpointLabelPosition(sourceSide: false).X;
+        public double TargetLabelY => GetEndpointLabelPosition(sourceSide: false).Y;
 
         // --- 화면 겹침(Z축) 순서 ---
         public int ZIndex { get => _zIndex; set => SetProperty(ref _zIndex, value); }
@@ -74,6 +91,23 @@ namespace DockerDiagram.ViewModels
                 {
                     // 선이 선택되면 다른 노드나 그룹의 위로 확실하게 돋보이도록 Z-Index를 극단적으로(65536) 끌어올립니다.
                     ZIndex = value ? 65536 : 50;
+                }
+            }
+        }
+
+        public bool IsBidirectional
+        {
+            get => _isBidirectional;
+            set
+            {
+                if (SetProperty(ref _isBidirectional, value))
+                {
+                    CalculateArrowHeads();
+                    OnPropertyChanged(nameof(SourceLabelX));
+                    OnPropertyChanged(nameof(SourceLabelY));
+                    OnPropertyChanged(nameof(TargetLabelX));
+                    OnPropertyChanged(nameof(TargetLabelY));
+                    OnModified?.Invoke(this, EventArgs.Empty);
                 }
             }
         }
@@ -116,10 +150,38 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        public string SourceDataLabel
+        {
+            get => _sourceDataLabel;
+            set
+            {
+                if (SetProperty(ref _sourceDataLabel, value ?? string.Empty))
+                {
+                    OnPropertyChanged(nameof(SourceLabelX));
+                    OnPropertyChanged(nameof(SourceLabelY));
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public string TargetDataLabel
+        {
+            get => _targetDataLabel;
+            set
+            {
+                if (SetProperty(ref _targetDataLabel, value ?? string.Empty))
+                {
+                    OnPropertyChanged(nameof(TargetLabelX));
+                    OnPropertyChanged(nameof(TargetLabelY));
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
         public string StrokeColor => RelationType switch
         {
-            RelationType.VolumeMount or RelationType.KubernetesVolumeClaim => "#E65100",
-            RelationType.NetworkAttach => "#6A1B9A",
+            RelationType.KubernetesVolumeClaim => "#E65100",
+            RelationType.VolumeMount or RelationType.NetworkAttach => "#111111",
             RelationType.KubernetesOwner => "#326CE5",
             RelationType.KubernetesSelector => "#0B8043",
             _ => "#111111"
@@ -142,8 +204,7 @@ namespace DockerDiagram.ViewModels
 
             // 연결된 대상이 이동하면 경로를 다시 계산합니다.
             // 이 연결선도 즉각적으로 따라가면서 경로를 다시 계산하도록 '위치 변경 이벤트'에 귀를 열어둡니다.
-            Source.OnPositionChanged += OnNodePositionChanged;
-            Target.OnPositionChanged += OnNodePositionChanged;
+            Attach();
 
             CalculateRoute(); // 최초 생성 시 경로 계산
         }
@@ -157,8 +218,7 @@ namespace DockerDiagram.ViewModels
         {
             // 기존 대상의 이벤트 구독을 해제합니다.
             // 이렇게 하지 않으면 옛날 노드가 움직일 때마다 이 선이 불필요하게 다시 계산되는 "좀비(Zombie)" 현상이 발생합니다.
-            if (Source != null) Source.OnPositionChanged -= OnNodePositionChanged;
-            if (Target != null) Target.OnPositionChanged -= OnNodePositionChanged;
+            Detach();
 
             // 새로운 대상으로 교체
             Source = newSource;
@@ -166,14 +226,51 @@ namespace DockerDiagram.ViewModels
             SourceDir = newSDir;
             TargetDir = newTDir;
 
+            OnPropertyChanged(nameof(Source));
+            OnPropertyChanged(nameof(Target));
+            OnPropertyChanged(nameof(SourceDir));
+            OnPropertyChanged(nameof(TargetDir));
+
             // 새로운 대상의 이동 이벤트에 다시 귀를 기울입니다.(+=)
-            if (Source != null) Source.OnPositionChanged += OnNodePositionChanged;
-            if (Target != null) Target.OnPositionChanged += OnNodePositionChanged;
+            Attach();
 
             CalculateRoute(); // 교체된 타겟을 기준으로 경로 재계산
+            OnModified?.Invoke(this, EventArgs.Empty);
+        }
+
+        public void ReverseDirection()
+        {
+            if (IsBidirectional)
+            {
+                (_sourceDataLabel, _targetDataLabel) = (_targetDataLabel, _sourceDataLabel);
+                OnPropertyChanged(nameof(SourceDataLabel));
+                OnPropertyChanged(nameof(TargetDataLabel));
+            }
+
+            UpdateConnection(Target, TargetDir, Source, SourceDir);
         }
 
         public void RefreshRoute() => CalculateRoute();
+
+        internal void Attach()
+        {
+            if (_isAttached) return;
+
+            Source.OnPositionChanged += OnNodePositionChanged;
+            if (!ReferenceEquals(Source, Target))
+                Target.OnPositionChanged += OnNodePositionChanged;
+            _isAttached = true;
+        }
+
+        internal void Detach()
+        {
+            if (!_isAttached) return;
+
+            Source.OnPositionChanged -= OnNodePositionChanged;
+            if (!ReferenceEquals(Source, Target))
+                Target.OnPositionChanged -= OnNodePositionChanged;
+            _isAttached = false;
+        }
         #endregion
 
         #region Private Routing Methods
@@ -184,133 +281,80 @@ namespace DockerDiagram.ViewModels
         {
             if (Source == null || Target == null) return;
 
-            // 1. 직선거리 기준 상위 4개의 포트 방향 조합을 가져옵니다.
-            var candidates = GetTopClosestPorts(4);
-
-            PointCollection? bestRoute = null;
-            double bestLength = double.MaxValue;
-            PortDirection bestS = PortDirection.Right;
-            PortDirection bestT = PortDirection.Left;
-
-            // 2. 상위 4개 후보에 대해 각각 라우팅을 시도해보고, 가장 짧은 최적의 길을 찾습니다.
-            foreach (var (sDir, tDir) in candidates)
-            {
-                Point start = GetExactBorderPoint(Source, sDir);
-                Point end = GetExactBorderPoint(Target, tDir);
-
-                // 연결 대상이 그룹일 경우 장애물 박스(Rect)를 0으로 만들어서 선이 그룹 안쪽으로 파고들 수 있게 합니다.
-                Rect obsSource = Source.UsePointRouting ? new Rect(start.X, start.Y, 0, 0) : new Rect(Source.X, Source.Y, Source.Width, Source.Height);
-                Rect obsTarget = Target.UsePointRouting ? new Rect(end.X, end.Y, 0, 0) : new Rect(Target.X, Target.Y, Target.Width, Target.Height);
-
-                try
-                {
-                    var route = OrthogonalRouter.GetRoute(start, sDir, end, tDir, obsSource, obsTarget);
-
-                    if (route != null && route.Count >= 2)
-                    {
-                        double length = GetPathLength(route);
-
-                        // 가장 짧은 거리가 나오면 갱신
-                        if (length < bestLength)
-                        {
-                            bestLength = length;
-                            bestRoute = route;
-                            bestS = sDir;
-                            bestT = tDir;
-                        }
-                    }
-                }
-                catch { continue; }
-            }
-
-            // 3. 찾은 최적의 선을 화면에 적용합니다.
-            if (bestRoute != null)
-            {
-                SourceDir = bestS;
-                TargetDir = bestT;
-                Points = bestRoute;
-            }
-            else
-            {
-                // 장애물 등으로 길을 못 찾았을 경우 대비용 최후의 수단 (직선 긋기)
-                SourceDir = candidates[0].Item1;
-                TargetDir = candidates[0].Item2;
-                Points = new PointCollection { GetExactBorderPoint(Source, SourceDir), GetExactBorderPoint(Target, TargetDir) };
-            }
+            ConnectorRoutePlan route = ConnectorRoutePlanner.Calculate(Source, Target);
+            SourceDir = route.SourceDirection;
+            TargetDir = route.TargetDirection;
+            Points = route.Points;
 
             OnPropertyChanged(nameof(SourcePos));
             OnPropertyChanged(nameof(TargetPos));
-            CalculateArrowHead();
+            OnPropertyChanged(nameof(SourceLabelX));
+            OnPropertyChanged(nameof(SourceLabelY));
+            OnPropertyChanged(nameof(TargetLabelX));
+            OnPropertyChanged(nameof(TargetLabelY));
+            CalculateArrowHeads();
         }
 
-        /// <summary>
-        /// 시작점과 끝점의 4방향(상하좌우) 조합 중, 직선 거리가 가장 짧은 상위 N개를 반환합니다.
-        /// </summary>
-        private List<(PortDirection, PortDirection)> GetTopClosestPorts(int topCount)
+        private Point GetEndpointLabelPosition(bool sourceSide)
         {
-            var dirs = new[] { PortDirection.Top, PortDirection.Bottom, PortDirection.Left, PortDirection.Right };
-            var list = new List<(PortDirection sDir, PortDirection tDir, double dist)>();
+            if (Points == null || Points.Count < 2) return new Point();
 
-            foreach (var sDir in dirs)
+            Point endpoint = sourceSide ? Points[0] : Points[^1];
+            Point adjacent = sourceSide ? Points[1] : Points[^2];
+            Vector inward = adjacent - endpoint;
+            if (inward.Length <= 0) return endpoint;
+            inward.Normalize();
+
+            Point anchor = endpoint + (inward * 22);
+            string label = sourceSide ? SourceDataLabel : TargetDataLabel;
+            double estimatedWidth = EstimateLabelWidth(label);
+            const double estimatedHeight = 22;
+
+            if (Math.Abs(inward.X) >= Math.Abs(inward.Y))
             {
-                Point sPoint = GetExactBorderPoint(Source, sDir);
-                foreach (var tDir in dirs)
-                {
-                    Point tPoint = GetExactBorderPoint(Target, tDir);
-                    // 피타고라스 거리 비교 (루트는 생략하여 속도 최적화)
-                    double dist = (sPoint.X - tPoint.X) * (sPoint.X - tPoint.X) +
-                                  (sPoint.Y - tPoint.Y) * (sPoint.Y - tPoint.Y);
-
-                    list.Add((sDir, tDir, dist));
-                }
+                double x = inward.X >= 0 ? anchor.X : anchor.X - estimatedWidth;
+                double y = IsBidirectional && !sourceSide
+                    ? anchor.Y + 4
+                    : anchor.Y - estimatedHeight - 4;
+                return new Point(x, y);
             }
 
-            return list.OrderBy(x => x.dist)
-                       .Take(topCount)
-                       .Select(x => (x.sDir, x.tDir))
-                       .ToList();
+            double verticalX = IsBidirectional && !sourceSide
+                ? anchor.X - estimatedWidth - 8
+                : anchor.X + 8;
+            double verticalY = inward.Y >= 0 ? anchor.Y : anchor.Y - estimatedHeight;
+            return new Point(verticalX, verticalY);
         }
 
-        /// <summary>
-        /// PointCollection에 저장된 경로가 직각으로 꺾일 때, 실제로 총 몇 픽셀을 이동하는지 거리를 잽니다.
-        /// </summary>
-        private double GetPathLength(PointCollection path)
+        private static double EstimateLabelWidth(string label)
         {
-            double len = 0;
-            for (int i = 0; i < path.Count - 1; i++)
-            {
-                len += Math.Abs(path[i].X - path[i + 1].X) + Math.Abs(path[i].Y - path[i + 1].Y);
-            }
-            return len;
-        }
+            if (string.IsNullOrEmpty(label)) return 24;
 
-        private Point GetExactBorderPoint(IConnectableItem item, PortDirection dir)
-        {
-            switch (dir)
-            {
-                case PortDirection.Left: return new Point(item.X, item.CenterY);
-                case PortDirection.Right: return new Point(item.X + item.Width, item.CenterY);
-                case PortDirection.Top: return new Point(item.CenterX, item.Y);
-                case PortDirection.Bottom: return new Point(item.CenterX, item.Y + item.Height);
-                default: return new Point(item.CenterX, item.CenterY);
-            }
+            double textWidth = label.Sum(character => character > 0xFF ? 10.5 : 6.5);
+            return Math.Clamp(textWidth + 10, 24, 150);
         }
 
         /// <summary>
         /// 선의 가장 끝부분에 그려질 화살표(세모) 모양의 꼭짓점 3개 좌표를 계산합니다.
         /// </summary>
-        private void CalculateArrowHead()
+        private void CalculateArrowHeads()
         {
             if (Points == null || Points.Count < 2)
             {
                 ArrowPoints = new PointCollection();
+                SourceArrowPoints = new PointCollection();
                 return;
             }
 
-            Point endPoint = Points[Points.Count - 1];
-            Point prevPoint = Points[Points.Count - 2];
+            ArrowPoints = CreateArrowHead(Points[^1], Points[^2]);
+            SourceArrowPoints = IsBidirectional
+                ? CreateArrowHead(Points[0], Points[1])
+                : new PointCollection();
+        }
 
-            Vector direction = endPoint - prevPoint;
+        private static PointCollection CreateArrowHead(Point tip, Point adjacentPoint)
+        {
+            Vector direction = tip - adjacentPoint;
             if (direction.Length > 0)
             {
                 direction.Normalize();
@@ -319,12 +363,12 @@ namespace DockerDiagram.ViewModels
             double arrowLength = 10;
             double arrowWidth = 4;
 
-            Point basePoint = endPoint - (direction * arrowLength);
+            Point basePoint = tip - (direction * arrowLength);
             Vector perpendicular = new Vector(-direction.Y, direction.X);
 
-            ArrowPoints = new PointCollection
+            return new PointCollection
             {
-                endPoint,
+                tip,
                 basePoint + (perpendicular * arrowWidth),
                 basePoint - (perpendicular * arrowWidth)
             };

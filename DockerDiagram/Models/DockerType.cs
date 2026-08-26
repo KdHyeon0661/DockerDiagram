@@ -1,4 +1,4 @@
-﻿using DockerDiagram.Helpers;
+using DockerDiagram.Common;
 
 namespace DockerDiagram.Models
 {
@@ -140,6 +140,29 @@ namespace DockerDiagram.Models
         public List<DockerNetworkGroup> Networks { get; init; } = [];
         public int ResourceCount => Containers.Count + Volumes.Count + Networks.Count;
         public string SourceLabel => string.IsNullOrWhiteSpace(Source) ? "Project" : Source;
+        public string IdentityKey => CreateIdentityKey(Source, Name, WorkingDirectory, ConfigFiles);
+
+        public static string CreateIdentityKey(
+            string? source,
+            string? name,
+            string? workingDirectory,
+            string? configFiles)
+        {
+            static string Normalize(string? value) =>
+                (value ?? string.Empty).Trim().Replace('\\', '/').TrimEnd('/').ToUpperInvariant();
+
+            string normalizedConfigs = string.Join(",",
+                (configFiles ?? string.Empty)
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(Normalize)
+                    .OrderBy(value => value, StringComparer.Ordinal));
+
+            return string.Join("\u001F",
+                Normalize(string.IsNullOrWhiteSpace(source) ? "Compose" : source),
+                Normalize(name),
+                Normalize(workingDirectory),
+                normalizedConfigs);
+        }
     }
 
     public sealed class DockerSwarmTask
@@ -160,23 +183,58 @@ namespace DockerDiagram.Models
 
     public sealed class DockerSwarmNode : DockerResource
     {
-        public string Hostname { get; set; } = string.Empty;
-        public string Role { get; set; } = string.Empty;
-        public string Availability { get; set; } = string.Empty;
-        public string Status { get; set; } = string.Empty;
-        public string Address { get; set; } = string.Empty;
-        public string ManagerStatus { get; set; } = string.Empty;
-        public string EngineVersion { get; set; } = string.Empty;
+        private string _hostname = string.Empty;
+        private string _role = string.Empty;
+        private string _availability = string.Empty;
+        private string _status = string.Empty;
+        private string _address = string.Empty;
+        private string _managerStatus = string.Empty;
+        private string _engineVersion = string.Empty;
+
+        public string Hostname { get => _hostname; set => SetProperty(ref _hostname, value); }
+        public string Role
+        {
+            get => _role;
+            set
+            {
+                if (SetProperty(ref _role, value)) OnPropertyChanged(nameof(RoleLabel));
+            }
+        }
+        public string Availability { get => _availability; set => SetProperty(ref _availability, value); }
+        public string Status { get => _status; set => SetProperty(ref _status, value); }
+        public string Address { get => _address; set => SetProperty(ref _address, value); }
+        public string ManagerStatus
+        {
+            get => _managerStatus;
+            set
+            {
+                if (SetProperty(ref _managerStatus, value)) OnPropertyChanged(nameof(RoleLabel));
+            }
+        }
+        public string EngineVersion { get => _engineVersion; set => SetProperty(ref _engineVersion, value); }
         public string RoleLabel => string.IsNullOrWhiteSpace(ManagerStatus) ? Role : $"{Role} / {ManagerStatus}";
     }
 
     public sealed class DockerKubernetesNode : DockerResource
     {
-        public string Role { get; set; } = string.Empty;
-        public string Status { get; set; } = string.Empty;
-        public string Version { get; set; } = string.Empty;
-        public string InternalIp { get; set; } = string.Empty;
-        public string OsImage { get; set; } = string.Empty;
+        private string _role = string.Empty;
+        private string _status = string.Empty;
+        private string _version = string.Empty;
+        private string _internalIp = string.Empty;
+        private string _osImage = string.Empty;
+
+        public string Role
+        {
+            get => _role;
+            set
+            {
+                if (SetProperty(ref _role, value)) OnPropertyChanged(nameof(RoleLabel));
+            }
+        }
+        public string Status { get => _status; set => SetProperty(ref _status, value); }
+        public string Version { get => _version; set => SetProperty(ref _version, value); }
+        public string InternalIp { get => _internalIp; set => SetProperty(ref _internalIp, value); }
+        public string OsImage { get => _osImage; set => SetProperty(ref _osImage, value); }
         public string RoleLabel => string.IsNullOrWhiteSpace(Role) ? "node" : Role;
     }
 }

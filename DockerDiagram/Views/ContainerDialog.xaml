@@ -294,6 +294,7 @@
                                         <ListBox.ItemContainerStyle>
                                             <Style TargetType="ListBoxItem">
                                                 <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                                <Setter Property="VerticalContentAlignment" Value="Center"/>
                                                 <Setter Property="Padding" Value="5"/>
                                             </Style>
                                         </ListBox.ItemContainerStyle>

@@ -1,4 +1,8 @@
-﻿using System;
+using DockerDiagram.Infrastructure;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Contracts;
+using DockerDiagram.Common;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
@@ -7,7 +11,6 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using Docker.DotNet.Models;
-using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
@@ -72,6 +75,7 @@ namespace DockerDiagram.ViewModels
         public string LastSyncTime { get => _lastSyncTime; set => SetProperty(ref _lastSyncTime, value); }
         public bool IsSwarmRuntime => _mainVm.ActiveSheet?.RuntimeKind == RuntimeKind.DockerSwarm;
         public bool IsKubernetesRuntime => _mainVm.ActiveSheet?.RuntimeKind == RuntimeKind.Kubernetes;
+        public bool IsDockerRuntime => !IsSwarmRuntime && !IsKubernetesRuntime;
         public string ResourceHeader => IsSwarmRuntime ? "Swarm Resources" : IsKubernetesRuntime ? "Kubernetes Resources" : "Docker Resources";
         public string PrimaryResourceLabel => IsSwarmRuntime ? "Services" : IsKubernetesRuntime ? "Pods" : "Containers";
         public string PrimaryResourceSearchPlaceholder => IsSwarmRuntime ? "Search services" : IsKubernetesRuntime ? "Search pods" : "Search containers";
@@ -89,6 +93,7 @@ namespace DockerDiagram.ViewModels
         private List<DockerVolume> _rawVolumes = new();
         private List<DockerNetworkGroup> _rawNetworks = new();
         private List<DockerImage> _rawImages = new();
+        private List<DockerComposeProject> _rawComposeProjects = new();
         private List<DockerContainer> _rawKubernetesDeployments = new();
         private List<DockerContainer> _rawKubernetesReplicaSets = new();
         private List<DockerContainer> _rawKubernetesServices = new();
@@ -310,12 +315,14 @@ namespace DockerDiagram.ViewModels
 
             // 2. 필터링 로직
             var filteredContainers = _rawContainers
+                .Where(c => !IsDockerRuntime || !c.IsComposeManaged)
                 .Where(c => !usedContainerIds.Contains(c.Id))
                 .Where(c => string.IsNullOrEmpty(ContainerSearchText) || c.Name.Contains(ContainerSearchText, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             SyncCollection(ExistingContainers, filteredContainers, c => c.Id);
 
             var filteredVolumes = _rawVolumes
+                .Where(v => !IsDockerRuntime || !v.IsComposeManaged)
                 .Where(v => !usedVolumeNames.Contains(v.Name))
                 .Where(v => string.IsNullOrEmpty(VolumeSearchText) || v.Name.Contains(VolumeSearchText, StringComparison.OrdinalIgnoreCase))
                 .ToList();
@@ -323,6 +330,7 @@ namespace DockerDiagram.ViewModels
 
             var defaultNetworks = new HashSet<string> { "bridge", "host", "none" };
             var filteredNetworks = _rawNetworks
+                .Where(n => !IsDockerRuntime || !n.IsComposeManaged)
                 .Where(n => !usedNetworkNames.Contains(n.Name))
                 .Where(n => !defaultNetworks.Contains(n.Name))
                 .Where(n => string.IsNullOrEmpty(NetworkSearchText) || n.Name.Contains(NetworkSearchText, StringComparison.OrdinalIgnoreCase))
@@ -363,6 +371,7 @@ namespace DockerDiagram.ViewModels
                 FilterKubernetesResources(_rawKubernetesPersistentVolumeClaims, usedContainerIds),
                 resource => resource.Id);
             OnPropertyChanged(nameof(KubernetesResourceCount));
+            UpdateAvailableComposeProjects();
         }
 
         private List<DockerContainer> FilterKubernetesResources(IEnumerable<DockerContainer> resources, HashSet<string> usedIds)
@@ -400,8 +409,9 @@ namespace DockerDiagram.ViewModels
 
         private void UpdateComposeProjects()
         {
-            if (IsSwarmRuntime)
+            if (!IsDockerRuntime)
             {
+                _rawComposeProjects.Clear();
                 ComposeProjects.Clear();
                 return;
             }
@@ -410,6 +420,7 @@ namespace DockerDiagram.ViewModels
                 .Concat(_rawVolumes)
                 .Concat(_rawNetworks)
                 .Where(resource => resource.IsComposeManaged)
+                .Where(resource => resource is not DockerContainer { IsComposeOneOff: true })
                 .GroupBy(
                     resource => $"{NormalizeProjectSource(resource.ProjectSource)}\u001F{resource.ComposeProjectName}",
                     StringComparer.OrdinalIgnoreCase)
@@ -417,18 +428,16 @@ namespace DockerDiagram.ViewModels
                 .ThenBy(group => NormalizeProjectSource(group.First().ProjectSource), StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            ComposeProjects.Clear();
+            _rawComposeProjects.Clear();
             foreach (var projectGroup in projectGroups)
             {
                 var sourceResource = projectGroup.First();
                 string projectName = sourceResource.ComposeProjectName;
                 string source = NormalizeProjectSource(sourceResource.ProjectSource);
 
-                if (source.Equals("Template", StringComparison.OrdinalIgnoreCase))
-                    MarkLikelyTemplateContainers(projectName);
-
                 var containers = _rawContainers
                     .Where(container => IsSameProject(container, projectName, source))
+                    .Where(container => !container.IsComposeOneOff)
                     .OrderBy(container => container.ComposeServiceName, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(container => container.ComposeContainerNumber)
                     .ToList();
@@ -446,7 +455,7 @@ namespace DockerDiagram.ViewModels
                     .FirstOrDefault(resource => !string.IsNullOrWhiteSpace(resource.ComposeWorkingDirectory))
                     ?? containers.Cast<DockerResource>().Concat(volumes).Concat(networks).First();
 
-                ComposeProjects.Add(new DockerComposeProject
+                _rawComposeProjects.Add(new DockerComposeProject
                 {
                     Name = projectName,
                     WorkingDirectory = projectSource.ComposeWorkingDirectory,
@@ -457,6 +466,41 @@ namespace DockerDiagram.ViewModels
                     Networks = networks
                 });
             }
+
+            UpdateAvailableComposeProjects();
+        }
+
+        private void UpdateAvailableComposeProjects()
+        {
+            if (!IsDockerRuntime)
+            {
+                ComposeProjects.Clear();
+                return;
+            }
+
+            var usedProjectIdentities = _mainVm.Sheets
+                .SelectMany(sheet =>
+                    sheet.Nodes.Select(node => node.ComposeProjectIdentity)
+                        .Concat(sheet.Groups.Select(group => group.ComposeProjectIdentity)))
+                .Where(identity => !string.IsNullOrWhiteSpace(identity))
+                .ToHashSet(StringComparer.Ordinal);
+
+            // 이전 저장 파일은 프로젝트 고유키가 없을 수 있으므로 프로젝트명으로 호환 판정합니다.
+            var usedLegacyProjectNames = _mainVm.Sheets
+                .SelectMany(sheet => sheet.Nodes)
+                .Where(node => string.IsNullOrWhiteSpace(node.ComposeProjectIdentity))
+                .Select(node => node.ComposeProjectName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var availableProjects = _rawComposeProjects
+                .Where(project => !usedProjectIdentities.Contains(project.IdentityKey))
+                .Where(project => !usedLegacyProjectNames.Contains(project.Name))
+                .ToList();
+
+            ComposeProjects.Clear();
+            foreach (DockerComposeProject project in availableProjects)
+                ComposeProjects.Add(project);
         }
 
         private static bool IsSameProject(DockerResource resource, string projectName, string source)
@@ -470,27 +514,6 @@ namespace DockerDiagram.ViewModels
             return string.IsNullOrWhiteSpace(source) ? "Compose" : source;
         }
 
-        private void MarkLikelyTemplateContainers(string projectName)
-        {
-            if (string.IsNullOrWhiteSpace(projectName)) return;
-
-            string prefix = $"{projectName}-";
-            foreach (var container in _rawContainers)
-            {
-                if (container.IsComposeManaged) continue;
-                if (!container.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
-
-                string resourceName = container.Name[prefix.Length..];
-                if (string.IsNullOrWhiteSpace(resourceName))
-                    resourceName = container.Name;
-
-                container.ComposeProjectName = projectName;
-                container.ComposeResourceName = resourceName;
-                container.ComposeServiceName = resourceName;
-                container.ComposeContainerNumber = 1;
-                container.ProjectSource = "Template";
-            }
-        }
 
         public void UpdateDiagramConnectionStates()
         {
@@ -616,6 +639,7 @@ namespace DockerDiagram.ViewModels
         {
             OnPropertyChanged(nameof(IsSwarmRuntime));
             OnPropertyChanged(nameof(IsKubernetesRuntime));
+            OnPropertyChanged(nameof(IsDockerRuntime));
             OnPropertyChanged(nameof(ResourceHeader));
             OnPropertyChanged(nameof(PrimaryResourceLabel));
             OnPropertyChanged(nameof(PrimaryResourceSearchPlaceholder));
@@ -764,7 +788,7 @@ namespace DockerDiagram.ViewModels
             if (parameter is not DockerImage img) return;
 
             var imageRef = GetImageReference(img);
-            var defaultFileName = MakeSafeFileName(imageRef.Replace(':', '_')) + ".tar";
+            var defaultFileName = FileService.MakeSafeFileName(imageRef.Replace(':', '_'), "image") + ".tar";
             var path = _dialogService.ShowSaveFileDialog(
                 "Tar file (*.tar)|*.tar|All files (*.*)|*.*",
                 ".tar",
@@ -859,16 +883,6 @@ namespace DockerDiagram.ViewModels
             return image.Id;
         }
 
-        private static string MakeSafeFileName(string value)
-        {
-            foreach (var invalidChar in System.IO.Path.GetInvalidFileNameChars())
-            {
-                value = value.Replace(invalidChar, '_');
-            }
-
-            return string.IsNullOrWhiteSpace(value) ? "image" : value;
-        }
-
         private void RefreshTemplates()
         {
             Templates.Clear();
@@ -881,61 +895,119 @@ namespace DockerDiagram.ViewModels
         }
 
         // 화면 깜빡임 방지용 스마트 컬렉션 동기화 로직
-        private void SyncCollection<T>(ObservableCollection<T> uiCollection, List<T> newItems, Func<T, string> keySelector)
+        private static void SyncCollection<T>(ObservableCollection<T> uiCollection, List<T> newItems, Func<T, string> keySelector)
+            where T : notnull =>
+            DockerResourceCollectionSynchronizer.Sync(uiCollection, newItems, keySelector);
+    }
+
+    internal static class DockerResourceCollectionSynchronizer
+    {
+        internal static void Sync<T>(
+            ObservableCollection<T> uiCollection,
+            IReadOnlyList<T> newItems,
+            Func<T, string> keySelector)
+            where T : notnull
         {
-            var newKeys = new HashSet<string>(newItems.Select(keySelector));
-            var toRemove = uiCollection.Where(item => !newKeys.Contains(keySelector(item))).ToList();
+            ArgumentNullException.ThrowIfNull(uiCollection);
+            ArgumentNullException.ThrowIfNull(newItems);
+            ArgumentNullException.ThrowIfNull(keySelector);
 
-            foreach (var item in toRemove) uiCollection.Remove(item);
+            var latestByKey = new Dictionary<string, T>(StringComparer.Ordinal);
+            foreach (T newItem in newItems)
+                latestByKey[keySelector(newItem)] = newItem;
 
-            var currentKeys = new HashSet<string>(uiCollection.Select(keySelector));
-            foreach (var item in newItems)
+            var toRemove = uiCollection
+                .Where(item => !latestByKey.ContainsKey(keySelector(item)))
+                .ToList();
+            foreach (T item in toRemove)
+                uiCollection.Remove(item);
+
+            var currentKeys = new HashSet<string>(uiCollection.Select(keySelector), StringComparer.Ordinal);
+            foreach (T newItem in newItems)
             {
-                if (!currentKeys.Contains(keySelector(item)))
-                {
-                    uiCollection.Add(item);
-                }
+                if (currentKeys.Add(keySelector(newItem)))
+                    uiCollection.Add(newItem);
             }
 
-            var newItemMapByKey = newItems.ToDictionary(keySelector);
-            foreach (var item in uiCollection)
+            foreach (T currentItem in uiCollection)
             {
-                if (!newItemMapByKey.TryGetValue(keySelector(item), out var newItem) ||
-                    item is not DockerResource oldResource ||
-                    newItem is not DockerResource newResource)
-                {
-                    continue;
-                }
+                if (latestByKey.TryGetValue(keySelector(currentItem), out T? latestItem) && latestItem is not null)
+                    ApplySnapshot(currentItem, latestItem);
+            }
+        }
 
-                oldResource.ComposeProjectName = newResource.ComposeProjectName;
-                oldResource.ComposeResourceName = newResource.ComposeResourceName;
-                oldResource.ComposeWorkingDirectory = newResource.ComposeWorkingDirectory;
-                oldResource.ComposeConfigFiles = newResource.ComposeConfigFiles;
-                oldResource.Labels = new Dictionary<string, string>(newResource.Labels, StringComparer.OrdinalIgnoreCase);
+        internal static void ApplySnapshot(object currentItem, object latestItem)
+        {
+            if (ReferenceEquals(currentItem, latestItem)) return;
+
+            if (currentItem is DockerResource currentResource && latestItem is DockerResource latestResource)
+            {
+                currentResource.Id = latestResource.Id;
+                currentResource.Name = latestResource.Name;
+                currentResource.StateColor = latestResource.StateColor;
+                currentResource.ComposeProjectName = latestResource.ComposeProjectName;
+                currentResource.ComposeResourceName = latestResource.ComposeResourceName;
+                currentResource.ComposeWorkingDirectory = latestResource.ComposeWorkingDirectory;
+                currentResource.ComposeConfigFiles = latestResource.ComposeConfigFiles;
+                currentResource.ProjectSource = latestResource.ProjectSource;
+                currentResource.Labels = new Dictionary<string, string>(
+                    latestResource.Labels,
+                    StringComparer.OrdinalIgnoreCase);
             }
 
-            if (typeof(T) == typeof(DockerContainer))
+            if (currentItem is DockerContainer currentContainer && latestItem is DockerContainer latestContainer)
             {
-                var newItemMap = newItemMapByKey;
-                foreach (var item in uiCollection)
-                {
-                    if (newItemMap.TryGetValue(keySelector(item), out var newItem))
-                    {
-                        var oldContainer = item as DockerContainer;
-                        var newContainer = newItem as DockerContainer;
-                        if (oldContainer != null && newContainer != null)
-                        {
-                            oldContainer.ComposeServiceName = newContainer.ComposeServiceName;
-                            oldContainer.ComposeContainerNumber = newContainer.ComposeContainerNumber;
-                            oldContainer.IsComposeOneOff = newContainer.IsComposeOneOff;
-                            if (oldContainer.State != newContainer.State)
-                            {
-                                oldContainer.State = newContainer.State;
-                                oldContainer.StateColor = newContainer.StateColor;
-                            }
-                        }
-                    }
-                }
+                currentContainer.Image = latestContainer.Image;
+                currentContainer.State = latestContainer.State;
+                currentContainer.Ports = latestContainer.Ports;
+                currentContainer.ComposeServiceName = latestContainer.ComposeServiceName;
+                currentContainer.ComposeContainerNumber = latestContainer.ComposeContainerNumber;
+                currentContainer.IsComposeOneOff = latestContainer.IsComposeOneOff;
+                currentContainer.IsSwarmService = latestContainer.IsSwarmService;
+                currentContainer.SwarmMode = latestContainer.SwarmMode;
+                currentContainer.SwarmDesiredReplicas = latestContainer.SwarmDesiredReplicas;
+                currentContainer.SwarmRunningReplicas = latestContainer.SwarmRunningReplicas;
+                currentContainer.IsKubernetesPod = latestContainer.IsKubernetesPod;
+                currentContainer.KubernetesKind = latestContainer.KubernetesKind;
+                currentContainer.KubernetesApiResource = latestContainer.KubernetesApiResource;
+                currentContainer.KubernetesApiVersion = latestContainer.KubernetesApiVersion;
+                currentContainer.KubernetesNamespace = latestContainer.KubernetesNamespace;
+                currentContainer.KubernetesNodeName = latestContainer.KubernetesNodeName;
+                currentContainer.KubernetesReady = latestContainer.KubernetesReady;
+                currentContainer.KubernetesRestarts = latestContainer.KubernetesRestarts;
+                currentContainer.KubernetesDesiredReplicas = latestContainer.KubernetesDesiredReplicas;
+                currentContainer.KubernetesReadyReplicas = latestContainer.KubernetesReadyReplicas;
+                currentContainer.KubernetesPodIp = latestContainer.KubernetesPodIp;
+                currentContainer.KubernetesRawJson = latestContainer.KubernetesRawJson;
+            }
+            else if (currentItem is DockerNetworkGroup currentNetwork && latestItem is DockerNetworkGroup latestNetwork)
+            {
+                currentNetwork.Driver = latestNetwork.Driver;
+            }
+            else if (currentItem is DockerSwarmNode currentSwarmNode && latestItem is DockerSwarmNode latestSwarmNode)
+            {
+                currentSwarmNode.Hostname = latestSwarmNode.Hostname;
+                currentSwarmNode.Role = latestSwarmNode.Role;
+                currentSwarmNode.Availability = latestSwarmNode.Availability;
+                currentSwarmNode.Status = latestSwarmNode.Status;
+                currentSwarmNode.Address = latestSwarmNode.Address;
+                currentSwarmNode.ManagerStatus = latestSwarmNode.ManagerStatus;
+                currentSwarmNode.EngineVersion = latestSwarmNode.EngineVersion;
+            }
+            else if (currentItem is DockerKubernetesNode currentKubernetesNode && latestItem is DockerKubernetesNode latestKubernetesNode)
+            {
+                currentKubernetesNode.Role = latestKubernetesNode.Role;
+                currentKubernetesNode.Status = latestKubernetesNode.Status;
+                currentKubernetesNode.Version = latestKubernetesNode.Version;
+                currentKubernetesNode.InternalIp = latestKubernetesNode.InternalIp;
+                currentKubernetesNode.OsImage = latestKubernetesNode.OsImage;
+            }
+            else if (currentItem is DockerImage currentImage && latestItem is DockerImage latestImage)
+            {
+                currentImage.Id = latestImage.Id;
+                currentImage.Repository = latestImage.Repository;
+                currentImage.Tag = latestImage.Tag;
+                currentImage.Size = latestImage.Size;
             }
         }
     }

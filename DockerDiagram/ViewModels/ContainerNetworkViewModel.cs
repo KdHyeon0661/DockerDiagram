@@ -1,5 +1,6 @@
+using DockerDiagram.Contracts;
+using DockerDiagram.Common;
 using Docker.DotNet.Models;
-using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 using System;
 using System.Collections.Generic;
@@ -18,10 +19,26 @@ namespace DockerDiagram.ViewModels
         private string _staticIPv6 = string.Empty;
         private string _aliasesText = string.Empty;
         private string _driverOptionsText = string.Empty;
+        private string _ipv4 = "-";
+        private string _ipv6 = "-";
+        private bool _isAdvancedExpanded;
 
         public string NetworkName { get; set; } = string.Empty;
-        public string IPv4 { get; set; } = "-";
-        public string IPv6 { get; set; } = "-";
+        public string IPv4
+        {
+            get => _ipv4;
+            set => SetProperty(ref _ipv4, value);
+        }
+        public string IPv6
+        {
+            get => _ipv6;
+            set => SetProperty(ref _ipv6, value);
+        }
+        public bool IsAdvancedExpanded
+        {
+            get => _isAdvancedExpanded;
+            set => SetProperty(ref _isAdvancedExpanded, value);
+        }
         public Action<ContainerNetworkDetailViewModel>? OptionsChanged { get; set; }
         public AsyncRelayCommand? ApplyCommand { get; set; }
 
@@ -84,6 +101,40 @@ namespace DockerDiagram.ViewModels
 
         public ObservableCollection<ContainerNetworkDetailViewModel> Details { get; } = new();
 
+        public string NetworkSummary => FormatSummary(Details.Select(detail => detail.NetworkName), 28);
+        public string IPv4Summary => FormatSummary(Details.Select(detail => detail.IPv4), 28);
+        public string IPv6Summary => FormatSummary(Details.Select(detail => detail.IPv6), 22);
+
+        public string NetworkDetails => FormatDetails(Details.Select(detail => detail.NetworkName));
+        public string IPv4Details => FormatDetails(Details.Select(detail => detail.IPv4));
+        public string IPv6Details => FormatDetails(Details.Select(detail => detail.IPv6));
+
+        private static List<string> NormalizeSummaryValues(IEnumerable<string> values)
+        {
+            return values
+                .Where(value => !string.IsNullOrWhiteSpace(value) && value != "-")
+                .Select(value => value.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static string FormatSummary(IEnumerable<string> values, int maxLength)
+        {
+            List<string> items = NormalizeSummaryValues(values);
+            if (items.Count == 0) return "-";
+
+            string first = items[0].Length <= maxLength
+                ? items[0]
+                : $"{items[0][..(maxLength - 1)]}…";
+            return items.Count == 1 ? first : $"{first} +{items.Count - 1}";
+        }
+
+        private static string FormatDetails(IEnumerable<string> values)
+        {
+            List<string> items = NormalizeSummaryValues(values);
+            return items.Count == 0 ? "-" : string.Join(Environment.NewLine, items);
+        }
+
         public Dictionary<string, string> IpMap
         {
             get => _ipMap;
@@ -131,38 +182,71 @@ namespace DockerDiagram.ViewModels
 
         public void UpdateDetails(IEnumerable<KeyValuePair<string, EndpointSettings>> networks)
         {
+            var snapshot = networks.ToList();
             var names = new List<string>();
             var addresses = new List<string>();
-            Details.Clear();
+            var desiredNames = new HashSet<string>(
+                snapshot.Select(network => network.Key),
+                StringComparer.OrdinalIgnoreCase);
 
-            foreach (var network in networks)
+            for (int targetIndex = 0; targetIndex < snapshot.Count; targetIndex++)
             {
+                var network = snapshot[targetIndex];
                 names.Add(network.Key);
                 string ipv4 = network.Value.IPAddress;
                 string ipv6 = network.Value.GlobalIPv6Address;
                 if (!string.IsNullOrEmpty(ipv4)) addresses.Add(ipv4);
 
-                var options = GetOptions(network.Key) ?? new ContainerNetworkOptions();
-                string networkName = network.Key;
-                Details.Add(new ContainerNetworkDetailViewModel
+                var detail = Details.FirstOrDefault(existing =>
+                    string.Equals(existing.NetworkName, network.Key, StringComparison.OrdinalIgnoreCase));
+
+                if (detail == null)
                 {
-                    NetworkName = networkName,
-                    IPv4 = string.IsNullOrEmpty(ipv4) ? "-" : ipv4,
-                    IPv6 = string.IsNullOrEmpty(ipv6) ? "-" : ipv6,
-                    StaticIPv4 = options.StaticIPv4,
-                    StaticIPv6 = options.StaticIPv6,
-                    AliasesText = string.Join(", ", options.Aliases),
-                    DriverOptionsText = string.Join(
-                        ", ",
-                        options.DriverOptions.Select(kv => $"{kv.Key}={kv.Value}")),
-                    OptionsChanged = SetOptions,
-                    ApplyCommand = new AsyncRelayCommand(_ => ApplyOptionsAsync(networkName))
-                });
+                    var options = GetOptions(network.Key) ?? new ContainerNetworkOptions();
+                    string networkName = network.Key;
+                    detail = new ContainerNetworkDetailViewModel
+                    {
+                        NetworkName = networkName,
+                        IPv4 = string.IsNullOrEmpty(ipv4) ? "-" : ipv4,
+                        IPv6 = string.IsNullOrEmpty(ipv6) ? "-" : ipv6,
+                        StaticIPv4 = options.StaticIPv4,
+                        StaticIPv6 = options.StaticIPv6,
+                        AliasesText = string.Join(", ", options.Aliases),
+                        DriverOptionsText = string.Join(
+                            ", ",
+                            options.DriverOptions.Select(kv => $"{kv.Key}={kv.Value}")),
+                        OptionsChanged = SetOptions,
+                        ApplyCommand = new AsyncRelayCommand(_ => ApplyOptionsAsync(networkName))
+                    };
+                    Details.Insert(targetIndex, detail);
+                }
+                else
+                {
+                    int currentIndex = Details.IndexOf(detail);
+                    if (currentIndex != targetIndex)
+                        Details.Move(currentIndex, targetIndex);
+
+                    detail.IPv4 = string.IsNullOrEmpty(ipv4) ? "-" : ipv4;
+                    detail.IPv6 = string.IsNullOrEmpty(ipv6) ? "-" : ipv6;
+                }
+            }
+
+            for (int index = Details.Count - 1; index >= 0; index--)
+            {
+                if (!desiredNames.Contains(Details[index].NetworkName))
+                    Details.RemoveAt(index);
             }
 
             _node.ConnectedNetworksString = names.Count > 0 ? string.Join(", ", names) : "None";
             _node.IpAddresses = addresses.Count > 0 ? string.Join(", ", addresses) : "-";
             _node.IPAddress = addresses.Count > 0 ? addresses[0] : "-";
+
+            OnPropertyChanged(nameof(NetworkSummary));
+            OnPropertyChanged(nameof(IPv4Summary));
+            OnPropertyChanged(nameof(IPv6Summary));
+            OnPropertyChanged(nameof(NetworkDetails));
+            OnPropertyChanged(nameof(IPv4Details));
+            OnPropertyChanged(nameof(IPv6Details));
         }
 
         public async Task<bool> ValidateBeforeConnectAsync(
@@ -312,7 +396,7 @@ namespace DockerDiagram.ViewModels
                     $"'{networkName}' 네트워크 옵션을 적용하려면 컨테이너 네트워크 연결을 재생성해야 합니다.\n" +
                     "작업 중 아주 짧게 해당 네트워크 연결이 끊길 수 있습니다.\n\n계속하시겠습니까?",
                     "Apply Network Options");
-                if (result != MessageBoxResult.Yes) return;
+                if (result != DialogChoice.Yes) return;
 
                 try
                 {

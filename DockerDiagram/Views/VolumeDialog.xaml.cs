@@ -1,4 +1,4 @@
-using DockerDiagram.Helpers;
+using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 using System.Collections.Generic;
 using System.Linq;

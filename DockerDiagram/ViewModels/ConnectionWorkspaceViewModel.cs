@@ -1,5 +1,6 @@
+using DockerDiagram.Contracts;
+using DockerDiagram.Common;
 using System.Collections.ObjectModel;
-using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels

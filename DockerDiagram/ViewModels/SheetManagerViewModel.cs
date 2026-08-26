@@ -1,3 +1,7 @@
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Infrastructure;
+using DockerDiagram.Contracts;
+using DockerDiagram.Common;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -5,7 +9,6 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Input;
-using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
@@ -14,7 +17,7 @@ namespace DockerDiagram.ViewModels
     /// 접속 대상(Local/SSH)별 상위 탭과, 각 접속 대상 안의 맵/시트 탭을 함께 관리합니다.
     /// 기존 화면의 ActiveSheet 중심 바인딩은 유지해 캔버스 로직과의 결합을 최소화합니다.
     /// </summary>
-    public class SheetManagerViewModel : ViewModelBase
+    public class SheetManagerViewModel : ViewModelBase, IDisposable
     {
         private readonly MainViewModel _mainVm;
         private readonly IDockerService _defaultDockerService;
@@ -27,6 +30,7 @@ namespace DockerDiagram.ViewModels
         private ConnectionWorkspaceViewModel? _activeWorkspace;
         private bool _isWorkspaceLayer = true;
         private bool _suppressCreationSwitchPrompt;
+        private bool _disposed;
 
         public bool IsWorkspaceLayer
         {
@@ -178,11 +182,15 @@ namespace DockerDiagram.ViewModels
         {
             if (!string.IsNullOrEmpty(CurrentFilePath))
             {
-                bool success = FileService.QuickSave(_mainVm, CurrentFilePath);
-                if (success)
+                DiagramSaveResult result = FileService.QuickSaveWithResult(_mainVm, CurrentFilePath);
+                if (result.Success)
                 {
                     _dialogService.ShowMessage("저장되었습니다.");
                     IsModified = false;
+                }
+                else
+                {
+                    _dialogService.ShowError(result.GetUserMessage(CurrentFilePath), "저장 실패");
                 }
             }
             else
@@ -280,8 +288,7 @@ namespace DockerDiagram.ViewModels
                     dockerService != _defaultDockerService &&
                     !IsServiceUsedByAnyWorkspace(dockerService))
                 {
-                    App.ActiveDockerServices.Remove(dockerService);
-                    dockerService.Dispose();
+                    DisposeUnownedConnection(profile, dockerService);
                 }
 
                 if (activate) ActiveWorkspace = existing;
@@ -290,6 +297,7 @@ namespace DockerDiagram.ViewModels
 
             var workspace = new ConnectionWorkspaceViewModel(profile, dockerService);
             Workspaces.Add(workspace);
+            _mainVm.DockerServiceFactory.Register(dockerService);
 
             if (createInitialSheet)
             {
@@ -352,6 +360,11 @@ namespace DockerDiagram.ViewModels
             {
                 workspace = new ConnectionWorkspaceViewModel(sheet.Profile, sheet.DockerService);
                 Workspaces.Add(workspace);
+                _mainVm.DockerServiceFactory.Register(sheet.DockerService);
+            }
+            else if (!ReferenceEquals(workspace.DockerService, sheet.DockerService))
+            {
+                throw new InvalidOperationException("같은 워크스페이스의 시트는 하나의 Docker 연결 서비스를 공유해야 합니다.");
             }
 
             workspace.Sheets.Add(sheet);
@@ -540,14 +553,14 @@ namespace DockerDiagram.ViewModels
                 SshTunnelManager.ReleaseTunnel(
                     workspace.Profile.HostIp,
                     workspace.Profile.SshPort,
-                    workspace.Profile.SshUsername ?? "root"
+                    workspace.Profile.SshUsername ?? "root",
+                    workspace.Profile.RemoteDockerSocketPath
                 );
             }
 
             if (!serviceUsedElsewhere && workspace.DockerService != _defaultDockerService)
             {
-                App.ActiveDockerServices.Remove(workspace.DockerService);
-                workspace.DockerService.Dispose();
+                _mainVm.DockerServiceFactory.Release(workspace.DockerService);
             }
 
             bool wasActive = ActiveWorkspace == workspace;
@@ -566,7 +579,14 @@ namespace DockerDiagram.ViewModels
 
         public void ClearAllWorkspaces()
         {
-            foreach (var sheet in AllSheets.ToList())
+            var workspaces = Workspaces.ToList();
+            var ownedConnections = workspaces
+                .Where(workspace => workspace.DockerService != _defaultDockerService)
+                .GroupBy(workspace => workspace.DockerService, ReferenceEqualityComparer.Instance)
+                .Select(group => group.First())
+                .ToList();
+
+            foreach (var sheet in workspaces.SelectMany(workspace => workspace.Sheets).ToList())
             {
                 UnsubscribeSheetEvents(sheet);
             }
@@ -576,6 +596,19 @@ namespace DockerDiagram.ViewModels
             ActiveSheet = null;
             OnPropertyChanged(nameof(ActiveWorkspace));
             OnPropertyChanged(nameof(Sheets));
+
+            foreach (var workspace in ownedConnections)
+            {
+                ReleaseTunnel(workspace.Profile);
+                _mainVm.DockerServiceFactory.Release(workspace.DockerService);
+            }
+        }
+
+        public IDockerService? FindDockerServiceForConnection(ConnectionProfile profile)
+        {
+            return Workspaces
+                .FirstOrDefault(workspace => IsSameConnection(workspace.Profile, profile))
+                ?.DockerService;
         }
 
         private ConnectionWorkspaceViewModel EnsureLocalWorkspace()
@@ -608,12 +641,53 @@ namespace DockerDiagram.ViewModels
             return string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(left.HostIp, right.HostIp, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(left.SshUsername, right.SshUsername, StringComparison.OrdinalIgnoreCase)
-                && left.SshPort == right.SshPort;
+                && left.SshPort == right.SshPort
+                && string.Equals(GetRemoteDockerSocketPath(left), GetRemoteDockerSocketPath(right), StringComparison.Ordinal);
         }
 
         private bool IsServiceUsedByAnyWorkspace(IDockerService dockerService)
         {
             return Workspaces.Any(workspace => ReferenceEquals(workspace.DockerService, dockerService));
+        }
+
+        private static string GetRemoteDockerSocketPath(ConnectionProfile profile)
+            => string.IsNullOrWhiteSpace(profile.RemoteDockerSocketPath)
+                ? SshTunnelManager.DefaultRemoteDockerSocketPath
+                : profile.RemoteDockerSocketPath.Trim();
+
+        private static bool IsSameConnection(ConnectionProfile left, ConnectionProfile right)
+        {
+            if (left.Type != right.Type) return false;
+
+            return left.Type switch
+            {
+                EndpointType.Local => true,
+                EndpointType.SshRemote =>
+                    string.Equals(left.HostIp, right.HostIp, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(left.SshUsername ?? "root", right.SshUsername ?? "root", StringComparison.OrdinalIgnoreCase) &&
+                    left.SshPort == right.SshPort &&
+                    string.Equals(GetRemoteDockerSocketPath(left), GetRemoteDockerSocketPath(right), StringComparison.Ordinal),
+                EndpointType.DockerContext =>
+                    string.Equals(left.DockerEndpoint, right.DockerEndpoint, StringComparison.OrdinalIgnoreCase),
+                _ => false
+            };
+        }
+
+        private static void DisposeUnownedConnection(ConnectionProfile profile, IDockerService dockerService)
+        {
+            ReleaseTunnel(profile);
+            dockerService.Dispose();
+        }
+
+        private static void ReleaseTunnel(ConnectionProfile profile)
+        {
+            if (profile.Type != EndpointType.SshRemote || string.IsNullOrWhiteSpace(profile.HostIp)) return;
+
+            SshTunnelManager.ReleaseTunnel(
+                profile.HostIp,
+                profile.SshPort,
+                profile.SshUsername ?? "root",
+                profile.RemoteDockerSocketPath);
         }
 
         private static ConnectionProfile CloneProfile(ConnectionProfile source)
@@ -629,6 +703,7 @@ namespace DockerDiagram.ViewModels
                 SshPort = source.SshPort,
                 LocalTunnelPort = source.LocalTunnelPort,
                 SshKeyFilePath = source.SshKeyFilePath,
+                RemoteDockerSocketPath = source.RemoteDockerSocketPath,
                 DockerEndpoint = source.DockerEndpoint
             };
         }
@@ -643,5 +718,12 @@ namespace DockerDiagram.ViewModels
 
         private void Node_OnModified(object? sender, EventArgs e) => MarkAsModified();
         private void Connector_OnModified(object? sender, EventArgs e) => MarkAsModified();
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            ClearAllWorkspaces();
+        }
     }
 }

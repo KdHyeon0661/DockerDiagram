@@ -1,3 +1,4 @@
+using DockerDiagram.ApplicationServices;
 using Microsoft.Win32;
 using System;
 using System.IO;
@@ -15,7 +16,7 @@ namespace DockerDiagram.Views
             Title = inspectTitle;
             TitleText.Text = inspectTitle;
             JsonTextBox.Text = json;
-            _defaultFileName = MakeSafeFileName(inspectTitle) + ".json";
+            _defaultFileName = FileService.MakeSafeFileName(inspectTitle, "docker-inspect") + ".json";
         }
 
         private void CopyButton_Click(object sender, RoutedEventArgs e)
@@ -40,15 +41,5 @@ namespace DockerDiagram.Views
         }
 
         private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
-
-        private static string MakeSafeFileName(string value)
-        {
-            foreach (var invalidChar in Path.GetInvalidFileNameChars())
-            {
-                value = value.Replace(invalidChar, '_');
-            }
-
-            return string.IsNullOrWhiteSpace(value) ? "docker-inspect" : value;
-        }
     }
 }

@@ -1,10 +1,12 @@
-using DockerDiagram.Helpers;
+using DockerDiagram.Contracts;
+using DockerDiagram.Common;
 using DockerDiagram.Models;
 using OxyPlot;
 using OxyPlot.Axes;
 using OxyPlot.Series;
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
 
@@ -21,11 +23,14 @@ namespace DockerDiagram.ViewModels
         private readonly LineSeries _cpuSeries;
         private readonly LineSeries _memorySeries;
         private DispatcherTimer? _statsTimer;
+        private int _refreshInProgress;
         private int _timeIndex;
         private double _maxCpuCount = 8.0;
         private double _targetCpuCount = 1.0;
+        private double _cpuAdjustmentStep = 0.25;
         private long _maxMemoryMb = 8192;
         private long _targetMemoryMb = 512;
+        private long _memoryAdjustmentStepMb = 128;
         private string _cpuUsage = "0.0%";
         private double _cpuValue;
         private string _memoryUsage = "0B / 0B";
@@ -46,7 +51,7 @@ namespace DockerDiagram.ViewModels
                 Position = AxisPosition.Left,
                 Minimum = 0,
                 Maximum = 100,
-                IsAxisVisible = true,
+                IsAxisVisible = false,
                 MajorGridlineStyle = LineStyle.Solid,
                 MajorGridlineColor = OxyColors.LightGray
             });
@@ -64,7 +69,8 @@ namespace DockerDiagram.ViewModels
             {
                 Position = AxisPosition.Left,
                 Minimum = 0,
-                IsAxisVisible = true,
+                Maximum = 100,
+                IsAxisVisible = false,
                 MajorGridlineStyle = LineStyle.Solid,
                 MajorGridlineColor = OxyColors.LightGray
             });
@@ -87,7 +93,11 @@ namespace DockerDiagram.ViewModels
         public double TargetCpuCount
         {
             get => _targetCpuCount;
-            set => SetProperty(ref _targetCpuCount, value);
+            set
+            {
+                if (SetProperty(ref _targetCpuCount, value))
+                    OnPropertyChanged(nameof(CpuSliderValue));
+            }
         }
 
         public long MaxMemoryMb
@@ -99,7 +109,117 @@ namespace DockerDiagram.ViewModels
         public long TargetMemoryMb
         {
             get => _targetMemoryMb;
-            set => SetProperty(ref _targetMemoryMb, value);
+            set
+            {
+                if (SetProperty(ref _targetMemoryMb, value))
+                    OnPropertyChanged(nameof(MemorySliderValue));
+            }
+        }
+
+        public double CpuSliderValue
+        {
+            get => TargetCpuCount;
+            set
+            {
+                double snapped = Math.Round(
+                    value / CpuAdjustmentStep,
+                    MidpointRounding.AwayFromZero) * CpuAdjustmentStep;
+                TargetCpuCount = Math.Clamp(snapped, 0.1, MaxCpuCount);
+            }
+        }
+
+        public double MemorySliderValue
+        {
+            get => TargetMemoryMb;
+            set
+            {
+                long snapped = (long)Math.Round(
+                    value / MemoryAdjustmentStepMb,
+                    MidpointRounding.AwayFromZero) * MemoryAdjustmentStepMb;
+                TargetMemoryMb = Math.Clamp(snapped, 64L, Math.Max(64L, MaxMemoryMb));
+            }
+        }
+
+        public double CpuAdjustmentStep
+        {
+            get => _cpuAdjustmentStep;
+            private set
+            {
+                if (!SetProperty(ref _cpuAdjustmentStep, value))
+                    return;
+
+                OnPropertyChanged(nameof(IsCpuStepQuarter));
+                OnPropertyChanged(nameof(IsCpuStepHalf));
+                OnPropertyChanged(nameof(IsCpuStepOne));
+            }
+        }
+
+        public long MemoryAdjustmentStepMb
+        {
+            get => _memoryAdjustmentStepMb;
+            private set
+            {
+                if (!SetProperty(ref _memoryAdjustmentStepMb, value))
+                    return;
+
+                OnPropertyChanged(nameof(IsMemoryStep64));
+                OnPropertyChanged(nameof(IsMemoryStep128));
+                OnPropertyChanged(nameof(IsMemoryStep256));
+            }
+        }
+
+        public bool IsCpuStepQuarter
+        {
+            get => Math.Abs(CpuAdjustmentStep - 0.25) < 0.001;
+            set
+            {
+                if (value) CpuAdjustmentStep = 0.25;
+            }
+        }
+
+        public bool IsCpuStepHalf
+        {
+            get => Math.Abs(CpuAdjustmentStep - 0.5) < 0.001;
+            set
+            {
+                if (value) CpuAdjustmentStep = 0.5;
+            }
+        }
+
+        public bool IsCpuStepOne
+        {
+            get => Math.Abs(CpuAdjustmentStep - 1.0) < 0.001;
+            set
+            {
+                if (value) CpuAdjustmentStep = 1.0;
+            }
+        }
+
+        public bool IsMemoryStep64
+        {
+            get => MemoryAdjustmentStepMb == 64;
+            set
+            {
+                if (value) MemoryAdjustmentStepMb = 64;
+            }
+        }
+
+        public bool IsMemoryStep128
+        {
+            get => MemoryAdjustmentStepMb == 128;
+            set
+            {
+                if (value) MemoryAdjustmentStepMb = 128;
+            }
+        }
+
+        public bool IsMemoryStep256
+        {
+            get => MemoryAdjustmentStepMb == 256;
+            set
+            {
+                if (value) MemoryAdjustmentStepMb = 256;
+            }
         }
 
         public string CpuUsage
@@ -144,17 +264,25 @@ namespace DockerDiagram.ViewModels
 
         public void Stop() => _statsTimer?.Stop();
 
-        public async Task RefreshAsync()
+        public async Task RefreshAsync(bool appendChartPoint = true)
         {
-            if (!_isRunning()) return;
+            if (!_isRunning() ||
+                Interlocked.CompareExchange(ref _refreshInProgress, 1, 0) != 0)
+            {
+                return;
+            }
 
             try
             {
                 var stats = await _containerService.GetContainerStatsAsync(_getContainerId());
-                ApplyStats(stats, appendChartPoint: false);
+                ApplyStats(stats, appendChartPoint);
             }
             catch
             {
+            }
+            finally
+            {
+                Volatile.Write(ref _refreshInProgress, 0);
             }
         }
 
@@ -170,7 +298,7 @@ namespace DockerDiagram.ViewModels
             if (!appendChartPoint) return;
 
             _cpuSeries.Points.Add(new DataPoint(_timeIndex, stats.CpuPercentage));
-            _memorySeries.Points.Add(new DataPoint(_timeIndex, stats.MemoryUsedMB));
+            _memorySeries.Points.Add(new DataPoint(_timeIndex, MemoryValue));
             TrimSeries();
             _timeIndex++;
             UpdateAxisRange();

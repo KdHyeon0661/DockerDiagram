@@ -1,4 +1,4 @@
-﻿using DockerDiagram.Helpers;
+﻿using DockerDiagram.Contracts;
 using System.Text.RegularExpressions;
 using System.Windows;
 

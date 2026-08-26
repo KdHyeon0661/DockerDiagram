@@ -1,4 +1,4 @@
-﻿using DockerDiagram.Helpers;
+﻿using DockerDiagram.Contracts;
 using System.Windows;
 
 namespace DockerDiagram.Views

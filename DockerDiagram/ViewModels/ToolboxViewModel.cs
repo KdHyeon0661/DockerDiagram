@@ -1,7 +1,9 @@
-﻿using System;
+﻿using DockerDiagram.ApplicationServices;
+using DockerDiagram.Contracts;
+using DockerDiagram.Common;
+using System;
 using System.Threading.Tasks;
 using System.Windows.Input;
-using DockerDiagram.Helpers;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
@@ -112,7 +114,7 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                Mouse.OverrideCursor = Cursors.Wait;
+                _dialogService.SetBusyCursor(true);
 
                 if (pruneOptions.Target == DockerPruneTarget.Volume)
                 {
@@ -137,7 +139,7 @@ namespace DockerDiagram.ViewModels
             }
             finally
             {
-                Mouse.OverrideCursor = null;
+                _dialogService.SetBusyCursor(false);
             }
         }
 

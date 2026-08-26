@@ -7,6 +7,8 @@ namespace DockerDiagram.Models
     public class SystemDiskUsage
     {
         public long LayersSize { get; set; }
+        public bool HasLayersSize { get; set; } = true;
+        public bool HasBuildCacheData { get; set; } = true;
         public List<SystemDiskUsageImage> Images { get; set; } = [];
         public List<SystemDiskUsageContainer> Containers { get; set; } = [];
         public List<SystemDiskUsageVolume> Volumes { get; set; } = [];
@@ -16,11 +18,11 @@ namespace DockerDiagram.Models
         public long ContainersSize => Containers.Sum(c => c.SizeRw);
         public long VolumesSize => Volumes.Sum(v => v.UsageData?.Size ?? 0);
         public long BuildCacheSize => BuildCache.Sum(c => c.Size);
-        public string FormattedLayersSize => DiskUsageFormat.FormatBytes(LayersSize);
+        public string FormattedLayersSize => HasLayersSize ? DiskUsageFormat.FormatBytes(LayersSize) : "N/A";
         public string FormattedImagesSize => DiskUsageFormat.FormatBytes(ImagesSize);
         public string FormattedContainersSize => DiskUsageFormat.FormatBytes(ContainersSize);
         public string FormattedVolumesSize => DiskUsageFormat.FormatBytes(VolumesSize);
-        public string FormattedBuildCacheSize => DiskUsageFormat.FormatBytes(BuildCacheSize);
+        public string FormattedBuildCacheSize => HasBuildCacheData ? DiskUsageFormat.FormatBytes(BuildCacheSize) : "N/A";
     }
 
     public class SystemDiskUsageImage
