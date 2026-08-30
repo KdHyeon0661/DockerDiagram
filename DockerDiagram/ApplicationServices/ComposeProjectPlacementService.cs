@@ -122,8 +122,8 @@ namespace DockerDiagram.ApplicationServices
 
                     NodeViewModel dependencyNode = layoutNodes[dependencyKey];
                     sheet.TryAddDirectedConnection(
-                        dependencyNode,
                         entry.Node,
+                        dependencyNode,
                         RelationType.Dependency,
                         mountPath: string.Empty,
                         allowSelfConnection: true);

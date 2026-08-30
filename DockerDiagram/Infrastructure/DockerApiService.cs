@@ -21,7 +21,15 @@ namespace DockerDiagram.Infrastructure
     /// </summary>
     public partial class DockerApiService : IDockerService
     {
+        private static readonly TimeSpan DockerRequestTimeout = TimeSpan.FromSeconds(100);
+        private static readonly TimeSpan NamedPipeConnectTimeout = TimeSpan.FromSeconds(2);
         private readonly DockerClient _client;
+        private readonly DockerClient _eventsClient;
+        private readonly CancellationTokenSource _eventsLifetimeCts = new();
+        private readonly object _eventsClientLifetimeSync = new();
+        private int _activeEventMonitors;
+        private bool _disposeEventsClientWhenIdle;
+        private bool _eventsClientDisposed;
         private static readonly TimeSpan SystemDiskUsageCacheTtl = TimeSpan.FromSeconds(10);
         private static readonly TimeSpan SystemInfoCacheTtl = TimeSpan.FromMinutes(5);
         private SystemDiskUsage? _systemDiskUsageCache;
@@ -69,8 +77,19 @@ namespace DockerDiagram.Infrastructure
                 throw new NotSupportedException($"지원하지 않는 엔드포인트 타입입니다: {profile.Type}");
             }
 
-            var config = new DockerClientConfiguration(dockerUri);
+            var config = new DockerClientConfiguration(
+                dockerUri,
+                defaultTimeout: DockerRequestTimeout,
+                namedPipeConnectTimeout: NamedPipeConnectTimeout);
             _client = config.CreateClient();
+
+            // Docker Events는 끝나지 않는 스트림이므로 일반 API의 요청 제한을 공유하면
+            // 기본 타임아웃마다 연결이 끊깁니다. 전용 클라이언트는 외부 취소 토큰으로만 종료합니다.
+            var eventsConfig = new DockerClientConfiguration(
+                dockerUri,
+                defaultTimeout: Timeout.InfiniteTimeSpan,
+                namedPipeConnectTimeout: NamedPipeConnectTimeout);
+            _eventsClient = eventsConfig.CreateClient();
         }
 
         // ---------------------------------------------------------
@@ -959,16 +978,85 @@ namespace DockerDiagram.Infrastructure
         /// </summary>
         protected virtual void Dispose(bool disposing)
         {
-            if (!_disposedValue)
+            if (_disposedValue) return;
+            _disposedValue = true;
+
+            if (disposing)
             {
-                if (disposing)
+                // 새 Events 감시를 막고 진행 중인 스트림에는 먼저 취소를 알립니다.
+                // 스트림이 완전히 빠져나오기 전에는 전용 클라이언트를 폐기하지 않습니다.
+                RequestEventsClientDisposal();
+
+                // HttpClient 등 내부적으로 사용하던 IDisposable 객체들을 명시적으로 해제
+                _client.Dispose();
+                _systemDiskUsageCacheLock.Dispose();
+                _systemInfoCacheLock.Dispose();
+            }
+        }
+
+        private void EnterEventMonitor()
+        {
+            lock (_eventsClientLifetimeSync)
+            {
+                ObjectDisposedException.ThrowIf(
+                    _disposedValue || _disposeEventsClientWhenIdle,
+                    this);
+                _activeEventMonitors++;
+            }
+        }
+
+        private void ExitEventMonitor()
+        {
+            bool disposeEventsClient = false;
+
+            lock (_eventsClientLifetimeSync)
+            {
+                _activeEventMonitors--;
+                if (_activeEventMonitors == 0 &&
+                    _disposeEventsClientWhenIdle &&
+                    !_eventsClientDisposed)
                 {
-                    // HttpClient 등 내부적으로 사용하던 IDisposable 객체들을 명시적으로 해제
-                    _client?.Dispose();
-                    _systemDiskUsageCacheLock.Dispose();
-                    _systemInfoCacheLock.Dispose();
+                    _eventsClientDisposed = true;
+                    disposeEventsClient = true;
                 }
-                _disposedValue = true;
+            }
+
+            if (disposeEventsClient)
+            {
+                DisposeEventsClientResources();
+            }
+        }
+
+        private void RequestEventsClientDisposal()
+        {
+            _eventsLifetimeCts.Cancel();
+            bool disposeEventsClient = false;
+
+            lock (_eventsClientLifetimeSync)
+            {
+                _disposeEventsClientWhenIdle = true;
+                if (_activeEventMonitors == 0 && !_eventsClientDisposed)
+                {
+                    _eventsClientDisposed = true;
+                    disposeEventsClient = true;
+                }
+            }
+
+            if (disposeEventsClient)
+            {
+                DisposeEventsClientResources();
+            }
+        }
+
+        private void DisposeEventsClientResources()
+        {
+            try
+            {
+                _eventsClient.Dispose();
+            }
+            finally
+            {
+                _eventsLifetimeCts.Dispose();
             }
         }
 

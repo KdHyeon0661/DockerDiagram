@@ -13,7 +13,7 @@
 			<RowDefinition Height="Auto"/>
 		</Grid.RowDefinitions>
 
-		<TextBlock Text="원격 도커 데몬 연결 (SSH)" FontSize="18" FontWeight="Bold" Foreground="#333" Margin="0,0,0,15"/>
+		<TextBlock x:Name="txtDialogTitle" Text="원격 도커 데몬 연결 (SSH)" FontSize="18" FontWeight="Bold" Foreground="#333" Margin="0,0,0,15"/>
 
 		<StackPanel Grid.Row="1">
 			<TextBlock Text="프로필 이름 (표시용)" FontWeight="Bold" Foreground="#555" Margin="0,0,0,5"/>
@@ -60,7 +60,7 @@
 		<StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,30,0,10">
 			<TextBlock x:Name="txtStatus" Text="연결 중..." VerticalAlignment="Center" Margin="0,0,15,0" Foreground="#007ACC" Visibility="Collapsed" FontWeight="Bold"/>
 
-			<Button x:Name="btnConnect" Content="연결 및 시트 추가" Width="130" Height="35" Background="#007ACC" Foreground="White" FontWeight="Bold" BorderThickness="0" Cursor="Hand" Click="BtnConnect_Click" IsDefault="True"/>
+			<Button x:Name="btnConnect" Content="연결 및 세션 열기" Width="140" Height="35" Background="#007ACC" Foreground="White" FontWeight="Bold" BorderThickness="0" Cursor="Hand" Click="BtnConnect_Click" IsDefault="True"/>
 			<Button x:Name="btnCancel" Content="취소" Width="80" Height="35" Margin="10,0,0,0" Background="#DDD" BorderThickness="0" Cursor="Hand" IsCancel="True"/>
 		</StackPanel>
 	</Grid>

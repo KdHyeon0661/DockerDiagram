@@ -34,12 +34,18 @@ namespace DockerDiagram
         {
             if (ViewModel.SheetManager.IsWorkspaceLayer)
             {
-                BtnSettings_Click(sender, e);
+                OpenNewSessionWindow();
             }
             else
             {
                 ViewModel.SheetManager.AddSheet();
             }
+        }
+
+        private void OpenNewSessionWindow()
+        {
+            var window = new Views.NewSessionWindow(ViewModel, _dialogService) { Owner = this };
+            window.ShowDialog();
         }
 
         private void WorkspaceListBox_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -98,9 +104,7 @@ namespace DockerDiagram
         /// </summary>
         private void BtnSettings_Click(object sender, RoutedEventArgs e)
         {
-            var sshDlg = new Views.SshConnectionDialog(this.ViewModel, _dialogService);
-            sshDlg.Owner = this;
-            sshDlg.ShowDialog();
+            OpenNewSessionWindow();
         }
 
         private void TabScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e) => UpdateScrollButtonsState();

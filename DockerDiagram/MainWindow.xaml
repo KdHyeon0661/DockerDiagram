@@ -189,6 +189,7 @@
                                                 </Border>
                                                 <ToggleButton x:Name="ComposeProjectDetailsToggle"
                                                               Grid.Column="1"
+                                                              IsChecked="{Binding IsDetailsExpanded, Mode=TwoWay}"
                                                               Width="24"
                                                               Height="24"
                                                               HorizontalAlignment="Right"
@@ -249,7 +250,7 @@
                                             </Grid>
                                             <StackPanel Grid.Row="1"
                                                         Margin="18,2,0,5"
-                                                        Visibility="{Binding IsChecked, ElementName=ComposeProjectDetailsToggle, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                        Visibility="{Binding IsDetailsExpanded, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                 <TextBlock Text="Containers" FontSize="10" FontWeight="SemiBold" Foreground="#287BAE" Margin="0,2,0,1"/>
                                                 <ItemsControl ItemsSource="{Binding Containers}">
                                                     <ItemsControl.ItemTemplate>
@@ -1560,7 +1561,8 @@
             </Border>
         </Grid>
 
-        <Border Grid.Column="2" Grid.Row="0" Width="300" Background="White"
+        <Border Grid.Column="1" Grid.Row="0" Width="300"
+                HorizontalAlignment="Right" Panel.ZIndex="100" Background="White"
                 BorderBrush="#ccc" BorderThickness="1,0,0,0"
                 Visibility="{Binding Inspector.IsDetailPanelOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
             <Border.Style>
@@ -2590,7 +2592,7 @@
                         <Button x:Name="BtnScrollRight" Click="ScrollRight_Click" ToolTip="Scroll Right" Style="{StaticResource NavButtonStyle}">
                             <Path Data="{StaticResource NextIcon}" Fill="#555" Width="10" Height="10" Stretch="Uniform"/>
                         </Button>
-                        <Button Click="AddContextButton_Click" ToolTip="Add connection or sheet" Style="{StaticResource NavButtonStyle}">
+                        <Button Click="AddContextButton_Click" ToolTip="New session or add sheet" Style="{StaticResource NavButtonStyle}">
                             <Path Data="{StaticResource PlusIcon}" Fill="#555" Width="12" Height="12" Stretch="Uniform"/>
                         </Button>
                         <Button Click="SheetMenuButton_Click" ToolTip="Sheet List" Style="{StaticResource NavButtonStyle}">
@@ -2641,12 +2643,6 @@
                                                 <Border x:Name="WorkspaceTabBorder" Background="Transparent" BorderBrush="#ccc" BorderThickness="0,0,1,0" Padding="15,5" MinWidth="120" Cursor="Hand">
                                                     <Border.ContextMenu>
                                                         <ContextMenu>
-                                                            <MenuItem Header="Runtime">
-                                                                <MenuItem Header="Docker Engine" CommandParameter="DockerEngine" Click="ChangeWorkspaceRuntime_Click"/>
-                                                                <MenuItem Header="Docker Swarm" CommandParameter="DockerSwarm" Click="ChangeWorkspaceRuntime_Click"/>
-                                                                <MenuItem Header="Kubernetes" CommandParameter="Kubernetes" Click="ChangeWorkspaceRuntime_Click"/>
-                                                            </MenuItem>
-                                                            <Separator/>
                                                             <MenuItem Header="이름 바꾸기" Click="RenameWorkspace_Click"/>
                                                             <MenuItem Header="삭제" Click="DeleteWorkspace_Click" Foreground="#dc3545"/>
                                                         </ContextMenu>
@@ -2681,16 +2677,6 @@
 
                         <StackPanel x:Name="SheetLayerPanel" Orientation="Horizontal" Visibility="{Binding SheetManager.IsSheetLayer, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <Button Click="WorkspaceCrumb_Click" Background="White" BorderBrush="#ccc" BorderThickness="0,0,1,0" Padding="15,5" MinWidth="120" Cursor="Hand">
-                                <Button.ContextMenu>
-                                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext.SheetManager.ActiveWorkspace,
-                                                                      RelativeSource={RelativeSource Self}}">
-                                        <MenuItem Header="Runtime">
-                                            <MenuItem Header="Docker Engine" CommandParameter="DockerEngine" Click="ChangeWorkspaceRuntime_Click"/>
-                                            <MenuItem Header="Docker Swarm" CommandParameter="DockerSwarm" Click="ChangeWorkspaceRuntime_Click"/>
-                                            <MenuItem Header="Kubernetes" CommandParameter="Kubernetes" Click="ChangeWorkspaceRuntime_Click"/>
-                                        </MenuItem>
-                                    </ContextMenu>
-                                </Button.ContextMenu>
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding SheetManager.ActiveWorkspace.KindLabel}" FontSize="10" FontWeight="Bold" Foreground="#777" Margin="0,0,7,0"/>
                                     <TextBlock Text="{Binding SheetManager.ActiveWorkspace.DisplayName}" FontWeight="SemiBold" Foreground="#333" TextTrimming="CharacterEllipsis"/>

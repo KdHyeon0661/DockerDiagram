@@ -1,0 +1,124 @@
+<Window x:Class="DockerDiagram.Views.NewSessionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="New Session"
+        Width="820" Height="560" MinWidth="760" MinHeight="520"
+        WindowStartupLocation="CenterOwner" Background="#F4F6F8">
+    <Window.Resources>
+        <Style x:Key="SessionCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#D8DDE3"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="18"/>
+            <Setter Property="Margin" Value="0,0,12,0"/>
+        </Style>
+        <Style x:Key="PrimarySessionButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Padding" Value="14,0"/>
+            <Setter Property="Background" Value="#1677B8"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style x:Key="SecondarySessionButtonStyle" TargetType="Button" BasedOn="{StaticResource PrimarySessionButtonStyle}">
+            <Setter Property="Background" Value="#E9F2F8"/>
+            <Setter Property="Foreground" Value="#24536F"/>
+            <Setter Property="BorderBrush" Value="#C8DCE8"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="New Session" FontSize="24" FontWeight="SemiBold" Foreground="#27313B"/>
+            <TextBlock Text="Choose the platform first. Connection details are configured in the next step."
+                       Margin="0,6,0,0" Foreground="#68727E" FontSize="12"/>
+        </StackPanel>
+
+        <Border Grid.Row="1" Background="#E8F2F8" BorderBrush="#C8DFEC" BorderThickness="1"
+                CornerRadius="6" Padding="12,9" Margin="0,18,0,18">
+            <TextBlock Text="SSH is a connection method for a Docker host or Swarm manager, not a separate workspace type."
+                       Foreground="#315A72" FontSize="12" TextWrapping="Wrap"/>
+        </Border>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource SessionCardStyle}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Border Background="#E6F3FA" CornerRadius="18" Width="36" Height="36" HorizontalAlignment="Left">
+                        <TextBlock Text="D" FontWeight="Bold" Foreground="#1677B8" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Grid.Row="1" Text="Docker Host" FontSize="17" FontWeight="SemiBold" Foreground="#27313B" Margin="0,12,0,0"/>
+                    <TextBlock Grid.Row="2" Text="Manage one local or remote Docker Engine with containers, Compose projects, networks, and volumes."
+                               Foreground="#68727E" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,18"/>
+                    <StackPanel Grid.Row="3">
+                        <Button Content="Open Local Docker" Style="{StaticResource PrimarySessionButtonStyle}" Click="OpenLocalDocker_Click"/>
+                        <Button Content="Connect via SSH" Style="{StaticResource SecondarySessionButtonStyle}" Margin="0,8,0,0" Click="OpenRemoteDocker_Click"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Style="{StaticResource SessionCardStyle}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Border Background="#EEE8F7" CornerRadius="18" Width="36" Height="36" HorizontalAlignment="Left">
+                        <TextBlock Text="S" FontWeight="Bold" Foreground="#7652A8" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Grid.Row="1" Text="Docker Swarm" FontSize="17" FontWeight="SemiBold" Foreground="#27313B" Margin="0,12,0,0"/>
+                    <TextBlock Grid.Row="2" Text="Open a one-node or multi-node Swarm cluster through a manager. Nodes remain part of one cluster session."
+                               Foreground="#68727E" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,18"/>
+                    <StackPanel Grid.Row="3">
+                        <Button Content="Open Local Manager" Style="{StaticResource PrimarySessionButtonStyle}" Click="OpenLocalSwarm_Click"/>
+                        <Button Content="Connect Manager via SSH" Style="{StaticResource SecondarySessionButtonStyle}" Margin="0,8,0,0" Click="OpenRemoteSwarm_Click"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="2" Style="{StaticResource SessionCardStyle}" Margin="0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Border Background="#E7F3EC" CornerRadius="18" Width="36" Height="36" HorizontalAlignment="Left">
+                        <TextBlock Text="K" FontWeight="Bold" Foreground="#3D7A59" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Grid.Row="1" Text="Kubernetes" FontSize="17" FontWeight="SemiBold" Foreground="#27313B" Margin="0,12,0,0"/>
+                    <TextBlock Grid.Row="2" Text="Open the active kubeconfig context as a Kubernetes workspace. Cluster resources use their own sidebar and inspector."
+                               Foreground="#68727E" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,18"/>
+                    <Button Grid.Row="3" Content="Open Current Context" Style="{StaticResource PrimarySessionButtonStyle}" Click="OpenKubernetes_Click"/>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="3" Margin="0,18,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock x:Name="StatusText" Foreground="#66717D" FontSize="12" VerticalAlignment="Center"/>
+                <Button Content="Manage Connections" Margin="12,0,0,0" Padding="10,5" Click="ManageConnections_Click"/>
+            </StackPanel>
+            <Button Grid.Column="1" Content="Cancel" Width="88" Height="32" IsCancel="True"/>
+        </Grid>
+    </Grid>
+</Window>

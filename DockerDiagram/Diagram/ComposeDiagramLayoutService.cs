@@ -29,7 +29,14 @@ namespace DockerDiagram.Diagram
             ComposeLayoutOptions? layoutOptions = null)
         {
             using IDisposable layoutUpdate = sheet.BeginLayoutUpdate();
+            NormalizeDisplayDependencyConnectors(sheet, serviceNodes, dependsOnByService);
             ComposeLayoutOptions options = layoutOptions ?? new ComposeLayoutOptions();
+            ComposeLayoutGraph layoutGraph = ComposeLayoutGraphAnalyzer.Analyze(
+                sheet,
+                serviceNodes,
+                dependsOnByService,
+                scopedVolumes,
+                scopedGroups);
             bool isHorizontal = options.Direction == ComposeLayoutDirection.LeftToRight;
             double horizontalGap = options.HorizontalGap;
             double verticalGap = options.VerticalGap;
@@ -60,11 +67,406 @@ namespace DockerDiagram.Diagram
                 return;
             }
 
-            var orderedServices = serviceNodes.Keys.ToList();
+            var nodes = serviceNodes.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            double depthGap = isHorizontal ? horizontalGap : verticalGap;
+            double siblingGap = isHorizontal ? verticalGap : horizontalGap;
+            double depthOrigin = isHorizontal ? originX : originY;
+            double siblingOrigin = isHorizontal ? originY : originX;
+            IReadOnlyDictionary<string, int> serviceRanks = GetServiceRanks(
+                layoutGraph.Topology,
+                nodes,
+                depthOrigin,
+                siblingOrigin,
+                depthGap,
+                siblingGap,
+                isHorizontal);
+            var serviceBreadthSizes = nodes.ToDictionary(
+                pair => pair.Key,
+                pair => Math.Max(1, isHorizontal ? pair.Value.Height : pair.Value.Width),
+                StringComparer.OrdinalIgnoreCase);
+            ComposeVolumeLayoutItem[] volumeItems = layoutGraph.Volumes
+                .Select(volume => new ComposeVolumeLayoutItem(
+                    volume.Id,
+                    isHorizontal ? volume.Node.Width : volume.Node.Height,
+                    isHorizontal ? volume.Node.Height : volume.Node.Width,
+                    volume.OwnerIds))
+                .ToArray();
+            IReadOnlyDictionary<string, IReadOnlySet<string>> descendantsByService =
+                BuildDescendantMap(layoutGraph.Topology);
+            var inlineVolumeIds = new HashSet<string>(
+                volumeItems.Where(volume => volume.OwnerIds.Count > 0).Select(volume => volume.Id),
+                StringComparer.OrdinalIgnoreCase);
+
+            (ComposeVolumeLayoutResult Layout, double ForestEnd)
+                RunVolumePass(IReadOnlySet<string> passInlineVolumeIds)
+            {
+                ComposeVolumeLayoutPlan passPlan = ComposeVolumeLayoutEngine.CreatePlan(
+                    layoutGraph.Topology.OrderedNodeIds,
+                    serviceRanks,
+                    serviceBreadthSizes,
+                    volumeItems,
+                    Math.Max(18, siblingGap * 0.45),
+                    passInlineVolumeIds,
+                    layoutGraph.Topology.ConnectedComponentByNode);
+                double passForestEnd = layoutGraph.Kind switch
+                {
+                    ComposeLayoutGraphKind.Tree or ComposeLayoutGraphKind.Forest =>
+                        ArrangeTidyTreeServices(
+                            layoutGraph.Topology,
+                            nodes,
+                            depthOrigin,
+                            siblingOrigin,
+                            depthGap,
+                            siblingGap,
+                            passPlan.ReservedBreadthByService,
+                            isHorizontal),
+                    ComposeLayoutGraphKind.DirectedAcyclicGraph or ComposeLayoutGraphKind.Cyclic =>
+                        ArrangeSugiyamaServices(
+                            layoutGraph.Topology,
+                            nodes,
+                            depthOrigin,
+                            siblingOrigin,
+                            depthGap,
+                            siblingGap,
+                            passPlan.ReservedBreadthByService,
+                            isHorizontal),
+                    _ => ArrangeLegacyServices(
+                        layoutGraph.Topology.OrderedNodeIds,
+                        dependsOnByService,
+                        nodes,
+                        depthOrigin,
+                        siblingOrigin,
+                        depthGap,
+                        siblingGap,
+                        isHorizontal)
+                };
+
+                ComposeVolumeServiceSlot[] initialSlots = layoutGraph.Topology.OrderedNodeIds
+                    .Select(nodeId =>
+                    {
+                        NodeViewModel node = nodes[nodeId];
+                        return new ComposeVolumeServiceSlot(
+                            nodeId,
+                            serviceRanks[nodeId],
+                            isHorizontal ? node.X : node.Y,
+                            isHorizontal ? node.Y : node.X,
+                            isHorizontal ? node.Width : node.Height,
+                            isHorizontal ? node.Height : node.Width);
+                    })
+                    .ToArray();
+                ComposeVolumeLayoutResult passLayout = ComposeVolumeLayoutEngine.Arrange(
+                    passPlan,
+                    initialSlots,
+                    depthOrigin,
+                    siblingOrigin,
+                    Math.Max(28, depthGap * 0.30),
+                    Math.Max(28, depthGap * 0.30),
+                    Math.Max(30, Math.Min(55, depthGap * 0.35)),
+                    ForestGap + siblingGap);
+                if (!layoutGraph.Networks.Any(network => network.MemberIds.Count > 0) ||
+                    layoutGraph.Volumes.Count == 0)
+                {
+                    return (passLayout, passForestEnd);
+                }
+
+                ComposeVolumeServiceSlot[] shiftedSlots = initialSlots
+                    .Select(service =>
+                    {
+                        ComposeVolumeAxisPosition position = passLayout.ServicePositions[service.Id];
+                        return service with { Depth = position.Depth, Breadth = position.Breadth };
+                    })
+                    .ToArray();
+                ComposeNetworkLayoutResult previewNetworks = ComposeNetworkLayoutEngine.Arrange(
+                    shiftedSlots.Select(service => new ComposeNetworkLayoutNode(
+                        service.Id,
+                        isHorizontal ? service.Depth : service.Breadth,
+                        isHorizontal ? service.Breadth : service.Depth,
+                        isHorizontal ? service.DepthSize : service.BreadthSize,
+                        isHorizontal ? service.BreadthSize : service.DepthSize)),
+                    layoutGraph.Networks.Select(network => new ComposeNetworkLayoutGroup(
+                        network.Id,
+                        network.Name,
+                        network.MemberIds)),
+                    GroupSidePadding,
+                    GroupTopPadding,
+                    GroupBottomPadding,
+                    CoincidentGroupGap,
+                    GroupHeaderHeight,
+                    headerGap: 4,
+                    GroupViewModel.MinimumWidth,
+                    GroupViewModel.MinimumHeight);
+                var networkById = layoutGraph.Networks.ToDictionary(
+                    network => network.Id,
+                    StringComparer.OrdinalIgnoreCase);
+                ComposeVolumeNetworkRegion[] regions = previewNetworks.BoundsByNetwork
+                    .Select(pair =>
+                    {
+                        ComposeNetworkLayoutRect bounds = pair.Value;
+                        ComposeLayoutNetwork network = networkById[pair.Key];
+                        return new ComposeVolumeNetworkRegion(
+                            pair.Key,
+                            isHorizontal ? bounds.X : bounds.Y,
+                            isHorizontal ? bounds.Y : bounds.X,
+                            isHorizontal ? bounds.Width : bounds.Height,
+                            isHorizontal ? bounds.Height : bounds.Width,
+                            network.MemberIds);
+                    })
+                    .ToArray();
+                passLayout = ComposeVolumeLayoutEngine.ResolveNetworkAwarePlacement(
+                    passPlan,
+                    shiftedSlots,
+                    passLayout,
+                    regions,
+                    descendantsByService,
+                    ForestGap + siblingGap);
+                return (passLayout, passForestEnd);
+            }
+
+            var pass = RunVolumePass(inlineVolumeIds);
+
+            ComposeVolumeLayoutResult volumeLayout = pass.Layout;
+            double forestEnd = pass.ForestEnd;
+            foreach ((string nodeId, ComposeVolumeAxisPosition position) in volumeLayout.ServicePositions)
+            {
+                NodeViewModel node = nodes[nodeId];
+                node.X = isHorizontal ? position.Depth : position.Breadth;
+                node.Y = isHorizontal ? position.Breadth : position.Depth;
+            }
+
+            var volumeById = layoutGraph.Volumes.ToDictionary(
+                volume => volume.Id,
+                volume => volume.Node,
+                StringComparer.OrdinalIgnoreCase);
+            foreach ((string volumeId, ComposeVolumeAxisPosition position) in volumeLayout.VolumePositions)
+            {
+                NodeViewModel volume = volumeById[volumeId];
+                volume.X = isHorizontal ? position.Depth : position.Breadth;
+                volume.Y = isHorizontal ? position.Breadth : position.Depth;
+            }
+
+            forestEnd = Math.Max(forestEnd, volumeLayout.BreadthEnd);
+            IReadOnlyCollection<NodeViewModel> volumes = layoutGraph.Volumes
+                .Select(volume => volume.Node)
+                .ToList();
+            AvoidExistingNodeCollisions(sheet, serviceNodes.Values.Concat(volumes).ToList(), isHorizontal);
+            IReadOnlyCollection<GroupViewModel> groups = scopedGroups ?? sheet.Groups.ToList();
+            ResizeComposeGroups(layoutGraph, groups);
+            UpdateNetworkLayoutAttachments(layoutGraph, volumeLayout);
+            IReadOnlyCollection<NodeViewModel> arrangedItems = serviceNodes.Values.Concat(volumes).Distinct().ToList();
+            ArrangeEmptyGroups(groups, arrangedItems, originX, originY, isHorizontal);
+            FinalizePlacement(sheet, arrangedItems, groups, isHorizontal);
+            sheet.UpdateGroupLayering();
+        }
+
+        private static void NormalizeDisplayDependencyConnectors(
+            SheetViewModel sheet,
+            IReadOnlyDictionary<string, NodeViewModel> serviceNodes,
+            IReadOnlyDictionary<string, List<string>> dependsOnByService)
+        {
+            foreach ((string dependentId, List<string> dependencyIds) in dependsOnByService)
+            {
+                if (!serviceNodes.TryGetValue(dependentId, out NodeViewModel? dependent)) continue;
+                foreach (string dependencyId in dependencyIds)
+                {
+                    if (!serviceNodes.TryGetValue(dependencyId, out NodeViewModel? dependency)) continue;
+                    ConnectorViewModel? connector = sheet.Connectors.FirstOrDefault(item =>
+                        item.RelationType == RelationType.Dependency &&
+                        ((ReferenceEquals(item.Source, dependent) && ReferenceEquals(item.Target, dependency)) ||
+                         (ReferenceEquals(item.Source, dependency) && ReferenceEquals(item.Target, dependent))));
+                    if (connector is null || ReferenceEquals(connector.Source, dependent)) continue;
+
+                    connector.UpdateConnection(
+                        dependent,
+                        PortDirection.Right,
+                        dependency,
+                        PortDirection.Left);
+                }
+            }
+        }
+
+        private static IReadOnlyDictionary<string, IReadOnlySet<string>> BuildDescendantMap(
+            ComposeGraphTopology topology)
+        {
+            var result = new Dictionary<string, IReadOnlySet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (string nodeId in topology.OrderedNodeIds)
+            {
+                var descendants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var pending = new Stack<string>(topology.ChildrenByNode[nodeId].Reverse());
+                while (pending.Count > 0)
+                {
+                    string childId = pending.Pop();
+                    if (!descendants.Add(childId)) continue;
+                    foreach (string grandchildId in topology.ChildrenByNode[childId].Reverse())
+                        pending.Push(grandchildId);
+                }
+
+                descendants.Remove(nodeId);
+                result[nodeId] = descendants;
+            }
+
+            return result;
+        }
+
+        private static void UpdateNetworkLayoutAttachments(
+            ComposeLayoutGraph layoutGraph,
+            ComposeVolumeLayoutResult volumeLayout)
+        {
+            var networkById = layoutGraph.Networks.ToDictionary(
+                network => network.Id,
+                StringComparer.OrdinalIgnoreCase);
+            var attachedByGroup = new Dictionary<GroupViewModel, HashSet<NodeViewModel>>(
+                ReferenceEqualityComparer.Instance);
+            foreach (ComposeLayoutNetwork network in layoutGraph.Networks)
+            {
+                attachedByGroup.TryAdd(
+                    network.Group,
+                    new HashSet<NodeViewModel>(ReferenceEqualityComparer.Instance));
+            }
+            var volumeById = layoutGraph.Volumes.ToDictionary(
+                volume => volume.Id,
+                volume => volume.Node,
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach ((string volumeId, IReadOnlyList<string> networkIds) in
+                     volumeLayout.InternalNetworkIdsByVolume)
+            {
+                if (volumeLayout.ExternalVolumeIds.Contains(volumeId) ||
+                    !volumeById.TryGetValue(volumeId, out NodeViewModel? volume))
+                {
+                    continue;
+                }
+
+                foreach (string networkId in networkIds)
+                {
+                    if (networkById.TryGetValue(networkId, out ComposeLayoutNetwork? network))
+                        attachedByGroup[network.Group].Add(volume);
+                }
+            }
+
+            foreach ((GroupViewModel group, HashSet<NodeViewModel> attachedNodes) in attachedByGroup)
+                group.SetLayoutAttachedNodes(attachedNodes);
+        }
+
+        private static IReadOnlyDictionary<string, int> GetServiceRanks(
+            ComposeGraphTopology topology,
+            IReadOnlyDictionary<string, NodeViewModel> nodes,
+            double depthOrigin,
+            double siblingOrigin,
+            double depthGap,
+            double siblingGap,
+            bool isHorizontal)
+        {
+            if (topology.Kind is ComposeLayoutGraphKind.Tree or ComposeLayoutGraphKind.Forest)
+                return topology.RankByNode;
+            if (topology.Kind is not (
+                    ComposeLayoutGraphKind.DirectedAcyclicGraph or
+                    ComposeLayoutGraphKind.Cyclic))
+            {
+                return topology.RankByNode;
+            }
+
+            ComposeSugiyamaLayoutResult probe = ComposeSugiyamaLayoutEngine.Arrange(
+                topology,
+                topology.OrderedNodeIds.Select(nodeId =>
+                {
+                    NodeViewModel node = nodes[nodeId];
+                    return new ComposeSugiyamaNode(
+                        nodeId,
+                        isHorizontal ? node.Width : node.Height,
+                        isHorizontal ? node.Height : node.Width);
+                }),
+                depthOrigin,
+                siblingOrigin,
+                depthGap,
+                siblingGap);
+            return probe.LayerByNode;
+        }
+
+        private static double ArrangeTidyTreeServices(
+            ComposeGraphTopology topology,
+            IReadOnlyDictionary<string, NodeViewModel> nodes,
+            double depthOrigin,
+            double siblingOrigin,
+            double depthGap,
+            double siblingGap,
+            IReadOnlyDictionary<string, double> reservedBreadthByService,
+            bool isHorizontal)
+        {
+            ComposeTidyTreeLayoutResult result = ComposeTidyTreeLayoutEngine.Arrange(
+                topology,
+                topology.OrderedNodeIds.Select(nodeId =>
+                {
+                    NodeViewModel node = nodes[nodeId];
+                    return new ComposeTidyTreeNode(
+                        nodeId,
+                        isHorizontal ? node.Width : node.Height,
+                        reservedBreadthByService[nodeId]);
+                }),
+                depthOrigin,
+                siblingOrigin,
+                depthGap,
+                siblingGap,
+                ForestGap + siblingGap);
+
+            foreach ((string nodeId, ComposeTidyTreePosition position) in result.Positions)
+            {
+                NodeViewModel node = nodes[nodeId];
+                node.X = isHorizontal ? position.Depth : position.Breadth;
+                node.Y = isHorizontal ? position.Breadth : position.Depth;
+            }
+
+            return result.BreadthEnd;
+        }
+
+        private static double ArrangeSugiyamaServices(
+            ComposeGraphTopology topology,
+            IReadOnlyDictionary<string, NodeViewModel> nodes,
+            double depthOrigin,
+            double siblingOrigin,
+            double depthGap,
+            double siblingGap,
+            IReadOnlyDictionary<string, double> reservedBreadthByService,
+            bool isHorizontal)
+        {
+            ComposeSugiyamaLayoutResult result = ComposeSugiyamaLayoutEngine.Arrange(
+                topology,
+                topology.OrderedNodeIds.Select(nodeId =>
+                {
+                    NodeViewModel node = nodes[nodeId];
+                    return new ComposeSugiyamaNode(
+                        nodeId,
+                        isHorizontal ? node.Width : node.Height,
+                        reservedBreadthByService[nodeId]);
+                }),
+                depthOrigin,
+                siblingOrigin,
+                depthGap,
+                siblingGap);
+
+            foreach ((string nodeId, ComposeSugiyamaPosition position) in result.Positions)
+            {
+                NodeViewModel node = nodes[nodeId];
+                node.X = isHorizontal ? position.Depth : position.Breadth;
+                node.Y = isHorizontal ? position.Breadth : position.Depth;
+            }
+
+            return result.BreadthEnd;
+        }
+
+        private static double ArrangeLegacyServices(
+            IReadOnlyList<string> orderedServices,
+            IReadOnlyDictionary<string, List<string>> dependsOnByService,
+            IReadOnlyDictionary<string, NodeViewModel> nodes,
+            double depthOrigin,
+            double siblingOrigin,
+            double depthGap,
+            double siblingGap,
+            bool isHorizontal)
+        {
             var orderIndex = orderedServices
                 .Select((name, index) => (name, index))
                 .ToDictionary(item => item.name, item => item.index, StringComparer.OrdinalIgnoreCase);
-            var nodes = serviceNodes.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
             var primaryParent = BuildPrimaryParentMap(orderedServices, dependsOnByService, nodes);
             var children = orderedServices.ToDictionary(
                 name => name,
@@ -88,7 +490,7 @@ namespace DockerDiagram.Diagram
                 return depth;
             }
 
-            foreach (var childList in children.Values)
+            foreach (List<string> childList in children.Values)
             {
                 childList.Sort((left, right) =>
                 {
@@ -100,12 +502,14 @@ namespace DockerDiagram.Diagram
             }
 
             var roots = orderedServices
-                .Where(service => !primaryParent.TryGetValue(service, out string? parent) || string.IsNullOrWhiteSpace(parent))
+                .Where(service =>
+                    !primaryParent.TryGetValue(service, out string? parent) ||
+                    string.IsNullOrWhiteSpace(parent))
                 .OrderByDescending(GetSubtreeDepth)
                 .ThenBy(service => orderIndex[service])
                 .ToList();
-
             var levelSizes = new Dictionary<int, double>();
+
             void MeasureLevels(string service, int depth)
             {
                 NodeViewModel node = nodes[service];
@@ -116,13 +520,14 @@ namespace DockerDiagram.Diagram
 
             foreach (string root in roots) MeasureLevels(root, 0);
 
-            double depthGap = isHorizontal ? horizontalGap : verticalGap;
-            double siblingGap = isHorizontal ? verticalGap : horizontalGap;
-            double depthOrigin = isHorizontal ? originX : originY;
-            double siblingOrigin = isHorizontal ? originY : originX;
             var levelPositions = new Dictionary<int, double> { [0] = depthOrigin };
             for (int depth = 1; depth <= levelSizes.Keys.DefaultIfEmpty(0).Max(); depth++)
-                levelPositions[depth] = levelPositions[depth - 1] + levelSizes.GetValueOrDefault(depth - 1, 80) + depthGap;
+            {
+                levelPositions[depth] =
+                    levelPositions[depth - 1] +
+                    levelSizes.GetValueOrDefault(depth - 1, 80) +
+                    depthGap;
+            }
 
             double LayoutTree(string service, int depth, double siblingStart)
             {
@@ -136,7 +541,9 @@ namespace DockerDiagram.Diagram
                 foreach (string child in children[service])
                 {
                     double childStart = isFirstChild ? siblingStart : subtreeEnd + siblingGap;
-                    subtreeEnd = Math.Max(subtreeEnd, LayoutTree(child, depth + 1, childStart));
+                    subtreeEnd = Math.Max(
+                        subtreeEnd,
+                        LayoutTree(child, depth + 1, childStart));
                     isFirstChild = false;
                 }
 
@@ -147,36 +554,64 @@ namespace DockerDiagram.Diagram
             bool isFirstRoot = true;
             foreach (string root in roots)
             {
-                double rootStart = isFirstRoot ? siblingOrigin : forestEnd + ForestGap + siblingGap;
+                double rootStart = isFirstRoot
+                    ? siblingOrigin
+                    : forestEnd + ForestGap + siblingGap;
                 forestEnd = Math.Max(forestEnd, LayoutTree(root, 0, rootStart));
                 isFirstRoot = false;
             }
 
-            IReadOnlyCollection<NodeViewModel> volumes =
-                scopedVolumes ?? sheet.Nodes.Where(node => node.Type == NodeType.Volume).ToList();
-            ArrangeVolumes(
-                sheet,
-                volumes,
-                originX,
-                originY,
-                forestEnd,
-                isHorizontal,
-                horizontalGap,
-                verticalGap);
-            AvoidExistingNodeCollisions(sheet, serviceNodes.Values.Concat(volumes).ToList(), isHorizontal);
-            IReadOnlyCollection<GroupViewModel> groups = scopedGroups ?? sheet.Groups.ToList();
-            ResizeGroupsRecursively(groups);
-            AvoidVolumeGroupCollisions(
-                sheet,
-                volumes,
-                groups,
-                isHorizontal,
-                horizontalGap,
-                verticalGap);
-            IReadOnlyCollection<NodeViewModel> arrangedItems = serviceNodes.Values.Concat(volumes).Distinct().ToList();
-            ArrangeEmptyGroups(groups, arrangedItems, originX, originY, isHorizontal);
-            FinalizePlacement(sheet, arrangedItems, groups, isHorizontal);
-            sheet.UpdateGroupLayering();
+            return forestEnd;
+        }
+
+        private static void ResizeComposeGroups(
+            ComposeLayoutGraph layoutGraph,
+            IReadOnlyCollection<GroupViewModel> scopedGroups)
+        {
+            ComposeLayoutNetwork[] networkGroups = layoutGraph.Networks
+                .Where(network => network.MemberIds.Count > 0)
+                .ToArray();
+            var handledGroups = new HashSet<GroupViewModel>(
+                ReferenceEqualityComparer.Instance);
+            if (networkGroups.Length > 0)
+            {
+                ComposeNetworkLayoutResult result = ComposeNetworkLayoutEngine.Arrange(
+                    layoutGraph.Vertices.Values.Select(vertex => new ComposeNetworkLayoutNode(
+                        vertex.Id,
+                        vertex.Node.X,
+                        vertex.Node.Y,
+                        vertex.Node.Width,
+                        vertex.Node.Height)),
+                    networkGroups.Select(network => new ComposeNetworkLayoutGroup(
+                        network.Id,
+                        network.Name,
+                        network.MemberIds)),
+                    GroupSidePadding,
+                    GroupTopPadding,
+                    GroupBottomPadding,
+                    CoincidentGroupGap,
+                    GroupHeaderHeight,
+                    headerGap: 4,
+                    GroupViewModel.MinimumWidth,
+                    GroupViewModel.MinimumHeight);
+                var networkById = networkGroups.ToDictionary(
+                    network => network.Id,
+                    StringComparer.OrdinalIgnoreCase);
+                foreach ((string networkId, ComposeNetworkLayoutRect bounds) in result.BoundsByNetwork)
+                {
+                    GroupViewModel group = networkById[networkId].Group;
+                    group.X = bounds.X;
+                    group.Y = bounds.Y;
+                    group.Width = bounds.Width;
+                    group.Height = bounds.Height;
+                    handledGroups.Add(group);
+                }
+            }
+
+            GroupViewModel[] legacyGroups = scopedGroups
+                .Where(group => !handledGroups.Contains(group))
+                .ToArray();
+            ResizeGroupsRecursively(legacyGroups);
         }
 
         private static Dictionary<string, string?> BuildPrimaryParentMap(

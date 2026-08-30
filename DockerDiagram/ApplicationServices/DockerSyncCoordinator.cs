@@ -4,6 +4,7 @@ using DockerDiagram.ViewModels;
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
@@ -105,8 +106,8 @@ namespace DockerDiagram.ApplicationServices
 
             var service = _getActiveService();
             if (ReferenceEquals(service, _eventsService) &&
-                _eventsCts != null &&
-                !_eventsCts.IsCancellationRequested)
+                _eventsCts is { IsCancellationRequested: false } &&
+                _eventsTask is { IsCompleted: false })
             {
                 return;
             }
@@ -129,17 +130,30 @@ namespace DockerDiagram.ApplicationServices
                 {
                     await service.MonitorDockerEventsAsync(progress, cancellationToken);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex) when (
+                    cancellationToken.IsCancellationRequested &&
+                    IsExpectedStreamShutdownException(ex))
                 {
                     break;
                 }
                 catch (Exception ex)
                 {
                     Debug.WriteLine($"[DockerEvents] Stream disconnected: {ex.Message}");
-                    await _dialogService.InvokeOnUiThreadAsync(() =>
+                    try
                     {
-                        if (!_disposed) _explorer.LastSyncTime = "Docker events reconnecting...";
-                    });
+                        await _dialogService.InvokeOnUiThreadAsync(() =>
+                        {
+                            if (!_disposed) _explorer.LastSyncTime = "Docker events reconnecting...";
+                        });
+                    }
+                    catch (Exception) when (cancellationToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
 
                     try
                     {
@@ -151,6 +165,13 @@ namespace DockerDiagram.ApplicationServices
                     }
                 }
             }
+        }
+
+        private static bool IsExpectedStreamShutdownException(Exception exception)
+        {
+            return exception is OperationCanceledException or
+                   IOException or
+                   ObjectDisposedException;
         }
 
         private void OnDockerEventReceived(Message message, CancellationToken cancellationToken)
@@ -188,15 +209,39 @@ namespace DockerDiagram.ApplicationServices
         {
             _eventSyncTimer.Stop();
 
-            if (_eventsCts != null)
+            CancellationTokenSource? eventsCts = _eventsCts;
+            Task? eventsTask = _eventsTask;
+            _eventsCts = null;
+            _eventsTask = null;
+            _eventsService = null;
+
+            if (eventsCts == null) return;
+
+            eventsCts.Cancel();
+            if (eventsTask == null)
             {
-                _eventsCts.Cancel();
-                _eventsCts.Dispose();
-                _eventsCts = null;
+                eventsCts.Dispose();
+                return;
             }
 
-            _eventsService = null;
-            _eventsTask = null;
+            // 취소 직후 CTS를 폐기하거나 Task 참조를 버리지 않습니다.
+            // Events 스트림이 Named Pipe/HTTP 읽기에서 빠져나온 뒤 정리하고,
+            // 혹시 남은 fault도 관찰해 UnobservedTaskException을 방지합니다.
+            _ = eventsTask.ContinueWith(
+                completedTask =>
+                {
+                    if (completedTask.IsFaulted)
+                    {
+                        Debug.WriteLine(
+                            $"[DockerEvents] Monitor stopped with error: " +
+                            $"{completedTask.Exception?.GetBaseException().Message}");
+                    }
+
+                    eventsCts.Dispose();
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
 
         public void Dispose()

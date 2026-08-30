@@ -129,8 +129,10 @@ namespace DockerDiagram.Models
         public override GroupType Type => GroupType.Network; // override로 구현
     }
 
-    public sealed class DockerComposeProject
+    public sealed class DockerComposeProject : ViewModelBase
     {
+        private bool _isDetailsExpanded;
+
         public string Name { get; init; } = string.Empty;
         public string WorkingDirectory { get; init; } = string.Empty;
         public string ConfigFiles { get; init; } = string.Empty;
@@ -141,6 +143,11 @@ namespace DockerDiagram.Models
         public int ResourceCount => Containers.Count + Volumes.Count + Networks.Count;
         public string SourceLabel => string.IsNullOrWhiteSpace(Source) ? "Project" : Source;
         public string IdentityKey => CreateIdentityKey(Source, Name, WorkingDirectory, ConfigFiles);
+        public bool IsDetailsExpanded
+        {
+            get => _isDetailsExpanded;
+            set => SetProperty(ref _isDetailsExpanded, value);
+        }
 
         public static string CreateIdentityKey(
             string? source,

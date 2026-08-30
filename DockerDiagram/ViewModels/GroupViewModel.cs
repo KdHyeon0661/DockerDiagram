@@ -36,6 +36,8 @@ namespace DockerDiagram.ViewModels
         private string _headerFontColor = "#333";
         private double _strokeThickness = 2;
         private DoubleCollection? _strokeDashArray = new DoubleCollection { 4, 2 };
+        private readonly HashSet<NodeViewModel> _layoutAttachedNodes =
+            new(ReferenceEqualityComparer.Instance);
         #endregion
 
         #region Basic Properties
@@ -320,10 +322,27 @@ namespace DockerDiagram.ViewModels
             X += dx;
             Y += dy;
 
-            foreach (var node in ContainedNodes)
+            var movingNodes = new HashSet<NodeViewModel>(
+                ContainedNodes,
+                ReferenceEqualityComparer.Instance);
+            movingNodes.UnionWith(_layoutAttachedNodes);
+            foreach (NodeViewModel node in movingNodes)
             {
                 node.X += dx;
                 node.Y += dy;
+            }
+        }
+
+        /// <summary>
+        /// Docker 네트워크 멤버십은 바꾸지 않으면서, 자동 배치상 네트워크 내부에 놓인
+        /// 보조 노드(예: 볼륨)를 그룹 드래그에만 함께 이동시킵니다.
+        /// </summary>
+        public void SetLayoutAttachedNodes(IEnumerable<NodeViewModel> nodes)
+        {
+            _layoutAttachedNodes.Clear();
+            foreach (NodeViewModel node in nodes)
+            {
+                if (!ContainedNodes.Contains(node)) _layoutAttachedNodes.Add(node);
             }
         }
         #endregion

@@ -416,6 +416,11 @@ namespace DockerDiagram.ViewModels
                 return;
             }
 
+            var expandedProjectKeys = _rawComposeProjects
+                .Where(project => project.IsDetailsExpanded)
+                .Select(project => project.IdentityKey)
+                .ToHashSet(StringComparer.Ordinal);
+
             var projectGroups = _rawContainers.Cast<DockerResource>()
                 .Concat(_rawVolumes)
                 .Concat(_rawNetworks)
@@ -455,7 +460,7 @@ namespace DockerDiagram.ViewModels
                     .FirstOrDefault(resource => !string.IsNullOrWhiteSpace(resource.ComposeWorkingDirectory))
                     ?? containers.Cast<DockerResource>().Concat(volumes).Concat(networks).First();
 
-                _rawComposeProjects.Add(new DockerComposeProject
+                var project = new DockerComposeProject
                 {
                     Name = projectName,
                     WorkingDirectory = projectSource.ComposeWorkingDirectory,
@@ -464,7 +469,9 @@ namespace DockerDiagram.ViewModels
                     Containers = containers,
                     Volumes = volumes,
                     Networks = networks
-                });
+                };
+                project.IsDetailsExpanded = expandedProjectKeys.Contains(project.IdentityKey);
+                _rawComposeProjects.Add(project);
             }
 
             UpdateAvailableComposeProjects();
@@ -551,15 +558,36 @@ namespace DockerDiagram.ViewModels
                 foreach (var node in sheet.Nodes)
                 {
                     if (node.Type == NodeType.Container &&
-                        (string.IsNullOrWhiteSpace(node.ContainerId) || !containerIds.Contains(node.ContainerId)))
+                        !node.IsSwarmService &&
+                        !node.IsKubernetesResource)
                     {
-                        var composeMatch = FindComposeContainer(node);
-                        if (composeMatch != null)
+                        DockerContainer? containerMatch = _rawContainers.FirstOrDefault(container =>
+                            !string.IsNullOrWhiteSpace(node.ContainerId) &&
+                            container.Id.Equals(node.ContainerId, StringComparison.OrdinalIgnoreCase));
+
+                        if (containerMatch == null &&
+                            (string.IsNullOrWhiteSpace(node.ContainerId) ||
+                             !containerIds.Contains(node.ContainerId)))
                         {
-                            node.ContainerId = composeMatch.Id;
-                            node.ComposeProjectName = composeMatch.ComposeProjectName;
-                            node.ComposeServiceName = composeMatch.ComposeServiceName;
-                            node.ComposeContainerNumber = composeMatch.ComposeContainerNumber;
+                            containerMatch = FindComposeContainer(node);
+                        }
+
+                        if (containerMatch != null)
+                        {
+                            node.ContainerId = containerMatch.Id;
+                            node.ComposeProjectName = containerMatch.ComposeProjectName;
+                            node.ComposeServiceName = containerMatch.ComposeServiceName;
+                            node.ComposeContainerNumber = containerMatch.ComposeContainerNumber;
+                            node.DetailStatus = containerMatch.State;
+                            node.IsRunning = string.Equals(
+                                containerMatch.State,
+                                "running",
+                                StringComparison.OrdinalIgnoreCase);
+                            node.IsPaused = string.Equals(
+                                containerMatch.State,
+                                "paused",
+                                StringComparison.OrdinalIgnoreCase);
+                            node.StatusColor = containerMatch.StateColor;
                         }
                     }
 

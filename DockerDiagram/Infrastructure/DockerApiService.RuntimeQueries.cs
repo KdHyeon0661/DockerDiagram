@@ -50,24 +50,39 @@ namespace DockerDiagram.Infrastructure
         /// </summary>
         public async Task MonitorDockerEventsAsync(IProgress<Message> progress, CancellationToken cancellationToken)
         {
-            var filters = new Dictionary<string, IDictionary<string, bool>>
+            EnterEventMonitor();
+            try
             {
-                ["type"] = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+                using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    _eventsLifetimeCts.Token);
+
+                var filters = new Dictionary<string, IDictionary<string, bool>>
                 {
-                    ["container"] = true,
-                    ["volume"] = true,
-                    ["network"] = true,
-                    ["image"] = true
-                }
-            };
+                    ["type"] = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["container"] = true,
+                        ["volume"] = true,
+                        ["network"] = true,
+                        ["image"] = true
+                    }
+                };
 
-            var parameters = new ContainerEventsParameters
+                var parameters = new ContainerEventsParameters
+                {
+                    Since = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
+                    Filters = filters
+                };
+
+                await _eventsClient.System.MonitorEventsAsync(
+                    parameters,
+                    progress,
+                    linkedCancellation.Token);
+            }
+            finally
             {
-                Since = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
-                Filters = filters
-            };
-
-            await _client.System.MonitorEventsAsync(parameters, progress, cancellationToken);
+                ExitEventMonitor();
+            }
         }
 
         /// <summary>
@@ -330,6 +345,7 @@ namespace DockerDiagram.Infrastructure
                     Name = c.Names?.FirstOrDefault()?.TrimStart('/') ?? c.ID,
                     Image = c.Image,
                     State = c.State,
+                    StateColor = GetContainerStateColor(c.State),
                     Ports = portStr,
                     Labels = labels,
                     ComposeProjectName = projectName,
@@ -345,6 +361,17 @@ namespace DockerDiagram.Infrastructure
                 });
             }
             return result;
+        }
+
+        private static string GetContainerStateColor(string? state)
+        {
+            return state?.Trim().ToLowerInvariant() switch
+            {
+                "running" => "#28a745",
+                "paused" or "restarting" => "#ffc107",
+                "exited" or "dead" => "#dc3545",
+                _ => "#808080"
+            };
         }
 
         public async Task<List<DockerContainer>> GetSwarmServicesAsync()

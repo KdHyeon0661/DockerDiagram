@@ -16,15 +16,24 @@ namespace DockerDiagram.Views
     {
         private readonly MainViewModel _mainVm;
         private readonly IDialogService _dialogService;
+        private readonly RuntimeKind _runtimeKind;
 
         /// <summary>
         /// 원격 서버 연결 대화상자를 초기화하며, 통신 성공 시 새로운 시트를 추가할 메인 뷰모델과 커스텀 알림을 띄울 다이얼로그 서비스를 주입받습니다.
         /// </summary>
-        public SshConnectionDialog(MainViewModel mainVm, IDialogService dialogService)
+        public SshConnectionDialog(MainViewModel mainVm, IDialogService dialogService, RuntimeKind runtimeKind = RuntimeKind.DockerEngine)
         {
             InitializeComponent();
             _mainVm = mainVm;
             _dialogService = dialogService;
+            _runtimeKind = runtimeKind;
+
+            if (_runtimeKind == RuntimeKind.DockerSwarm)
+            {
+                Title = "Connect to Swarm Manager";
+                txtDialogTitle.Text = "Swarm Manager 연결 (SSH)";
+                txtName.Text = "Swarm Cluster";
+            }
         }
 
         // 1. SSH 키 파일(.pem, .ppk) 찾아보기
@@ -98,6 +107,7 @@ namespace DockerDiagram.Views
                 {
                     Name = profileName,
                     Type = EndpointType.SshRemote,
+                    RuntimeKind = _runtimeKind,
                     HostIp = ip,
                     SshUsername = user,
                     SshPort = sshPort,
@@ -136,11 +146,33 @@ namespace DockerDiagram.Views
                 txtStatus.Text = "Docker Engine 응답 확인 완료";
                 failureStage = "Docker Engine 응답 확인";
 
+                if (_runtimeKind == RuntimeKind.DockerSwarm)
+                {
+                    txtStatus.Text = "Swarm Manager 확인 중...";
+                    failureStage = "Swarm Manager 확인";
+
+                    if (remoteDockerService is not ISwarmService swarmService)
+                        throw new InvalidOperationException("현재 연결은 Swarm API를 제공하지 않습니다.");
+
+                    var nodes = await swarmService.GetSwarmNodesAsync();
+                    if (nodes.Count == 0)
+                        throw new InvalidOperationException("Manager에서 Swarm 노드를 조회할 수 없습니다.");
+                }
+
                 // 연결된 원격 호스트의 워크스페이스를 추가합니다.
-                _mainVm.SheetManager.AddWorkspace(remoteProfile, remoteDockerService, activate: true, createInitialSheet: true);
+                var workspace = _mainVm.SheetManager.AddWorkspace(
+                    remoteProfile,
+                    remoteDockerService,
+                    activate: true,
+                    createInitialSheet: true);
+                _mainVm.SheetManager.EnterWorkspace(workspace);
                 connectionHandled = true;
 
-                _dialogService.ShowInfo($"'{profileName}' 서버에 연결되었습니다.", "연결 성공");
+                _dialogService.ShowInfo(
+                    _runtimeKind == RuntimeKind.DockerSwarm
+                        ? $"'{profileName}' Swarm Manager에 연결되었습니다."
+                        : $"'{profileName}' 서버에 연결되었습니다.",
+                    "연결 성공");
                 this.DialogResult = true;
                 this.Close();
             }

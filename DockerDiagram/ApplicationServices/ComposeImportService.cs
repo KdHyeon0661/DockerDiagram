@@ -214,7 +214,7 @@ namespace DockerDiagram.ApplicationServices
                         {
                             if (nodeMap.TryGetValue(dep, out var targetContainer))
                             {
-                                newSheet.Connectors.Add(new ConnectorViewModel(targetContainer, sourceContainer, PortDirection.Right, PortDirection.Left, dialogService)
+                                newSheet.Connectors.Add(new ConnectorViewModel(sourceContainer, targetContainer, PortDirection.Right, PortDirection.Left, dialogService)
                                 {
                                     RelationType = RelationType.Dependency
                                 });
