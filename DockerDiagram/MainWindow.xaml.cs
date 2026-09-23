@@ -73,6 +73,7 @@ namespace DockerDiagram
         private bool _isGroupingMode = false;
         private bool _isNetworkDrawingMode = false;
         private DockerNetworkGroup? _pendingExistingNetwork;
+        private RuntimeResourceKind? _pendingSwarmDraftGroupKind;
 
         // 이미 만들어진 그룹 전체를 잡고 이동할 때 사용하는 상태 변수들
         private bool _isGroupMoving = false;
@@ -431,6 +432,7 @@ namespace DockerDiagram
             _isGroupingMode = false;
             _isNetworkDrawingMode = false;
             _pendingExistingNetwork = null;
+            _pendingSwarmDraftGroupKind = null;
             Mouse.OverrideCursor = null;
             return true;
         }

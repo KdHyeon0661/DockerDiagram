@@ -205,9 +205,9 @@ namespace DockerDiagram.Infrastructure
             return query.Count == 0 ? "system/prune" : $"system/prune?{string.Join("&", query)}";
         }
 
-        private async Task<T> MakeRawDockerRequestAsync<T>(HttpMethod method, string path, object? body = null)
+        private async Task<T> MakeRawDockerRequestAsync<T>(HttpMethod method, string path, object? body = null, CancellationToken cancellationToken = default)
         {
-            var responseBody = await MakeRawDockerApiRequestAsync(method, path, body);
+            var responseBody = await MakeRawDockerApiRequestAsync(method, path, body, cancellationToken);
             var result = JsonConvert.DeserializeObject<T>(responseBody);
             return result ?? throw new InvalidOperationException($"Docker API 응답을 해석할 수 없습니다: {path}");
         }
@@ -217,7 +217,7 @@ namespace DockerDiagram.Infrastructure
             await MakeRawDockerApiRequestAsync(method, path, body);
         }
 
-        private async Task<string> MakeRawDockerApiRequestAsync(HttpMethod method, string path, object? body = null)
+        private async Task<string> MakeRawDockerApiRequestAsync(HttpMethod method, string path, object? body = null, CancellationToken cancellationToken = default)
         {
             var requestMethod = typeof(DockerClient)
                 .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
@@ -239,7 +239,7 @@ namespace DockerDiagram.Infrastructure
                 CreateRawRequestContent(body),
                 null,
                 TimeSpan.FromSeconds(CurrentProfile.Type == EndpointType.SshRemote ? 20 : 10),
-                CancellationToken.None
+                cancellationToken
             }) as Task;
 
             if (task == null)
@@ -372,6 +372,147 @@ namespace DockerDiagram.Infrastructure
                 "exited" or "dead" => "#dc3545",
                 _ => "#808080"
             };
+        }
+
+        /// <summary>
+        /// Docker /info 응답으로 현재 엔진의 Swarm 가입 상태와 로컬 역할을 판별합니다.
+        /// nodes API는 Manager 전용이므로 상태 판별에는 사용하지 않습니다.
+        /// </summary>
+        public Task<SwarmClusterState> GetSwarmStateAsync() => GetSwarmStateCoreAsync(CancellationToken.None);
+
+        private async Task<SwarmClusterState> GetSwarmStateCoreAsync(CancellationToken cancellationToken)
+        {
+            var info = await MakeRawDockerRequestAsync<JObject>(HttpMethod.Get, "info", cancellationToken: cancellationToken);
+            var swarm = info["Swarm"] as JObject;
+
+            if (swarm == null)
+            {
+                return SwarmClusterState.Create(
+                    localNodeState: null,
+                    controlAvailable: false,
+                    errorMessage: "Docker info response did not include Swarm state.");
+            }
+
+            IReadOnlyList<SwarmManagerEndpoint> remoteManagers =
+                (swarm["RemoteManagers"] as JArray)?
+                    .OfType<JObject>()
+                    .Select(manager => new SwarmManagerEndpoint(
+                        manager.Value<string>("NodeID") ?? string.Empty,
+                        manager.Value<string>("Addr") ?? string.Empty))
+                    .Where(manager =>
+                        !string.IsNullOrWhiteSpace(manager.NodeId) ||
+                        !string.IsNullOrWhiteSpace(manager.Address))
+                    .ToArray()
+                ?? Array.Empty<SwarmManagerEndpoint>();
+
+            return SwarmClusterState.Create(
+                swarm.Value<string>("LocalNodeState"),
+                swarm.Value<bool?>("ControlAvailable") ?? false,
+                swarm.Value<string>("NodeID"),
+                swarm.Value<string>("NodeAddr"),
+                swarm.Value<string>("Error"),
+                remoteManagers);
+        }
+
+        public async Task<string> InitializeSwarmAsync(
+            SwarmInitializeOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(options);
+            options.Validate();
+
+            SwarmClusterState currentState = await GetSwarmStateCoreAsync(cancellationToken);
+            if (currentState.Membership != SwarmMembershipState.Inactive)
+            {
+                throw new InvalidOperationException(
+                    $"Swarm을 초기화하려면 Docker Engine이 미가입 상태여야 합니다. 현재 상태: {currentState.Membership}");
+            }
+
+            string response = await _client.Swarm.InitSwarmAsync(
+                new SwarmInitParameters
+                {
+                    ListenAddr = options.ListenAddress.Trim(),
+                    AdvertiseAddr = options.AdvertiseAddress.Trim(),
+                    DataPathAddr = options.DataPathAddress.Trim(),
+                    DataPathPort = options.DataPathPort,
+                    AutoLockManagers = options.AutoLockManagers,
+                    Availability = options.Availability.Trim().ToLowerInvariant()
+                },
+                cancellationToken);
+            // Docker.DotNet은 init의 JSON 문자열 응답 본문을 그대로 반환합니다.
+            string nodeId = response.Trim();
+            if (nodeId.StartsWith("\"", StringComparison.Ordinal))
+                nodeId = JsonConvert.DeserializeObject<string>(nodeId) ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(nodeId))
+                throw new InvalidOperationException("Swarm 초기화 응답에 Node ID가 없습니다. 현재 상태를 다시 확인해 주세요.");
+            return nodeId;
+        }
+
+        public async Task<SwarmJoinTokens> GetJoinTokensAsync(
+            CancellationToken cancellationToken = default)
+        {
+            SwarmClusterState currentState = await GetSwarmStateCoreAsync(cancellationToken);
+            if (!currentState.IsManager)
+                throw new InvalidOperationException("Swarm Join Token은 Manager에서만 조회할 수 있습니다.");
+
+            SwarmInspectResponse swarm = await _client.Swarm.InspectSwarmAsync(cancellationToken);
+            string workerToken = swarm.JoinTokens?.Worker ?? string.Empty;
+            string managerToken = swarm.JoinTokens?.Manager ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(workerToken) || string.IsNullOrWhiteSpace(managerToken))
+                throw new InvalidOperationException("Manager가 유효한 Swarm Join Token을 반환하지 않았습니다.");
+
+            return new SwarmJoinTokens(workerToken, managerToken);
+        }
+
+        public async Task JoinSwarmAsync(
+            SwarmJoinOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(options);
+            options.Validate();
+
+            SwarmClusterState currentState = await GetSwarmStateCoreAsync(cancellationToken);
+            if (currentState.Membership != SwarmMembershipState.Inactive)
+            {
+                throw new InvalidOperationException(
+                    $"Swarm에 참가하려면 Docker Engine이 미가입 상태여야 합니다. 현재 상태: {currentState.Membership}");
+            }
+
+            await _client.Swarm.JoinSwarmAsync(
+                new SwarmJoinParameters
+                {
+                    ListenAddr = options.ListenAddress.Trim(),
+                    AdvertiseAddr = options.AdvertiseAddress.Trim(),
+                    DataPathAddr = options.DataPathAddress.Trim(),
+                    RemoteAddrs = options.GetNormalizedManagerAddresses().ToList(),
+                    JoinToken = options.JoinToken.Trim(),
+                    Availability = options.Availability.Trim().ToLowerInvariant()
+                },
+                cancellationToken);
+        }
+
+        public async Task LeaveSwarmAsync(
+            bool force = false,
+            CancellationToken cancellationToken = default)
+        {
+            SwarmClusterState currentState = await GetSwarmStateCoreAsync(cancellationToken);
+            if (!currentState.IsActive)
+            {
+                throw new InvalidOperationException(
+                    $"활성 Swarm 노드만 탈퇴할 수 있습니다. 현재 상태: {currentState.Membership}");
+            }
+
+            // force는 현재 노드만 있는 Manager 클러스터의 명시적 종료에만 허용합니다.
+            var nodes = currentState.IsManager ? await GetSwarmNodesAsync().WaitAsync(cancellationToken) : null;
+            SwarmLeavePlan plan = SwarmLeavePolicy.Evaluate(currentState, nodes);
+            if (force != plan.Force)
+                throw new InvalidOperationException("현재 노드 역할에 맞는 탈퇴 방식이 아닙니다. 탈퇴 조건을 다시 확인해 주세요.");
+            cancellationToken.ThrowIfCancellationRequested();
+
+            await _client.Swarm.LeaveSwarmAsync(
+                new SwarmLeaveParameters { Force = force },
+                cancellationToken);
         }
 
         public async Task<List<DockerContainer>> GetSwarmServicesAsync()

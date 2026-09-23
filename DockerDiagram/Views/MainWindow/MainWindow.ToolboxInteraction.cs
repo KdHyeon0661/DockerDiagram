@@ -26,10 +26,25 @@ namespace DockerDiagram
             var border = sender as Border;
             string typeStr = border?.Tag?.ToString() ?? "";
 
+            if (typeStr is "SwarmOverlayNetwork" or "SwarmGroup")
+            {
+                _pendingExistingNetwork = null;
+                _pendingSwarmDraftGroupKind = typeStr == "SwarmOverlayNetwork"
+                    ? RuntimeResourceKind.SwarmOverlayNetwork
+                    : RuntimeResourceKind.SwarmVisualGroup;
+                _isNetworkDrawingMode = typeStr == "SwarmOverlayNetwork";
+                _isGroupingMode = typeStr == "SwarmGroup";
+                Mouse.OverrideCursor = Cursors.Cross;
+                (DataContext as MainViewModel)?.Inspector.ClearSelection();
+                e.Handled = true;
+                return;
+            }
+
             // 1) Network 버튼 클릭
             if (typeStr == "Network")
             {
                 _pendingExistingNetwork = null;
+                _pendingSwarmDraftGroupKind = null;
                 _isNetworkDrawingMode = true;
                 _isGroupingMode = false;       // 그룹 모드 끄기
                 Mouse.OverrideCursor = Cursors.Cross; // 십자가 커서
@@ -43,6 +58,7 @@ namespace DockerDiagram
             {
                 _isGroupingMode = true;
                 _isNetworkDrawingMode = false; // 네트워크 모드 끄기
+                _pendingSwarmDraftGroupKind = null;
                 Mouse.OverrideCursor = Cursors.Cross; // 십자가 커서
                 (DataContext as MainViewModel)?.Inspector.ClearSelection();
                 e.Handled = true; // 이벤트 소비 (DoDragDrop 방지)
@@ -52,6 +68,7 @@ namespace DockerDiagram
             _isNetworkDrawingMode = false;
             _isGroupingMode = false;
             _pendingExistingNetwork = null;
+            _pendingSwarmDraftGroupKind = null;
             Mouse.OverrideCursor = null;   // 커서 원래대로 (화살표)
         }
 
@@ -63,7 +80,7 @@ namespace DockerDiagram
         // 2. 마우스 이동 (네트워크 모드면 드래그 앤 드롭 방지 + 기존 목록 드래그 처리)
         private void Tool_PreviewMouseMove(object sender, MouseEventArgs e)
         {
-            if (_isNetworkDrawingMode) return; // 네트워크 그리기 모드 중이면 중단
+            if (_isNetworkDrawingMode || _isGroupingMode) return; // 영역 그리기 모드 중이면 중단
 
             if (e.LeftButton == MouseButtonState.Pressed && !_isToolDragging)
             {
@@ -89,6 +106,14 @@ namespace DockerDiagram
                     // [CASE 2] 상단 고정 버튼에서 드래그 (Tag가 문자열인 경우)
                     else if (border.Tag is string tagStr)
                     {
+                        if (TryGetSwarmDraftNodeKind(tagStr, out var swarmKind))
+                        {
+                            DataObject swarmData = new DataObject("SwarmToolboxObject", swarmKind);
+                            DragDrop.DoDragDrop(border, swarmData, DragDropEffects.Copy);
+                            _isToolDragging = false;
+                            return;
+                        }
+
                         if (tagStr == "Container")
                         {
                             container = new DockerContainer
@@ -140,11 +165,26 @@ namespace DockerDiagram
                 var border = sender as Border;
                 string typeStr = border?.Tag?.ToString() ?? "";
 
-                if (typeStr == "Network" || typeStr == "Group") return;
+                if (typeStr is "Network" or "Group" or "SwarmOverlayNetwork" or "SwarmGroup") return;
+
+                var vm = DataContext as MainViewModel;
+                if (vm == null) return;
+
+                if (typeStr == "SwarmStack")
+                {
+                    vm.SheetManager.AddSwarmStackSheet();
+                    return;
+                }
+
+                if (TryGetSwarmDraftNodeKind(typeStr, out var swarmKind))
+                {
+                    Point placement = GetViewportCenteredPlacement(160, 80);
+                    await vm.CreateSwarmDraftNodeAsync(swarmKind, placement.X, placement.Y);
+                    return;
+                }
 
                 if (Enum.TryParse(typeStr, out NodeType type))
                 {
-                    var vm = DataContext as MainViewModel;
                     if (vm != null)
                     {
                         Point placement = GetViewportCenteredPlacement(160, 80);
@@ -242,6 +282,13 @@ namespace DockerDiagram
                 e.Data.GetData("StackTemplateObject") is StackTemplateDefinition stackTemplate)
             {
                 await ShowStackTemplateDialogAndApplyAsync(stackTemplate, snapX, snapY);
+                return;
+            }
+
+            if (e.Data.GetDataPresent("SwarmToolboxObject") &&
+                e.Data.GetData("SwarmToolboxObject") is RuntimeResourceKind swarmKind)
+            {
+                await vm.CreateSwarmDraftNodeAsync(swarmKind, snapX, snapY);
                 return;
             }
 
@@ -466,6 +513,20 @@ namespace DockerDiagram
                 vm.Inspector.ClearSelection();
                 e.Handled = true;
             }
+        }
+
+        private static bool TryGetSwarmDraftNodeKind(string tag, out RuntimeResourceKind kind)
+        {
+            kind = tag switch
+            {
+                "SwarmService" => RuntimeResourceKind.SwarmService,
+                "SwarmVolume" => RuntimeResourceKind.SwarmVolume,
+                "SwarmExternalTraffic" => RuntimeResourceKind.SwarmExternalTraffic,
+                "SwarmSecret" => RuntimeResourceKind.SwarmSecret,
+                "SwarmConfig" => RuntimeResourceKind.SwarmConfig,
+                _ => RuntimeResourceKind.Unspecified
+            };
+            return kind != RuntimeResourceKind.Unspecified;
         }
         private void ComposeProject_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {

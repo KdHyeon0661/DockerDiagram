@@ -32,6 +32,9 @@ namespace DockerDiagram.ViewModels
         private RelationType _relationType;
         private string? _mountPath;
         private string? _ipAddress;
+        private string _publishedPort = string.Empty;
+        private string _targetPort = string.Empty;
+        private string _protocol = "tcp";
         #endregion
 
         #region Events
@@ -127,6 +130,12 @@ namespace DockerDiagram.ViewModels
                 if (SetProperty(ref _relationType, value))
                 {
                     OnPropertyChanged(nameof(StrokeColor));
+                    OnPropertyChanged(nameof(SourceDisplayLabel));
+                    OnPropertyChanged(nameof(TargetDisplayLabel));
+                    OnPropertyChanged(nameof(HasSourceDisplayLabel));
+                    OnPropertyChanged(nameof(HasTargetDisplayLabel));
+                    OnPropertyChanged(nameof(CanReverseDirection));
+                    OnPropertyChanged(nameof(CanChangeDirectionMode));
                     OnModified?.Invoke(this, EventArgs.Empty);
                 }
             }
@@ -157,6 +166,8 @@ namespace DockerDiagram.ViewModels
             {
                 if (SetProperty(ref _sourceDataLabel, value ?? string.Empty))
                 {
+                    OnPropertyChanged(nameof(SourceDisplayLabel));
+                    OnPropertyChanged(nameof(HasSourceDisplayLabel));
                     OnPropertyChanged(nameof(SourceLabelX));
                     OnPropertyChanged(nameof(SourceLabelY));
                     OnModified?.Invoke(this, EventArgs.Empty);
@@ -171,6 +182,8 @@ namespace DockerDiagram.ViewModels
             {
                 if (SetProperty(ref _targetDataLabel, value ?? string.Empty))
                 {
+                    OnPropertyChanged(nameof(TargetDisplayLabel));
+                    OnPropertyChanged(nameof(HasTargetDisplayLabel));
                     OnPropertyChanged(nameof(TargetLabelX));
                     OnPropertyChanged(nameof(TargetLabelY));
                     OnModified?.Invoke(this, EventArgs.Empty);
@@ -178,10 +191,68 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        public string PublishedPort
+        {
+            get => _publishedPort;
+            set
+            {
+                if (SetProperty(ref _publishedPort, value ?? string.Empty))
+                {
+                    OnPropertyChanged(nameof(SourceDisplayLabel));
+                    OnPropertyChanged(nameof(HasSourceDisplayLabel));
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public string TargetPort
+        {
+            get => _targetPort;
+            set
+            {
+                if (SetProperty(ref _targetPort, value ?? string.Empty))
+                {
+                    OnPropertyChanged(nameof(TargetDisplayLabel));
+                    OnPropertyChanged(nameof(HasTargetDisplayLabel));
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public string Protocol
+        {
+            get => _protocol;
+            set
+            {
+                if (SetProperty(ref _protocol, string.IsNullOrWhiteSpace(value) ? "tcp" : value.ToLowerInvariant()))
+                {
+                    OnPropertyChanged(nameof(TargetDisplayLabel));
+                    OnPropertyChanged(nameof(HasTargetDisplayLabel));
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public string SourceDisplayLabel => RelationType == RelationType.SwarmPublishedPort
+            ? (string.IsNullOrWhiteSpace(PublishedPort) ? "published" : $"public {PublishedPort}")
+            : SourceDataLabel;
+        public string TargetDisplayLabel => RelationType == RelationType.SwarmPublishedPort
+            ? (string.IsNullOrWhiteSpace(TargetPort) ? Protocol : $"{TargetPort}/{Protocol}")
+            : TargetDataLabel;
+        public bool HasSourceDisplayLabel => !string.IsNullOrWhiteSpace(SourceDisplayLabel);
+        public bool HasTargetDisplayLabel => !string.IsNullOrWhiteSpace(TargetDisplayLabel);
+        public bool CanReverseDirection => RelationType is not RelationType.SwarmPublishedPort
+            and not RelationType.SwarmSecretReference
+            and not RelationType.SwarmConfigReference;
+        public bool CanChangeDirectionMode => CanReverseDirection;
+
         public string StrokeColor => RelationType switch
         {
             RelationType.KubernetesVolumeClaim => "#E65100",
             RelationType.VolumeMount or RelationType.NetworkAttach => "#111111",
+            RelationType.SwarmPublishedPort => "#287BAE",
+            RelationType.SwarmSecretReference => "#C08A00",
+            RelationType.SwarmConfigReference => "#4D7C6F",
             RelationType.KubernetesOwner => "#326CE5",
             RelationType.KubernetesSelector => "#0B8043",
             _ => "#111111"

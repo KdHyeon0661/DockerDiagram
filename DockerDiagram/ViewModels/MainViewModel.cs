@@ -37,6 +37,13 @@ namespace DockerDiagram.ViewModels
         public InspectorViewModel Inspector { get; }
         public UndoRedoManagerViewModel History { get; }
 
+        private RuntimeUiProfile _activeRuntimeUi = RuntimeUiProfiles.For(RuntimeKind.DockerEngine);
+        public RuntimeUiProfile ActiveRuntimeUi
+        {
+            get => _activeRuntimeUi;
+            private set => SetProperty(ref _activeRuntimeUi, value);
+        }
+
         // =========================================================
         // 기존 UI 바인딩을 위한 위임 속성
         // =========================================================
@@ -57,6 +64,14 @@ namespace DockerDiagram.ViewModels
         {
             get => SheetManager.CurrentFilePath;
             set => SheetManager.CurrentFilePath = value;
+        }
+
+        internal void RefreshRuntimeUiProfile()
+        {
+            RuntimeKind runtimeKind = ActiveSheet?.RuntimeKind
+                                      ?? SheetManager.ActiveWorkspace?.RuntimeKind
+                                      ?? RuntimeKind.DockerEngine;
+            ActiveRuntimeUi = RuntimeUiProfiles.For(runtimeKind);
         }
 
         // =========================================================

@@ -28,6 +28,7 @@ namespace DockerDiagram.ViewModels
         private readonly IDialogService _dialogService;
 
         private string _title = "Group";
+        private string _driver = "bridge";
         private bool _isDockerConnected = true;
         private int _zIndex;
 
@@ -41,14 +42,28 @@ namespace DockerDiagram.ViewModels
         #endregion
 
         #region Basic Properties
-        public string Title { get => _title; set => SetProperty(ref _title, value); }
+        public string Title
+        {
+            get => _title;
+            set
+            {
+                if (SetProperty(ref _title, value)) RaiseModified();
+            }
+        }
         public override string Name
         {
             get => Title;
             set => Title = value;
         }
         public GroupType Type { get; }
-        public string Driver { get; set; } = "bridge"; // 네트워크 드라이버 정보
+        public string Driver
+        {
+            get => _driver;
+            set
+            {
+                if (SetProperty(ref _driver, value)) RaiseModified();
+            }
+        } // 네트워크 드라이버 정보
         public string Subnet { get; set; } = "";
         public string Gateway { get; set; } = "";
         public string IpRange { get; set; } = "";
@@ -77,7 +92,13 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        public bool IsDockerDisconnected => Type == GroupType.Network && !IsDockerConnected;
+        public bool IsDockerDisconnected => Type == GroupType.Network && !IsDraft && !IsDockerConnected;
+
+        protected override void OnRuntimeMetadataChanged(string propertyName)
+        {
+            base.OnRuntimeMetadataChanged(propertyName);
+            OnPropertyChanged(nameof(IsDockerDisconnected));
+        }
 
         public NetworkCreateOptions ToNetworkCreateOptions()
         {
@@ -238,7 +259,7 @@ namespace DockerDiagram.ViewModels
         {
             if (!ContainedNodes.Contains(node))
             {
-                if (!isRestoring && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
+                if (!isRestoring && !IsDraft && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
                 {
                     if (ParentSheet?.Profile.Type == EndpointType.Local && !DockerServiceHelper.IsDockerRunning()) return;
 
@@ -251,7 +272,7 @@ namespace DockerDiagram.ViewModels
                 ContainedNodes.Add(node);
                 RaiseModified();
 
-                if (!isRestoring && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
+                if (!isRestoring && !IsDraft && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
                 {
                     try
                     {
@@ -287,7 +308,7 @@ namespace DockerDiagram.ViewModels
                 ContainedNodes.Remove(node);
                 RaiseModified();
 
-                if (!isRestoring && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
+                if (!isRestoring && !IsDraft && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
                 {
                     if (ParentSheet?.Profile.Type == EndpointType.Local && !DockerServiceHelper.IsDockerRunning()) return;
 

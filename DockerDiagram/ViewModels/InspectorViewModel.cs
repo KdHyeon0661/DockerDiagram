@@ -68,6 +68,7 @@ namespace DockerDiagram.ViewModels
         private void SetConnectorDirection(object? parameter)
         {
             if (SelectedElement is not ConnectorViewModel connector) return;
+            if (!connector.CanChangeDirectionMode) return;
 
             bool isBidirectional = string.Equals(parameter?.ToString(), "Bidirectional", StringComparison.Ordinal);
             if (connector.IsBidirectional == isBidirectional) return;
@@ -81,6 +82,7 @@ namespace DockerDiagram.ViewModels
         private void ReverseConnectorDirection()
         {
             if (SelectedElement is not ConnectorViewModel connector) return;
+            if (!connector.CanReverseDirection) return;
 
             ConnectorDirectionState before = CaptureDirection(connector);
             connector.ReverseDirection();
@@ -241,7 +243,11 @@ namespace DockerDiagram.ViewModels
             // =========================================================
             if (SelectedElement is ConnectorViewModel conn)
             {
-                if (conn.RelationType == RelationType.Dependency)
+                bool isDraftConnector = new[] { conn.Source, conn.Target }
+                    .OfType<ConnectableItemViewModel>()
+                    .Any(item => item.IsDraft);
+
+                if (isDraftConnector || conn.RelationType == RelationType.Dependency)
                 {
                     await _mainVm.History.ExecuteAndRecordAsync(_mainVm.CreateConnectorDeleteCommand(sheet, conn));
                 }
@@ -292,7 +298,7 @@ namespace DockerDiagram.ViewModels
             // =========================================================
             else if (SelectedElement is NodeViewModel node)
             {
-                if (node.Type == NodeType.Internet)
+                if (node.IsDraft || node.Type == NodeType.Internet)
                 {
                     await _mainVm.History.ExecuteAndRecordAsync(_mainVm.CreateNodeDeleteCommand(sheet, node, deleteDocker: false));
                     SelectedElement = null;
@@ -341,6 +347,14 @@ namespace DockerDiagram.ViewModels
             // =========================================================
             else if (SelectedElement is GroupViewModel group)
             {
+                if (group.IsDraft)
+                {
+                    await _mainVm.History.ExecuteAndRecordAsync(
+                        _mainVm.CreateGroupDeleteCommand(sheet, group, deleteDocker: false));
+                    SelectedElement = null;
+                    return;
+                }
+
                 if (group.Type == GroupType.Network && group.IsBuiltInDockerNetwork)
                 {
                     _dialogService.ShowInfo(

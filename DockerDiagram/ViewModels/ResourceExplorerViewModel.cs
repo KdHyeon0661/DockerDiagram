@@ -1,6 +1,7 @@
 using DockerDiagram.Infrastructure;
 using DockerDiagram.ApplicationServices;
 using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
 using DockerDiagram.Common;
 using System;
 using System.Collections.Generic;
@@ -204,32 +205,78 @@ namespace DockerDiagram.ViewModels
                 }
                 else if (sheet?.RuntimeKind == RuntimeKind.DockerSwarm)
                 {
+                    var failedResources = new List<string>();
+
                     try
                     {
                         _rawContainers = await ((ISwarmService)service).GetSwarmServicesAsync();
                     }
                     catch (Exception swarmEx)
                     {
-                        MarkRuntimeUnavailable(
-                            sheet,
-                            "Swarm runtime is unavailable. Saved services remain visible as an offline snapshot; live controls are disabled.");
                         _rawContainers.Clear();
-                        _rawVolumes.Clear();
-                        _rawNetworks.Clear();
-                        _rawImages.Clear();
-                        ComposeProjects.Clear();
-                        SwarmNodes.Clear();
-                        UpdateAvailableItems();
-                        LastSyncTime = "Swarm unavailable";
-                        Debug.WriteLine($"[ResourceExplorer] Swarm Sync Error: {swarmEx.Message}");
-                        return;
+                        failedResources.Add("Services");
+                        Debug.WriteLine($"[ResourceExplorer] Swarm Services Sync Error: {swarmEx.Message}");
                     }
 
-                    _rawVolumes.Clear();
-                    _rawNetworks = await ((INetworkService)service).GetNetworksAsync();
+                    try
+                    {
+                        SyncCollection(
+                            SwarmNodes,
+                            await ((ISwarmService)service).GetSwarmNodesAsync(),
+                            node => node.Id);
+                    }
+                    catch (Exception nodeEx)
+                    {
+                        SwarmNodes.Clear();
+                        failedResources.Add("Nodes");
+                        Debug.WriteLine($"[ResourceExplorer] Swarm Nodes Sync Error: {nodeEx.Message}");
+                    }
+
+                    try
+                    {
+                        _rawNetworks = (await ((INetworkService)service).GetNetworksAsync())
+                            .Where(SwarmResourceFilter.IsOverlayNetwork)
+                            .ToList();
+                    }
+                    catch (Exception networkEx)
+                    {
+                        _rawNetworks.Clear();
+                        failedResources.Add("Overlay Networks");
+                        Debug.WriteLine($"[ResourceExplorer] Swarm Overlay Networks Sync Error: {networkEx.Message}");
+                    }
+
+                    try
+                    {
+                        _rawVolumes = await ((IVolumeService)service).GetVolumesAsync();
+                    }
+                    catch (Exception volumeEx)
+                    {
+                        _rawVolumes.Clear();
+                        failedResources.Add("Manager Host Volumes");
+                        Debug.WriteLine($"[ResourceExplorer] Swarm Manager Volumes Sync Error: {volumeEx.Message}");
+                    }
+
                     _rawImages.Clear();
-                    SyncCollection(SwarmNodes, await ((ISwarmService)service).GetSwarmNodesAsync(), node => node.Id);
                     ClearKubernetesResourceCollections(clearNodes: true);
+
+                    if (failedResources.Contains("Services") && failedResources.Contains("Nodes"))
+                    {
+                        MarkRuntimeUnavailable(
+                            sheet,
+                            "Swarm Manager APIs are unavailable. Saved services remain visible as an offline snapshot; live controls are disabled.");
+                    }
+                    else
+                    {
+                        ClearRuntimeUnavailable(sheet);
+                    }
+
+                    UpdateComposeProjects();
+                    UpdateAvailableItems();
+                    UpdateDiagramConnectionStates();
+                    LastSyncTime = failedResources.Count == 0
+                        ? $"Last updated: {DateTime.Now:HH:mm:ss}"
+                        : $"Partial sync: {string.Join(", ", failedResources)}";
+                    return;
                 }
                 else
                 {
@@ -1011,6 +1058,7 @@ namespace DockerDiagram.ViewModels
             else if (currentItem is DockerNetworkGroup currentNetwork && latestItem is DockerNetworkGroup latestNetwork)
             {
                 currentNetwork.Driver = latestNetwork.Driver;
+                currentNetwork.Scope = latestNetwork.Scope;
             }
             else if (currentItem is DockerSwarmNode currentSwarmNode && latestItem is DockerSwarmNode latestSwarmNode)
             {

@@ -114,6 +114,7 @@ namespace DockerDiagram.Infrastructure
                     Name = n.Name,
                     Id = n.ID,
                     Driver = n.Driver,
+                    Scope = n.Scope,
                     Labels = labels,
                     ComposeProjectName = FirstNonEmpty(
                         GetLabel(labels, "com.docker.compose.project"),

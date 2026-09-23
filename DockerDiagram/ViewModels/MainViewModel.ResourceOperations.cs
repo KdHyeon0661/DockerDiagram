@@ -18,7 +18,23 @@ namespace DockerDiagram.ViewModels
         {
             if (ActiveSheet == null || source == target) return;
 
-            if (!IsValidConnection(source, target))
+            RelationType? swarmRelation = null;
+            bool reverseForSemanticDirection = false;
+            if (ActiveSheet.RuntimeKind == RuntimeKind.DockerSwarm)
+            {
+                SwarmConnectionDecision decision = SwarmConnectionPolicy.Resolve(
+                    GetEffectiveSwarmKind(source),
+                    GetEffectiveSwarmKind(target));
+                if (!decision.IsAllowed)
+                {
+                    _dialogService.ShowMessage(decision.ErrorMessage);
+                    return;
+                }
+
+                swarmRelation = decision.RelationType;
+                reverseForSemanticDirection = decision.ReverseDirection;
+            }
+            else if (!IsValidConnection(source, target))
             {
                 _dialogService.ShowMessage("연결할 수 없는 조합입니다.\n(볼륨끼리 연결하거나, 인터넷과 볼륨은 연결할 수 없습니다.)");
                 return;
@@ -29,16 +45,26 @@ namespace DockerDiagram.ViewModels
             PortDirection finalSourceDir = sourceDir;
             PortDirection finalTargetDir = targetDir;
 
+            if (reverseForSemanticDirection)
+            {
+                (finalSource, finalTarget) = (finalTarget, finalSource);
+                (finalSourceDir, finalTargetDir) = (finalTargetDir, finalSourceDir);
+            }
+
             NodeViewModel? volumeContainer = new[] { finalSource, finalTarget }
                 .OfType<NodeViewModel>()
                 .FirstOrDefault(node => node.Type == NodeType.Container);
             NodeViewModel? volumeNode = new[] { finalSource, finalTarget }
                 .OfType<NodeViewModel>()
                 .FirstOrDefault(node => node.Type == NodeType.Volume);
-            bool isVolumeMount = volumeContainer != null && volumeNode != null;
+            bool isVolumeMount = swarmRelation == RelationType.VolumeMount ||
+                                 (swarmRelation == null && volumeContainer != null && volumeNode != null);
+            bool isDraftConnection = new[] { finalSource, finalTarget }
+                .OfType<ConnectableItemViewModel>()
+                .Any(item => item.IsDraft);
 
             // 볼륨 마운트는 연결 방향과 무관하게 양 끝의 리소스 역할로 처리합니다.
-            if (isVolumeMount)
+            if (isVolumeMount && ActiveSheet.RuntimeKind != RuntimeKind.DockerSwarm && !isDraftConnection)
             {
                 bool isSuccess = await ConnectVolumeToContainerAsync(volumeContainer!, volumeNode!);
                 if (!isSuccess) return;
@@ -52,7 +78,20 @@ namespace DockerDiagram.ViewModels
             {
                 var newConnector = new ConnectorViewModel(finalSource, finalTarget, finalSourceDir, finalTargetDir, _dialogService);
 
-                if (isVolumeMount)
+                if (swarmRelation.HasValue)
+                {
+                    newConnector.RelationType = swarmRelation.Value;
+                    if (swarmRelation == RelationType.VolumeMount)
+                        newConnector.MountPath = "/data";
+                    else if (swarmRelation == RelationType.SwarmPublishedPort)
+                    {
+                        newConnector.PublishedPort = "8080";
+                        newConnector.TargetPort = "80";
+                        newConnector.Protocol = "tcp";
+                        newConnector.IsBidirectional = false;
+                    }
+                }
+                else if (isVolumeMount)
                 {
                     newConnector.RelationType = RelationType.VolumeMount;
                     newConnector.MountPath = "/data";
@@ -71,6 +110,25 @@ namespace DockerDiagram.ViewModels
             }
 
             IsModified = true;
+        }
+
+        private static RuntimeResourceKind GetEffectiveSwarmKind(IConnectableItem item)
+        {
+            if (item is ConnectableItemViewModel connectable &&
+                connectable.ResourceKind != RuntimeResourceKind.Unspecified)
+            {
+                return connectable.ResourceKind;
+            }
+
+            return item switch
+            {
+                NodeViewModel { IsSwarmService: true } => RuntimeResourceKind.SwarmService,
+                NodeViewModel { Type: NodeType.Volume } => RuntimeResourceKind.SwarmVolume,
+                NodeViewModel { Type: NodeType.Internet } => RuntimeResourceKind.SwarmExternalTraffic,
+                GroupViewModel { Type: GroupType.Network } => RuntimeResourceKind.SwarmOverlayNetwork,
+                GroupViewModel => RuntimeResourceKind.SwarmVisualGroup,
+                _ => RuntimeResourceKind.Unspecified
+            };
         }
 
         private bool IsValidConnection(IConnectableItem t1, IConnectableItem t2)
@@ -250,6 +308,88 @@ namespace DockerDiagram.ViewModels
             RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, "Add existing Docker network", affectsDocker: false);
             return Task.CompletedTask;
         }
+
+        public Task CreateSwarmDraftNodeAsync(RuntimeResourceKind kind, double x, double y)
+        {
+            if (ActiveSheet?.RuntimeKind != RuntimeKind.DockerSwarm) return Task.CompletedTask;
+
+            var historyBefore = CaptureDiagramState(ActiveSheet);
+            int ordinal = ActiveSheet.Nodes.Count(node => node.ResourceKind == kind) + 1;
+            var (name, type, image, isService) = kind switch
+            {
+                RuntimeResourceKind.SwarmService => ($"Service {ordinal}", NodeType.Container, "swarm-service", true),
+                RuntimeResourceKind.SwarmVolume => ($"Volume {ordinal}", NodeType.Volume, "local", false),
+                RuntimeResourceKind.SwarmExternalTraffic => ($"External Traffic {ordinal}", NodeType.Internet, "external", false),
+                RuntimeResourceKind.SwarmSecret => ($"Secret {ordinal}", NodeType.Container, "swarm-secret", false),
+                RuntimeResourceKind.SwarmConfig => ($"Config {ordinal}", NodeType.Container, "swarm-config", false),
+                _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "지원하지 않는 Swarm 노드 종류입니다.")
+            };
+
+            var node = new NodeViewModel(_containerService, _volumeService, _dialogService)
+            {
+                Name = name,
+                ImageName = image,
+                Type = type,
+                X = x,
+                Y = y,
+                RuntimeKind = RuntimeKind.DockerSwarm,
+                ResourceKind = kind,
+                Origin = ElementOrigin.Toolbox,
+                BindingState = RuntimeBindingState.Draft,
+                IsSwarmService = isService,
+                SwarmMode = isService ? "replicated" : string.Empty,
+                SwarmDesiredReplicas = isService ? 1UL : 0UL,
+                TargetSwarmReplicas = isService ? 1UL : 0UL,
+                DetailStatus = "Draft",
+                StatusColor = "#7652A8",
+                IsDockerConnected = false
+            };
+
+            ActiveSheet.Nodes.Add(node);
+            IsModified = true;
+            RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Add draft {name}", affectsDocker: false);
+            return Task.CompletedTask;
+        }
+
+        public async Task CreateSwarmDraftGroupAsync(
+            RuntimeResourceKind kind,
+            double x,
+            double y,
+            double width,
+            double height)
+        {
+            if (ActiveSheet?.RuntimeKind != RuntimeKind.DockerSwarm) return;
+            if (kind is not RuntimeResourceKind.SwarmOverlayNetwork and not RuntimeResourceKind.SwarmVisualGroup)
+                throw new ArgumentOutOfRangeException(nameof(kind), kind, "지원하지 않는 Swarm 그룹 종류입니다.");
+
+            var historyBefore = CaptureDiagramState(ActiveSheet);
+            int ordinal = ActiveSheet.Groups.Count(group => group.ResourceKind == kind) + 1;
+            bool isNetwork = kind == RuntimeResourceKind.SwarmOverlayNetwork;
+            var group = new GroupViewModel(
+                x,
+                y,
+                Math.Max(GroupViewModel.MinimumWidth, width),
+                Math.Max(GroupViewModel.MinimumHeight, height),
+                _networkService,
+                _dialogService,
+                isNetwork ? $"Overlay Network {ordinal}" : $"Group {ordinal}",
+                isNetwork ? GroupType.Network : GroupType.General)
+            {
+                RuntimeKind = RuntimeKind.DockerSwarm,
+                ResourceKind = kind,
+                Origin = ElementOrigin.Toolbox,
+                BindingState = RuntimeBindingState.Draft,
+                Driver = isNetwork ? "overlay" : string.Empty,
+                IsDockerConnected = false
+            };
+
+            ActiveSheet.AddGroup(group);
+            await ActiveSheet.RefreshGroupContainmentAsync(group);
+            ActiveSheet.UpdateGroupLayering();
+            IsModified = true;
+            RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Add draft {group.Title}", affectsDocker: false);
+        }
+
         public async Task CreateNewNetworkGroupAsync(string name, string driver, double x, double y, double w, double h)
         {
             await CreateNewNetworkGroupAsync(NetworkCreateOptions.Basic(name, driver), x, y, w, h);

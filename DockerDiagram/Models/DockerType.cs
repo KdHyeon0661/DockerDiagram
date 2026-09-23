@@ -126,6 +126,9 @@ namespace DockerDiagram.Models
         private string _driver = "bridge";
         public string Driver { get => _driver; set => SetProperty(ref _driver, value); }
 
+        private string _scope = "local";
+        public string Scope { get => _scope; set => SetProperty(ref _scope, value); }
+
         public override GroupType Type => GroupType.Network; // override로 구현
     }
 
@@ -186,6 +189,26 @@ namespace DockerDiagram.Models
         public string StatusColor { get; init; } = "#808080";
         public string ShortId => Id.Length > 12 ? Id[..12] : Id;
         public string ShortContainerId => ContainerId.Length > 12 ? ContainerId[..12] : ContainerId;
+    }
+
+    /// <summary>
+    /// 한 Swarm node에 배치된 service task들을 UI에서 묶어 보여주기 위한 읽기 전용 투영 모델입니다.
+    /// Task는 사용자가 배치하는 다이어그램 노드가 아니라 Swarm scheduler의 실행 결과입니다.
+    /// </summary>
+    public sealed class SwarmTaskPlacement
+    {
+        public string NodeId { get; init; } = string.Empty;
+        public string NodeName { get; init; } = "Unassigned";
+        public string NodeRole { get; init; } = "worker";
+        public string NodeStatus { get; init; } = "unknown";
+        public bool IsAssigned { get; init; }
+        public IReadOnlyList<DockerSwarmTask> Tasks { get; init; } = Array.Empty<DockerSwarmTask>();
+        public int RunningCount => Tasks.Count(task =>
+            task.CurrentState.Equals("running", StringComparison.OrdinalIgnoreCase));
+        public string TaskSummary => $"{RunningCount}/{Tasks.Count} running";
+        public string NodeSummary => IsAssigned
+            ? $"{NodeRole} · {NodeStatus}"
+            : "scheduler assignment pending";
     }
 
     public sealed class DockerSwarmNode : DockerResource

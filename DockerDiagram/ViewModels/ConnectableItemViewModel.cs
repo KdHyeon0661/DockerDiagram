@@ -1,4 +1,5 @@
 using DockerDiagram.Common;
+using DockerDiagram.Models;
 using System;
 
 namespace DockerDiagram.ViewModels
@@ -37,6 +38,10 @@ namespace DockerDiagram.ViewModels
         private double _height;
         private bool _isSelected;
         private SheetViewModel? _parentSheet;
+        private RuntimeKind _runtimeKind = RuntimeKind.DockerEngine;
+        private RuntimeResourceKind _resourceKind = RuntimeResourceKind.Unspecified;
+        private ElementOrigin _origin = ElementOrigin.Unknown;
+        private RuntimeBindingState _bindingState = RuntimeBindingState.Bound;
 
         protected ConnectableItemViewModel(double x, double y, double width, double height)
         {
@@ -53,6 +58,36 @@ namespace DockerDiagram.ViewModels
         }
 
         public abstract string Name { get; set; }
+
+        public RuntimeKind RuntimeKind
+        {
+            get => _runtimeKind;
+            set => SetRuntimeMetadata(ref _runtimeKind, value, nameof(RuntimeKind));
+        }
+
+        public RuntimeResourceKind ResourceKind
+        {
+            get => _resourceKind;
+            set => SetRuntimeMetadata(ref _resourceKind, value, nameof(ResourceKind));
+        }
+
+        public ElementOrigin Origin
+        {
+            get => _origin;
+            set => SetRuntimeMetadata(ref _origin, value, nameof(Origin));
+        }
+
+        public RuntimeBindingState BindingState
+        {
+            get => _bindingState;
+            set => SetRuntimeMetadata(ref _bindingState, value, nameof(BindingState));
+        }
+
+        public bool IsDraft => BindingState == RuntimeBindingState.Draft;
+        public bool HasRuntimeMetadata => ResourceKind != RuntimeResourceKind.Unspecified;
+        public string RuntimeBadgeText => HasRuntimeMetadata
+            ? $"{GetResourceKindLabel(ResourceKind)} · {BindingState} · {Origin}"
+            : string.Empty;
 
         public double X
         {
@@ -128,6 +163,10 @@ namespace DockerDiagram.ViewModels
         {
         }
 
+        protected virtual void OnRuntimeMetadataChanged(string propertyName)
+        {
+        }
+
         protected void RaiseModified() => OnModified?.Invoke(this, EventArgs.Empty);
         protected void RaisePositionChanged() => OnPositionChanged?.Invoke(this, EventArgs.Empty);
 
@@ -144,5 +183,33 @@ namespace DockerDiagram.ViewModels
             RaiseModified();
             OnBoundsChanged(propertyName);
         }
+
+        private void SetRuntimeMetadata<T>(ref T field, T value, string propertyName)
+        {
+            if (!SetProperty(ref field, value, propertyName)) return;
+
+            OnPropertyChanged(nameof(IsDraft));
+            OnPropertyChanged(nameof(HasRuntimeMetadata));
+            OnPropertyChanged(nameof(RuntimeBadgeText));
+            RaiseModified();
+            OnRuntimeMetadataChanged(propertyName);
+        }
+
+        private static string GetResourceKindLabel(RuntimeResourceKind kind) => kind switch
+        {
+            RuntimeResourceKind.SwarmService => "Swarm Service",
+            RuntimeResourceKind.SwarmVolume => "Swarm Volume",
+            RuntimeResourceKind.SwarmExternalTraffic => "External Traffic",
+            RuntimeResourceKind.SwarmOverlayNetwork => "Overlay Network",
+            RuntimeResourceKind.SwarmSecret => "Swarm Secret",
+            RuntimeResourceKind.SwarmConfig => "Swarm Config",
+            RuntimeResourceKind.SwarmVisualGroup => "Swarm Group",
+            RuntimeResourceKind.DockerContainer => "Container",
+            RuntimeResourceKind.DockerVolume => "Volume",
+            RuntimeResourceKind.DockerNetwork => "Network",
+            RuntimeResourceKind.ExternalTraffic => "External Traffic",
+            RuntimeResourceKind.VisualGroup => "Group",
+            _ => kind.ToString()
+        };
     }
 }

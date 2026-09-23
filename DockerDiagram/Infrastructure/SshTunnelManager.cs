@@ -57,14 +57,11 @@ namespace DockerDiagram.Infrastructure
                     RedirectStandardOutput = true
                 };
 
-                startInfo.ArgumentList.Add("-i");
-                startInfo.ArgumentList.Add(keyFilePath);
-                startInfo.ArgumentList.Add("-N");
-                startInfo.ArgumentList.Add("-L");
-                startInfo.ArgumentList.Add($"{localPort}:{socketPath}");
-                startInfo.ArgumentList.Add($"{username}@{hostIp}");
-                startInfo.ArgumentList.Add("-p");
-                startInfo.ArgumentList.Add(sshPort.ToString());
+                foreach (string argument in BuildOpenSshArguments(
+                             hostIp, sshPort, username, keyFilePath, socketPath, localPort))
+                {
+                    startInfo.ArgumentList.Add(argument);
+                }
 
                 var process = Process.Start(startInfo);
                 if (process == null) throw new Exception("SSH 프로세스를 시작할 수 없습니다.");
@@ -248,6 +245,28 @@ namespace DockerDiagram.Infrastructure
                 throw new ArgumentException("원격 Docker 소켓 경로에 사용할 수 없는 문자가 포함되어 있습니다.");
 
             return socketPath;
+        }
+
+        internal static IReadOnlyList<string> BuildOpenSshArguments(
+            string hostIp,
+            int sshPort,
+            string username,
+            string keyFilePath,
+            string remoteDockerSocketPath,
+            int localPort)
+        {
+            return new[]
+            {
+                "-i", keyFilePath,
+                "-p", sshPort.ToString(),
+                "-N",
+                "-T",
+                "-o", "ExitOnForwardFailure=yes",
+                "-o", "ServerAliveInterval=15",
+                "-o", "ServerAliveCountMax=2",
+                "-L", $"{localPort}:{remoteDockerSocketPath}",
+                $"{username}@{hostIp}"
+            };
         }
 
         private static string BuildConnectionKey(string hostIp, int sshPort, string username, string socketPath)

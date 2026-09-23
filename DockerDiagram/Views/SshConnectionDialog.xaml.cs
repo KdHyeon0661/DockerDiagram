@@ -36,15 +36,15 @@ namespace DockerDiagram.Views
             }
         }
 
-        // 1. SSH 키 파일(.pem, .ppk) 찾아보기
+        // 1. OpenSSH 개인 키 파일 찾아보기
         /// <summary>
-        /// 사용자의 로컬 PC 탐색기를 열어 SSH 접속에 필요한 프라이빗 인증 키 파일(.pem, .ppk 등)의 경로를 선택합니다.
+        /// 사용자의 로컬 PC 탐색기를 열어 SSH 접속에 필요한 OpenSSH 개인 키 파일을 선택합니다.
         /// </summary>
         private void BtnBrowseKey_Click(object sender, RoutedEventArgs e)
         {
             var openDlg = new OpenFileDialog
             {
-                Filter = "SSH Key Files (*.pem;*.ppk)|*.pem;*.ppk|All Files (*.*)|*.*",
+                Filter = "OpenSSH Key Files (*.pem;*.key)|*.pem;*.key|All Files (*.*)|*.*",
                 Title = "SSH 프라이빗 키 파일 선택"
             };
 
@@ -154,9 +154,20 @@ namespace DockerDiagram.Views
                     if (remoteDockerService is not ISwarmService swarmService)
                         throw new InvalidOperationException("현재 연결은 Swarm API를 제공하지 않습니다.");
 
-                    var nodes = await swarmService.GetSwarmNodesAsync();
-                    if (nodes.Count == 0)
-                        throw new InvalidOperationException("Manager에서 Swarm 노드를 조회할 수 없습니다.");
+                    var state = await swarmService.GetSwarmStateAsync();
+                    if (!state.IsManager)
+                    {
+                        string detail = state.Membership switch
+                        {
+                            SwarmMembershipState.Worker => "연결한 Docker Engine은 Swarm Worker입니다. Manager 호스트에 연결해 주세요.",
+                            SwarmMembershipState.Inactive => "연결한 Docker Engine은 Swarm에 가입되어 있지 않습니다.",
+                            SwarmMembershipState.Pending => "연결한 Docker Engine이 아직 Swarm 참가 처리 중입니다.",
+                            SwarmMembershipState.Locked => "연결한 Swarm이 잠겨 있습니다.",
+                            SwarmMembershipState.Error => $"Docker가 Swarm 오류를 보고했습니다: {state.ErrorMessage}",
+                            _ => "연결한 Docker Engine의 Swarm 역할을 확인할 수 없습니다."
+                        };
+                        throw new InvalidOperationException(detail);
+                    }
                 }
 
                 // 연결된 원격 호스트의 워크스페이스를 추가합니다.

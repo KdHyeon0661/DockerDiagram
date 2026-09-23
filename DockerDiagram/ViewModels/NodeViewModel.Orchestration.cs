@@ -1,5 +1,6 @@
 using DockerDiagram.Contracts;
 using DockerDiagram.Common;
+using DockerDiagram.Diagram;
 using Newtonsoft.Json.Linq;
 using System;
 using System.IO;
@@ -37,7 +38,9 @@ namespace DockerDiagram.ViewModels
                     StatusColor = "#808080";
                     SwarmServiceInspectJson = "Swarm service not found.";
                     SwarmTasks.Clear();
+                    SwarmTaskPlacements.Clear();
                     OnPropertyChanged(nameof(SwarmTaskSummary));
+                    OnPropertyChanged(nameof(SwarmPlacementSummary));
                     RaiseSwarmCommandStates();
                     return;
                 }
@@ -59,12 +62,17 @@ namespace DockerDiagram.ViewModels
                 object raw = await swarmService.InspectSwarmServiceRawAsync(ContainerId);
                 SwarmServiceInspectJson = raw.ToString() ?? string.Empty;
                 var tasks = await swarmService.GetSwarmServiceTasksAsync(ContainerId);
+                var swarmNodes = await swarmService.GetSwarmNodesAsync();
                 SwarmTasks.Clear();
                 foreach (var task in tasks)
                     SwarmTasks.Add(task);
+                SwarmTaskPlacements.Clear();
+                foreach (var placement in SwarmTaskTopology.Build(tasks, swarmNodes))
+                    SwarmTaskPlacements.Add(placement);
                 OnPropertyChanged(nameof(CanScaleSwarmService));
                 OnPropertyChanged(nameof(SwarmReplicaSummary));
                 OnPropertyChanged(nameof(SwarmTaskSummary));
+                OnPropertyChanged(nameof(SwarmPlacementSummary));
                 RaiseSwarmCommandStates();
             }
             catch (Exception ex)

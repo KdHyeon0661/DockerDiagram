@@ -221,6 +221,7 @@ namespace DockerDiagram.ApplicationServices
             var relatedConnectors = sheet.Connectors.Where(c => c.Source == node || c.Target == node).ToList();
             var containingGroups = sheet.Groups.Where(g => g.ContainedNodes.Contains(node)).ToList();
             bool affectsDocker = deleteDocker &&
+                                 !node.IsDraft &&
                                  node.Type != NodeType.Internet &&
                                  !(node.Type == NodeType.Volume && node.VolumeExternal);
 
@@ -257,7 +258,7 @@ namespace DockerDiagram.ApplicationServices
                 .Where(c => c.Source == (IConnectableItem)group || c.Target == (IConnectableItem)group)
                 .ToList();
             var containedNodes = group.ContainedNodes.ToList();
-            bool affectsDocker = deleteDocker && group.Type == GroupType.Network && !group.External;
+            bool affectsDocker = deleteDocker && !group.IsDraft && group.Type == GroupType.Network && !group.External;
 
             return new DelegateHistoryCommand(
                 affectsDocker ? $"Delete Docker network: {group.Title}" : $"Delete diagram group: {group.Title}",

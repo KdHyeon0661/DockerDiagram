@@ -27,6 +27,9 @@
         Dependency,     // 컨테이너 간의 실행 순서/의존성 (Container <-> Container)
         VolumeMount,    // 컨테이너에 데이터를 저장하기 위한 마운트 (Container <-> Volume)
         NetworkAttach,  // 컨테이너가 외부 통신을 하기 위한 연결 (Container <-> Internet)
+        SwarmPublishedPort,   // External Traffic -> Service 공개 포트
+        SwarmSecretReference, // Service -> Secret 참조
+        SwarmConfigReference, // Service -> Config 참조
         KubernetesOwner,     // Kubernetes ownerReferences 기반 관계 (Deployment/ReplicaSet/Pod 등)
         KubernetesSelector,  // Service selector가 Pod label을 선택하는 관계
         KubernetesVolumeClaim // Pod가 PersistentVolumeClaim을 사용하는 관계
@@ -51,5 +54,46 @@
         DockerEngine,
         DockerSwarm,
         Kubernetes
+    }
+
+    /// <summary>
+    /// 캔버스 요소가 표현하는 런타임 리소스의 의미입니다.
+    /// 시각 타입(NodeType/GroupType)과 분리해 같은 카드 모양으로 Service, Secret, Config를 표현할 수 있습니다.
+    /// </summary>
+    public enum RuntimeResourceKind
+    {
+        Unspecified,
+        DockerContainer,
+        DockerVolume,
+        ExternalTraffic,
+        DockerNetwork,
+        VisualGroup,
+        SwarmService,
+        SwarmVolume,
+        SwarmExternalTraffic,
+        SwarmOverlayNetwork,
+        SwarmSecret,
+        SwarmConfig,
+        SwarmVisualGroup
+    }
+
+    public enum ElementOrigin
+    {
+        Unknown,
+        Toolbox,
+        RuntimeDiscovery,
+        ComposeImport,
+        StackImport,
+        Template,
+        FileRestore
+    }
+
+    public enum RuntimeBindingState
+    {
+        Bound,
+        Draft,
+        Applying,
+        Missing,
+        Error
     }
 }

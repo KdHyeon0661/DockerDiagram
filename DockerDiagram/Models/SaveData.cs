@@ -10,7 +10,7 @@ namespace DockerDiagram.Models
     /// </summary>
     public class DiagramFile
     {
-        public string Version { get; set; } = "1.36"; // 파일 구조의 버전 (하위 호환성 체크용)
+        public string Version { get; set; } = "1.38"; // 파일 구조의 버전 (하위 호환성 체크용)
         public DateTime SavedAt { get; set; } = DateTime.Now; // 파일이 마지막으로 저장된 시간
         public List<SheetData> Sheets { get; set; } = new List<SheetData>(); // 파일에 포함된 모든 시트(도화지) 목록
         public int ActiveSheetIndex { get; set; } = 0; // 파일을 다시 열었을 때 포커스를 맞출 시트의 인덱스
@@ -52,6 +52,10 @@ namespace DockerDiagram.Models
         public string PortInfo { get; set; } = string.Empty; // 포트 또는 Swarm replica 요약 표시
 
         public NodeType Type { get; set; } // 노드의 종류 (컨테이너, 볼륨, 인터넷 등)
+        public RuntimeKind RuntimeKind { get; set; } = RuntimeKind.DockerEngine;
+        public RuntimeResourceKind ResourceKind { get; set; } = RuntimeResourceKind.Unspecified;
+        public ElementOrigin Origin { get; set; } = ElementOrigin.Unknown;
+        public RuntimeBindingState BindingState { get; set; } = RuntimeBindingState.Bound;
 
         // --- 시각적 위치 및 크기 정보 ---
         public double X { get; set; }
@@ -114,6 +118,9 @@ namespace DockerDiagram.Models
 
         public string? MountPath { get; set; } // 볼륨 연결인 경우 컨테이너 내부의 마운트 경로
         public string? IpAddress { get; set; } // 네트워크 연결인 경우 할당된 정적 IP (있을 경우)
+        public string PublishedPort { get; set; } = string.Empty;
+        public string TargetPort { get; set; } = string.Empty;
+        public string Protocol { get; set; } = "tcp";
     }
 
     /// <summary>
@@ -125,6 +132,10 @@ namespace DockerDiagram.Models
 
         public string Title { get; set; } = "Group"; // 그룹의 이름
         public GroupType Type { get; set; } = GroupType.General; // 그룹의 종류 (일반 폴더, 도커 네트워크 등)
+        public RuntimeKind RuntimeKind { get; set; } = RuntimeKind.DockerEngine;
+        public RuntimeResourceKind ResourceKind { get; set; } = RuntimeResourceKind.Unspecified;
+        public ElementOrigin Origin { get; set; } = ElementOrigin.Unknown;
+        public RuntimeBindingState BindingState { get; set; } = RuntimeBindingState.Bound;
         public string Driver { get; set; } = "bridge";
         public string Subnet { get; set; } = string.Empty;
         public string Gateway { get; set; } = string.Empty;

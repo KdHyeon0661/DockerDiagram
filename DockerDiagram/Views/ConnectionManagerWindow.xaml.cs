@@ -238,7 +238,7 @@ namespace DockerDiagram.Views
             if (endpointUri.Scheme.Equals("ssh", StringComparison.OrdinalIgnoreCase))
             {
                 var keyPath = _dialogService.ShowOpenFileDialog(
-                    "SSH Key Files (*.pem;*.ppk)|*.pem;*.ppk|All Files (*.*)|*.*",
+                    "OpenSSH Key Files (*.pem;*.key)|*.pem;*.key|All Files (*.*)|*.*",
                     $"SSH key for Docker context '{context.Name}'");
 
                 if (string.IsNullOrWhiteSpace(keyPath))

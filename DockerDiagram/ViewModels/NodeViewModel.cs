@@ -38,6 +38,7 @@ namespace DockerDiagram.ViewModels
         private bool _isPaused;
 
         private string _name = string.Empty;
+        private string _imageName = string.Empty;
         private string _containerId = string.Empty;
         private string _portInfo = string.Empty;
         private string _detailStatus = "Unknown";
@@ -64,6 +65,8 @@ namespace DockerDiagram.ViewModels
         private string _composePlacementWarning = string.Empty;
         private Func<Task>? _retryFailedCreationAsync;
         private ulong _targetSwarmReplicas;
+        private string _swarmMode = string.Empty;
+        private ulong _swarmDesiredReplicas;
         private int _targetKubernetesReplicas = 1;
         private string _swarmServiceInspectJson = string.Empty;
         private string _kubernetesPodDescribeText = string.Empty;
@@ -135,10 +138,18 @@ namespace DockerDiagram.ViewModels
                     OnPropertyChanged(nameof(EffectiveVolumeName));
                     OnPropertyChanged(nameof(KubernetesPodName));
                     OnPropertyChanged(nameof(KubernetesResourceName));
+                    RaiseModified();
                 }
             }
         }
-        public string ImageName { get; set; } = string.Empty;
+        public string ImageName
+        {
+            get => _imageName;
+            set
+            {
+                if (SetProperty(ref _imageName, value ?? string.Empty)) RaiseModified();
+            }
+        }
         public string PortInfo
         {
             get => _portInfo;
@@ -194,8 +205,33 @@ namespace DockerDiagram.ViewModels
         public string ComposeRawServiceYaml { get; set; } = string.Empty;
         public string ComposeRawVolumeYaml { get; set; } = string.Empty;
         public bool IsSwarmService { get; set; }
-        public string SwarmMode { get; set; } = string.Empty;
-        public ulong SwarmDesiredReplicas { get; set; }
+        public string SwarmMode
+        {
+            get => _swarmMode;
+            set
+            {
+                if (SetProperty(ref _swarmMode, value ?? string.Empty))
+                {
+                    OnPropertyChanged(nameof(SwarmReplicaSummary));
+                    OnPropertyChanged(nameof(SwarmTaskPlanSummary));
+                    OnPropertyChanged(nameof(CanScaleSwarmService));
+                    RaiseModified();
+                }
+            }
+        }
+        public ulong SwarmDesiredReplicas
+        {
+            get => _swarmDesiredReplicas;
+            set
+            {
+                if (SetProperty(ref _swarmDesiredReplicas, value))
+                {
+                    OnPropertyChanged(nameof(SwarmReplicaSummary));
+                    OnPropertyChanged(nameof(SwarmTaskPlanSummary));
+                    RaiseModified();
+                }
+            }
+        }
         public ulong SwarmRunningReplicas { get; set; }
         public bool IsKubernetesPod { get; set; }
         public bool IsKubernetesResource => IsKubernetesPod || !string.IsNullOrWhiteSpace(KubernetesKind);
@@ -213,9 +249,9 @@ namespace DockerDiagram.ViewModels
         public string KubernetesPodName => KubernetesResourceName;
         public bool IsRuntimeUnavailable => ParentSheet?.IsRuntimeUnavailable == true;
         public bool IsOfflineSnapshot => (IsSwarmService || IsKubernetesResource) && IsRuntimeUnavailable;
-        public bool IsDockerRuntimeContainer => Type == NodeType.Container && !IsSwarmService && !IsKubernetesResource;
+        public bool IsDockerRuntimeContainer => Type == NodeType.Container && !IsDraft && !IsSwarmService && !IsKubernetesResource;
         public bool IsGenericKubernetesResource => IsKubernetesResource && !IsKubernetesPod;
-        public bool CanControlSwarmService => IsSwarmService && !IsRuntimeUnavailable && IsDockerConnected;
+        public bool CanControlSwarmService => IsSwarmService && !IsDraft && !IsRuntimeUnavailable && IsDockerConnected;
         public bool CanScaleSwarmService => CanControlSwarmService && SwarmMode.Equals("replicated", StringComparison.OrdinalIgnoreCase);
         public bool CanRefreshKubernetesResource => IsKubernetesResource && !IsRuntimeUnavailable && IsDockerConnected;
         public bool CanRefreshKubernetesPod => IsKubernetesPod && CanRefreshKubernetesResource;
@@ -239,6 +275,9 @@ namespace DockerDiagram.ViewModels
         public string SwarmReplicaSummary => SwarmMode.Equals("global", StringComparison.OrdinalIgnoreCase)
             ? $"global / running {SwarmRunningReplicas}"
             : $"{SwarmRunningReplicas}/{SwarmDesiredReplicas}";
+        public string SwarmTaskPlanSummary => SwarmMode.Equals("global", StringComparison.OrdinalIgnoreCase)
+            ? "각 eligible Swarm node에 Task 1개"
+            : $"Task {SwarmDesiredReplicas}개 배치 예정";
         public ulong TargetSwarmReplicas { get => _targetSwarmReplicas; set => SetProperty(ref _targetSwarmReplicas, value); }
         public int TargetKubernetesReplicas { get => _targetKubernetesReplicas; set => SetProperty(ref _targetKubernetesReplicas, Math.Max(0, value)); }
         public string SwarmServiceInspectJson { get => _swarmServiceInspectJson; set => SetProperty(ref _swarmServiceInspectJson, value); }
@@ -258,9 +297,13 @@ namespace DockerDiagram.ViewModels
         }
         public string KubernetesPodJsonText { get => _kubernetesPodJsonText; set => SetProperty(ref _kubernetesPodJsonText, value); }
         public ObservableCollection<DockerSwarmTask> SwarmTasks { get; } = new();
+        public ObservableCollection<SwarmTaskPlacement> SwarmTaskPlacements { get; } = new();
         public string SwarmTaskSummary => SwarmTasks.Count == 0
             ? "No tasks"
             : $"{SwarmTasks.Count(task => task.CurrentState.Equals("running", StringComparison.OrdinalIgnoreCase))}/{SwarmTasks.Count} running";
+        public string SwarmPlacementSummary => SwarmTaskPlacements.Count == 0
+            ? "No placement"
+            : $"{SwarmTaskPlacements.Count} node(s) · {SwarmTaskSummary}";
         public VolumeNodeViewModel Volume => _volume;
 
         public Dictionary<string, string> VolumeLabels
@@ -377,7 +420,16 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        public bool IsDockerDisconnected => Type != NodeType.Internet && !IsCreating && !IsCreationFailed && !IsDockerConnected;
+        public bool IsDockerDisconnected => Type != NodeType.Internet && !IsDraft && !IsCreating && !IsCreationFailed && !IsDockerConnected;
+
+        protected override void OnRuntimeMetadataChanged(string propertyName)
+        {
+            base.OnRuntimeMetadataChanged(propertyName);
+            OnPropertyChanged(nameof(IsDockerRuntimeContainer));
+            OnPropertyChanged(nameof(IsDockerDisconnected));
+            OnPropertyChanged(nameof(CanControlSwarmService));
+            OnPropertyChanged(nameof(CanScaleSwarmService));
+        }
 
         /// <summary>
         /// 실제 도커 컨테이너가 현재 실행 중(Running)인지 여부를 나타냅니다. 
@@ -419,7 +471,14 @@ namespace DockerDiagram.ViewModels
         public string IpAddresses { get => _ipAddresses; set => SetProperty(ref _ipAddresses, value); }
         public string ConnectedNetworksString { get => _connectedNetworks; set => SetProperty(ref _connectedNetworks, value); }
         public int MountCount { get => _mountCount; internal set => SetProperty(ref _mountCount, value); }
-        public string Driver { get => _driver; set => SetProperty(ref _driver, value); }
+        public string Driver
+        {
+            get => _driver;
+            set
+            {
+                if (SetProperty(ref _driver, value)) RaiseModified();
+            }
+        }
         public string Mountpoint { get => _mountpoint; set => SetProperty(ref _mountpoint, value); }
         public string RestartPolicy { get => _restartPolicy; set => SetProperty(ref _restartPolicy, value); }
         public string HealthStatus { get => _healthStatus; set => SetProperty(ref _healthStatus, value); }
@@ -657,6 +716,18 @@ namespace DockerDiagram.ViewModels
         public async Task RefreshDetailsAsync()
         {
             if (string.IsNullOrWhiteSpace(Name)) return;
+
+            if (IsDraft)
+            {
+                IsDockerConnected = false;
+                IsRunning = false;
+                IsPaused = false;
+                DetailStatus = "Draft";
+                StatusColor = "#7652A8";
+                CommandManager.InvalidateRequerySuggested();
+                RefreshConnections();
+                return;
+            }
 
             if (Type == NodeType.Internet)
             {

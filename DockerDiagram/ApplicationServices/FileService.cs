@@ -133,6 +133,10 @@ namespace DockerDiagram.ApplicationServices
                             ImageName = nodeVm.ImageName,
                             PortInfo = nodeVm.PortInfo,
                             Type = nodeVm.Type,
+                            RuntimeKind = nodeVm.RuntimeKind,
+                            ResourceKind = nodeVm.ResourceKind,
+                            Origin = nodeVm.Origin,
+                            BindingState = nodeVm.BindingState,
                             X = nodeVm.X,
                             Y = nodeVm.Y,
                             Width = nodeVm.Width,
@@ -189,7 +193,10 @@ namespace DockerDiagram.ApplicationServices
                             SourceDataLabel = connVm.SourceDataLabel,
                             TargetDataLabel = connVm.TargetDataLabel,
                             MountPath = connVm.MountPath,
-                            IpAddress = connVm.IpAddress
+                            IpAddress = connVm.IpAddress,
+                            PublishedPort = connVm.PublishedPort,
+                            TargetPort = connVm.TargetPort,
+                            Protocol = connVm.Protocol
                         });
                     }
 
@@ -207,6 +214,10 @@ namespace DockerDiagram.ApplicationServices
                             Width = group.Width,
                             Height = group.Height,
                             Type = group.Type,
+                            RuntimeKind = group.RuntimeKind,
+                            ResourceKind = group.ResourceKind,
+                            Origin = group.Origin,
+                            BindingState = group.BindingState,
                             Driver = group.Driver,
                             Subnet = group.Subnet,
                             Gateway = group.Gateway,
@@ -460,6 +471,12 @@ namespace DockerDiagram.ApplicationServices
                             ImageName = nodeData.ImageName,
                             PortInfo = nodeData.PortInfo ?? string.Empty,
                             Type = nodeData.Type,
+                            RuntimeKind = nodeData.ResourceKind == RuntimeResourceKind.Unspecified
+                                ? sheetData.RuntimeKind
+                                : nodeData.RuntimeKind,
+                            ResourceKind = nodeData.ResourceKind,
+                            Origin = nodeData.Origin,
+                            BindingState = nodeData.BindingState,
                             X = nodeData.X,
                             Y = nodeData.Y,
                             Width = nodeData.Width,
@@ -526,6 +543,12 @@ namespace DockerDiagram.ApplicationServices
                         {
                             Id = string.IsNullOrEmpty(groupData.Id) ? Guid.NewGuid().ToString() : groupData.Id,
                             ParentSheet = sheetVm,
+                            RuntimeKind = groupData.ResourceKind == RuntimeResourceKind.Unspecified
+                                ? sheetData.RuntimeKind
+                                : groupData.RuntimeKind,
+                            ResourceKind = groupData.ResourceKind,
+                            Origin = groupData.Origin,
+                            BindingState = groupData.BindingState,
                             Driver = string.IsNullOrWhiteSpace(groupData.Driver) ? "bridge" : groupData.Driver,
                             Subnet = groupData.Subnet,
                             Gateway = groupData.Gateway,
@@ -571,7 +594,10 @@ namespace DockerDiagram.ApplicationServices
                                 SourceDataLabel = connData.SourceDataLabel,
                                 TargetDataLabel = connData.TargetDataLabel,
                                 MountPath = connData.MountPath,
-                                IpAddress = connData.IpAddress
+                                IpAddress = connData.IpAddress,
+                                PublishedPort = connData.PublishedPort ?? string.Empty,
+                                TargetPort = connData.TargetPort ?? string.Empty,
+                                Protocol = string.IsNullOrWhiteSpace(connData.Protocol) ? "tcp" : connData.Protocol
                             };
 
                             sheetVm.Connectors.Add(connVm);

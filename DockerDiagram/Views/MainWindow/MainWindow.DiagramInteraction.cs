@@ -434,7 +434,16 @@ namespace DockerDiagram
                         if (w > 20 && h > 20)
                         {
                             // A) 일반 그룹 생성
-                            if (_isGroupingMode && vm.ActiveSheet?.DockerService is INetworkService netService)
+                            if (_pendingSwarmDraftGroupKind.HasValue)
+                            {
+                                await vm.CreateSwarmDraftGroupAsync(
+                                    _pendingSwarmDraftGroupKind.Value,
+                                    x,
+                                    y,
+                                    w,
+                                    h);
+                            }
+                            else if (_isGroupingMode && vm.ActiveSheet?.DockerService is INetworkService netService)
                             {
                                 var newGroup = new GroupViewModel(x, y, w, h, netService, _dialogService);
                                 newGroup.ParentSheet = vm.ActiveSheet;
@@ -474,6 +483,7 @@ namespace DockerDiagram
                     _isGroupingMode = false;
                     _isNetworkDrawingMode = false;
                     _pendingExistingNetwork = null;
+                    _pendingSwarmDraftGroupKind = null;
                     Mouse.OverrideCursor = null;
 
                     e.Handled = true;

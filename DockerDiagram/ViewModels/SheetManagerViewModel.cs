@@ -117,6 +117,7 @@ namespace DockerDiagram.ViewModels
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(MapWidth));
                 OnPropertyChanged(nameof(MapHeight));
+                _mainVm.RefreshRuntimeUiProfile();
 
                 if (_activeSheet != null && ActiveWorkspace != null && ActiveWorkspace.Sheets.Contains(_activeSheet))
                 {
@@ -276,7 +277,23 @@ namespace DockerDiagram.ViewModels
         public void AddSheet()
         {
             var workspace = ActiveWorkspace ?? EnsureLocalWorkspace();
+            if (workspace.RuntimeKind == RuntimeKind.DockerSwarm)
+            {
+                AddSwarmStackSheet();
+                return;
+            }
+
             AddSheetToWorkspace(workspace, $"Sheet {workspace.Sheets.Count + 1}", activate: true);
+        }
+
+        public void AddSwarmStackSheet()
+        {
+            var workspace = ActiveWorkspace;
+            if (workspace?.RuntimeKind != RuntimeKind.DockerSwarm) return;
+
+            int ordinal = workspace.Sheets.Count(sheet => sheet.RuntimeKind == RuntimeKind.DockerSwarm) + 1;
+            AddSheetToWorkspace(workspace, $"Stack {ordinal}", activate: true);
+            MarkAsModified();
         }
 
         public ConnectionWorkspaceViewModel AddWorkspace(ConnectionProfile profile, IDockerService dockerService, bool activate = true, bool createInitialSheet = true)
@@ -338,7 +355,10 @@ namespace DockerDiagram.ViewModels
 
             if (workspace.Sheets.Count == 0)
             {
-                AddSheetToWorkspace(workspace, $"{GetRuntimeLabel(runtimeKind)} Sheet 1", activate: false);
+                string initialTitle = runtimeKind == RuntimeKind.DockerSwarm
+                    ? "Stack 1"
+                    : $"{GetRuntimeLabel(runtimeKind)} Sheet 1";
+                AddSheetToWorkspace(workspace, initialTitle, activate: false);
             }
 
             if (activate)

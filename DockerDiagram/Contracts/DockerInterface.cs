@@ -123,6 +123,11 @@ namespace DockerDiagram.Contracts
 
     public interface ISwarmService
     {
+        Task<SwarmClusterState> GetSwarmStateAsync();
+        Task<string> InitializeSwarmAsync(SwarmInitializeOptions options, CancellationToken cancellationToken = default);
+        Task<SwarmJoinTokens> GetJoinTokensAsync(CancellationToken cancellationToken = default);
+        Task JoinSwarmAsync(SwarmJoinOptions options, CancellationToken cancellationToken = default);
+        Task LeaveSwarmAsync(bool force = false, CancellationToken cancellationToken = default);
         Task<List<DockerContainer>> GetSwarmServicesAsync();
         Task<List<DockerSwarmNode>> GetSwarmNodesAsync();
         Task<List<DockerSwarmTask>> GetSwarmServiceTasksAsync(string serviceId);

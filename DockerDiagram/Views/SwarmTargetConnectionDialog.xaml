@@ -1,0 +1,87 @@
+<Window x:Class="DockerDiagram.Views.SwarmTargetConnectionDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Swarm 대상 PC 연결" Width="610" Height="590"
+        MinWidth="560" MinHeight="540" WindowStartupLocation="CenterOwner"
+        Background="#F4F6F8">
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel>
+            <TextBlock Text="다른 PC를 Swarm 노드로 준비" FontSize="21" FontWeight="SemiBold" Foreground="#27313B"/>
+            <TextBlock Text="SSH 터널을 통해 Docker 응답과 미가입 상태만 확인합니다. 아직 Join은 실행하지 않습니다."
+                       Margin="0,5,0,0" FontSize="11" Foreground="#68727E" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <Border Grid.Row="1" Margin="0,16,0,14" Padding="16" Background="White"
+                BorderBrush="#D8DDE3" BorderThickness="1" CornerRadius="7">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="120"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="대상 PC 주소" FontWeight="SemiBold" Foreground="#4C5661"/>
+                            <TextBox x:Name="HostTextBox" Margin="0,4,0,10" Height="30" Padding="7,4"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="SSH Port" FontWeight="SemiBold" Foreground="#4C5661"/>
+                            <TextBox x:Name="SshPortTextBox" Text="22" Margin="0,4,0,10" Height="30" Padding="7,4"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="SSH 사용자" FontWeight="SemiBold" Foreground="#4C5661"/>
+                    <TextBox x:Name="UsernameTextBox" Margin="0,4,0,10" Height="30" Padding="7,4"/>
+
+                    <TextBlock Text="SSH 프라이빗 키" FontWeight="SemiBold" Foreground="#4C5661"/>
+                    <Grid Margin="0,4,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="86"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="KeyPathTextBox" Height="30" Padding="7,4"/>
+                        <Button Grid.Column="2" Content="찾아보기" Click="BrowseKey_Click"/>
+                    </Grid>
+
+                    <TextBlock Text="원격 Docker Socket" FontWeight="SemiBold" Foreground="#4C5661"/>
+                    <TextBox x:Name="RemoteSocketTextBox" Text="/var/run/docker.sock"
+                             Margin="0,4,0,10" Height="30" Padding="7,4"/>
+
+                    <TextBlock Text="Swarm 역할" FontWeight="SemiBold" Foreground="#4C5661"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,12">
+                        <RadioButton x:Name="WorkerRoleRadio" Content="Worker" GroupName="TargetRole" IsChecked="True" Margin="0,0,20,0"/>
+                        <RadioButton x:Name="ManagerRoleRadio" Content="Manager" GroupName="TargetRole"/>
+                    </StackPanel>
+
+                    <TextBlock Text="대상 Advertise Address" FontWeight="SemiBold" Foreground="#4C5661"/>
+                    <TextBox x:Name="AdvertiseAddressTextBox" Margin="0,4,0,4" Height="30" Padding="7,4"/>
+                    <TextBlock Text="다른 Swarm 노드에서 이 PC에 접근할 수 있는 주소입니다. 보통 대상 PC의 LAN IP를 사용합니다."
+                               FontSize="10" Foreground="#68727E" TextWrapping="Wrap"/>
+
+                    <Border Margin="0,14,0,0" Padding="10" Background="#EEE8F7" CornerRadius="5">
+                        <TextBlock Text="검증된 연결은 이 Swarm 설정 창에서만 유지되며 창을 닫으면 SSH 터널과 Docker 연결을 정리합니다."
+                                   FontSize="10.5" Foreground="#5D467B" TextWrapping="Wrap"/>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <Grid Grid.Row="2">
+            <TextBlock x:Name="StatusText" Foreground="#68727E" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="취소" Width="86" Height="34" Margin="0,0,8,0" IsCancel="True"/>
+                <Button x:Name="ValidateButton" Content="연결 검증" Width="112" Height="34"
+                        Background="#7652A8" Foreground="White" BorderBrush="#7652A8"
+                        FontWeight="SemiBold" Click="ValidateConnection_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

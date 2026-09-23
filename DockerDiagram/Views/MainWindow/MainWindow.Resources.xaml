@@ -304,36 +304,52 @@
     <Style x:Key="ContainerVisibilityBorderStyle" TargetType="Border">
         <Setter Property="Visibility" Value="Collapsed"/>
         <Style.Triggers>
-            <DataTrigger Binding="{Binding Type}" Value="Container">
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Type}" Value="Container"/>
+                    <Condition Binding="{Binding IsDraft}" Value="False"/>
+                </MultiDataTrigger.Conditions>
                 <Setter Property="Visibility" Value="Visible"/>
-            </DataTrigger>
+            </MultiDataTrigger>
         </Style.Triggers>
     </Style>
 
     <Style x:Key="ContainerVisibilityButtonStyle" TargetType="Button">
         <Setter Property="Visibility" Value="Collapsed"/>
         <Style.Triggers>
-            <DataTrigger Binding="{Binding Type}" Value="Container">
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Type}" Value="Container"/>
+                    <Condition Binding="{Binding IsDraft}" Value="False"/>
+                </MultiDataTrigger.Conditions>
                 <Setter Property="Visibility" Value="Visible"/>
-            </DataTrigger>
+            </MultiDataTrigger>
         </Style.Triggers>
     </Style>
 
     <Style x:Key="ContainerVisibilityStackPanelStyle" TargetType="StackPanel">
         <Setter Property="Visibility" Value="Collapsed"/>
         <Style.Triggers>
-            <DataTrigger Binding="{Binding Type}" Value="Container">
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Type}" Value="Container"/>
+                    <Condition Binding="{Binding IsDraft}" Value="False"/>
+                </MultiDataTrigger.Conditions>
                 <Setter Property="Visibility" Value="Visible"/>
-            </DataTrigger>
+            </MultiDataTrigger>
         </Style.Triggers>
     </Style>
 
     <Style x:Key="VolumeVisibilityMenuItemStyle" TargetType="MenuItem">
         <Setter Property="Visibility" Value="Collapsed"/>
         <Style.Triggers>
-            <DataTrigger Binding="{Binding Type}" Value="Volume">
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Type}" Value="Volume"/>
+                    <Condition Binding="{Binding IsDraft}" Value="False"/>
+                </MultiDataTrigger.Conditions>
                 <Setter Property="Visibility" Value="Visible"/>
-            </DataTrigger>
+            </MultiDataTrigger>
         </Style.Triggers>
     </Style>
 

@@ -1,5 +1,8 @@
 ﻿using System.Windows;
 using System.Windows.Input;
+using System.Linq;
+using DockerDiagram.Contracts;
+using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
 namespace DockerDiagram
@@ -49,6 +52,83 @@ namespace DockerDiagram
             ImageDockerPopup.IsOpen = false;
             UndoRedoOptionsPopup.IsOpen = false;
             CanvasSizePopup.IsOpen = false;
+        }
+
+        private async void RefreshSwarmCluster_Click(object sender, RoutedEventArgs e)
+        {
+            CloseAllOptionPopups();
+
+            if (DataContext is not MainViewModel vm ||
+                vm.ActiveSheet?.RuntimeKind != RuntimeKind.DockerSwarm ||
+                vm.ActiveSheet.DockerService is not ISwarmService swarmService)
+            {
+                _dialogService.ShowInfo("활성 Swarm Manager 세션이 없습니다.", "Docker Swarm");
+                return;
+            }
+
+            try
+            {
+                Mouse.OverrideCursor = Cursors.Wait;
+                var nodes = await swarmService.GetSwarmNodesAsync();
+                await vm.Explorer.SyncWithDockerEngineAsync();
+
+                int managers = nodes.Count(node =>
+                    node.Role.Equals("manager", System.StringComparison.OrdinalIgnoreCase) ||
+                    !string.IsNullOrWhiteSpace(node.ManagerStatus));
+                int ready = nodes.Count(node => node.Status.Equals("ready", System.StringComparison.OrdinalIgnoreCase));
+                _dialogService.ShowInfo(
+                    $"클러스터 정보를 갱신했습니다.\n노드 {nodes.Count}개 · Manager {managers}개 · Ready {ready}개",
+                    "Docker Swarm");
+            }
+            catch (System.Exception ex)
+            {
+                _dialogService.ShowError($"Swarm 클러스터 갱신 실패:\n{ex.GetBaseException().Message}", "Docker Swarm");
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+        }
+
+        private void OpenSwarmSetup_Click(object sender, RoutedEventArgs e)
+        {
+            CloseAllOptionPopups();
+
+            if (DataContext is not MainViewModel vm ||
+                vm.ActiveSheet?.DockerService is not ISwarmService swarmService)
+            {
+                _dialogService.ShowInfo("Swarm 상태를 확인할 Docker 연결이 없습니다.", "Docker Swarm");
+                return;
+            }
+
+            var dialog = new Views.SwarmSetupDialog(swarmService, _dialogService, vm.DockerServiceFactory,
+                suggestLocalAddresses: vm.ActiveSheet.Profile?.Type == EndpointType.Local)
+            {
+                Owner = this
+            };
+            dialog.ShowDialog();
+        }
+
+        private void ConnectSwarmManager_Click(object sender, RoutedEventArgs e)
+        {
+            CloseAllOptionPopups();
+            var dialog = new Views.SshConnectionDialog(ViewModel, _dialogService, RuntimeKind.DockerSwarm)
+            {
+                Owner = this
+            };
+            dialog.ShowDialog();
+        }
+
+        private void ManageSwarmConnections_Click(object sender, RoutedEventArgs e)
+        {
+            CloseAllOptionPopups();
+            ConnectionManagerButton_Click(sender, e);
+        }
+
+        private void AddSwarmStackSheet_Click(object sender, RoutedEventArgs e)
+        {
+            CloseAllOptionPopups();
+            ViewModel.SheetManager.AddSwarmStackSheet();
         }
         /// <summary>
         /// 톱니바퀴(옵션) 팝업 메뉴에서 [이미지 관리] 버튼을 클릭했을 때 호출됩니다.
