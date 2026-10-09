@@ -6,6 +6,12 @@ using System.Windows;
 
 namespace DockerDiagram.Views
 {
+    internal enum VolumeDialogMode
+    {
+        DockerCreate,
+        SwarmDefinition
+    }
+
     /// <summary>
     /// 새 Docker 볼륨을 생성하거나 외부 볼륨을 참조하기 위한 옵션을 입력받는 대화상자입니다.
     /// </summary>
@@ -27,14 +33,35 @@ namespace DockerDiagram.Views
             DriverOptions = ParseKeyValueLines(txtDriverOptions.Text)
         };
 
-        public VolumeDialog(IDialogService dialogService, VolumeCreateOptions? initialOptions = null)
+        public VolumeDialog(
+            IDialogService dialogService,
+            VolumeCreateOptions? initialOptions = null)
+            : this(dialogService, initialOptions, VolumeDialogMode.DockerCreate)
+        {
+        }
+
+        internal VolumeDialog(
+            IDialogService dialogService,
+            VolumeCreateOptions? initialOptions,
+            VolumeDialogMode mode)
         {
             InitializeComponent();
             _dialogService = dialogService;
 
+            if (mode == VolumeDialogMode.SwarmDefinition)
+            {
+                Title = "Define Swarm Volume";
+                btnOk.Content = "Add";
+                SwarmDefinitionNotice.Visibility = Visibility.Visible;
+                chkExternal.Content = "Existing/external volume reference";
+                DockerVolumeNameLabel.Text = "Volume Source Name (optional):";
+            }
+
             if (initialOptions != null)
             {
-                Title = "Edit Volume Options";
+                Title = mode == VolumeDialogMode.SwarmDefinition
+                    ? "Edit Swarm Volume Definition"
+                    : "Edit Volume Options";
                 btnOk.Content = "Apply";
                 txtName.Text = initialOptions.Name;
                 txtDockerVolumeName.Text = initialOptions.DockerVolumeName;

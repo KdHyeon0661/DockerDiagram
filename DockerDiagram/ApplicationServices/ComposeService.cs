@@ -41,14 +41,6 @@ namespace DockerDiagram.ApplicationServices
     }
 
     /// <summary>
-    /// 특정 서비스가 네트워크에 연결될 때 부여받는 세부 설정(예: 정적 IP)을 담는 모델입니다.
-    /// </summary>
-    public class ComposeServiceNetwork
-    {
-        public string? Ipv4Address { get; set; } // 컨테이너에 할당할 고정 IPv4 주소 (ipv4_address)
-    }
-
-    /// <summary>
     /// compose 파일의 최상위 네트워크 정의(설정)를 담는 모델입니다.
     /// </summary>
     public class ComposeNetwork

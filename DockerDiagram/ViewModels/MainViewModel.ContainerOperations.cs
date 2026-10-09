@@ -1,5 +1,6 @@
 ﻿using DockerDiagram.Diagram;
 using DockerDiagram.Infrastructure;
+using DockerDiagram.Contracts;
 using Docker.DotNet.Models;
 using DockerDiagram.Models;
 using System;
@@ -14,22 +15,28 @@ namespace DockerDiagram.ViewModels
 {
     public partial class MainViewModel
     {
-        public async Task CreateNewContainerNodeAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, double x, double y, string networkName = "bridge", string command = "", bool tty = false, string? regUser = null, string? regPass = null, string? regServer = null)
+        public async Task CreateNewContainerNodeAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, double x, double y, string networkName = "bridge", string command = "", bool tty = false, string? regUser = null, string? regPass = null, string? regServer = null, SheetViewModel? targetSheet = null)
         {
-            if (ActiveSheet == null) return;
-            var historyBefore = CaptureDiagramState(ActiveSheet);
+            SheetViewModel? creationSheet = targetSheet ?? ActiveSheet;
+            if (creationSheet == null) return;
+            IDockerService dockerService = creationSheet.DockerService;
+            IContainerService containerService = dockerService;
+            IVolumeService volumeService = dockerService;
+            INetworkService networkService = dockerService;
+            IImageService imageService = dockerService;
+            var historyBefore = CaptureDiagramState(creationSheet);
             var safePorts = ports ?? new List<string>();
             var safeEnvs = envs ?? new List<string>();
             var safeVolumes = volumes ?? new List<string>();
 
-            string? resolvedName = await _resourceNames.ResolveContainerNameAsync(ActiveSheet, _containerService, name);
+            string? resolvedName = await _resourceNames.ResolveContainerNameAsync(creationSheet, containerService, name);
             if (resolvedName == null) return;
             name = resolvedName;
 
             if (safePorts.Count > 0)
             {
                 var newHostPorts = safePorts.Select(p => p.Split(':')[0]).ToList();
-                var existingContainers = ActiveSheet.Nodes.Where(n => n.Type == NodeType.Container && n.PortBindings != null);
+                var existingContainers = creationSheet.Nodes.Where(n => n.Type == NodeType.Container && n.PortBindings != null);
 
                 foreach (var existingNode in existingContainers)
                 {
@@ -50,30 +57,55 @@ namespace DockerDiagram.ViewModels
                 if (!isBindMount) namedVolumesToDraw.Add(vol);
             }
 
+            ExistingVolumeSnapshot existingVolumes = await GetExistingVolumeNamesAsync(volumeService);
+
             (image, tag) = DockerImageReferenceParser.Split(image, tag);
 
             GroupViewModel? targetGroup = null;
 
             if (!string.IsNullOrWhiteSpace(networkName) && networkName != "bridge" && networkName != "host" && networkName != "none")
             {
-                targetGroup = ActiveSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == networkName);
+                targetGroup = creationSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == networkName);
 
                 if (targetGroup == null)
                 {
-                    targetGroup = new GroupViewModel(x, y, 220, 150, _networkService, _dialogService, networkName, GroupType.Network);
-                    ActiveSheet.AddGroup(targetGroup);
-
+                    DockerNetworkGroup? existingNetwork = null;
                     try
                     {
-                        targetGroup.Id = await _networkService.CreateNetworkAsync(networkName, "bridge");
-                        targetGroup.IsDockerConnected = true;
+                        existingNetwork = (await networkService.GetNetworksAsync())
+                            .FirstOrDefault(network => string.Equals(network.Name, networkName, StringComparison.OrdinalIgnoreCase));
                     }
                     catch (Exception ex)
                     {
-                        if (!ex.Message.Contains("already exists") && !ex.Message.Contains("409"))
-                            Debug.WriteLine($"[DockerDiscovery] 네트워크 '{networkName}' 자동 생성 실패: {ex.Message}");
-                        else
+                        Debug.WriteLine($"[DockerDiscovery] 기존 네트워크 소유권 조회 실패: {ex.Message}");
+                    }
+                    targetGroup = new GroupViewModel(x, y, 220, 150, networkService, _dialogService, networkName, GroupType.Network)
+                    {
+                        Id = existingNetwork?.Id ?? string.Empty,
+                        Driver = string.IsNullOrWhiteSpace(existingNetwork?.Driver) ? "bridge" : existingNetwork.Driver,
+                        External = existingNetwork != null,
+                        IsDockerConnected = existingNetwork != null
+                    };
+                    creationSheet.AddGroup(targetGroup);
+
+                    if (existingNetwork == null)
+                    {
+                        try
+                        {
+                            targetGroup.Id = await networkService.CreateNetworkAsync(networkName, "bridge");
                             targetGroup.IsDockerConnected = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            if (!ex.Message.Contains("already exists") && !ex.Message.Contains("409"))
+                                throw;
+
+                            DockerNetworkGroup? racedNetwork = (await networkService.GetNetworksAsync())
+                                .FirstOrDefault(network => string.Equals(network.Name, networkName, StringComparison.OrdinalIgnoreCase));
+                            targetGroup.Id = racedNetwork?.Id ?? string.Empty;
+                            targetGroup.External = true;
+                            targetGroup.IsDockerConnected = true;
+                        }
                     }
                 }
 
@@ -86,7 +118,7 @@ namespace DockerDiagram.ViewModels
                 }
             }
 
-            var node = new NodeViewModel(_containerService, _volumeService, _dialogService)
+            var node = new NodeViewModel(containerService, volumeService, _dialogService)
             {
                 Name = $"{name} (Creating...)",
                 ImageName = $"{image}:{tag}",
@@ -97,11 +129,9 @@ namespace DockerDiagram.ViewModels
                 StatusColor = "#FFC107"
             };
             node.SetCreationProgress("Waiting to pull image...");
-            ActiveSheet.Nodes.Add(node);
-            var creationSheet = ActiveSheet;
+            creationSheet.Nodes.Add(node);
             Func<Task> retryContainerCreation = async () =>
             {
-                ActiveSheet = creationSheet;
                 await CreateNewContainerNodeAsync(
                     name,
                     image,
@@ -119,7 +149,8 @@ namespace DockerDiagram.ViewModels
                     tty,
                     regUser,
                     regPass,
-                    regServer);
+                    regServer,
+                    creationSheet);
             };
 
             try
@@ -135,13 +166,13 @@ namespace DockerDiagram.ViewModels
                     });
 
                     node.StatusColor = "#0D6EFD";
-                    await _imageService.PullImageWithProgressAsync(image, tag, progress, regUser, regPass, regServer);
+                    await imageService.PullImageWithProgressAsync(image, tag, progress, regUser, regPass, regServer);
                     node.SetCreationProgress("Image pull complete", 100);
                 }
                 catch (Exception pullEx)
                 {
                     Debug.WriteLine($"[Image Pull] 원격 이미지 다운로드 실패: {pullEx.Message}");
-                    var localImages = await _imageService.GetImagesAsync();
+                    var localImages = await imageService.GetImagesAsync();
                     bool existsLocally = localImages.Any(img => img.Repository == image && (img.Tag == tag || tag == "latest"));
                     if (!existsLocally)
                     {
@@ -156,7 +187,7 @@ namespace DockerDiagram.ViewModels
 
                 node.StatusColor = "#FFC107";
                 node.SetCreationProgress("Creating container...");
-                string containerId = await _containerService.CreateAndStartContainerAsync(
+                string containerId = await containerService.CreateAndStartContainerAsync(
                     name, image, tag, safePorts, safeEnvs, safeVolumes, restartPolicy, memoryMb, cpuCount, command, tty);
 
                 node.Name = name;
@@ -175,7 +206,7 @@ namespace DockerDiagram.ViewModels
                 if (targetGroup != null)
                 {
                     await targetGroup.AddNodeAsync(node);
-                    ActiveSheet.UpdateGroupLayering();
+                    creationSheet.UpdateGroupLayering();
                 }
 
                 Explorer.RegisterTemplateUsage($"{image}:{tag}");
@@ -193,7 +224,7 @@ namespace DockerDiagram.ViewModels
                         mountPath = volStr.Substring(lastColon + 1);
                     }
 
-                    var existingVolNode = ActiveSheet.Nodes.FirstOrDefault(n =>
+                    var existingVolNode = creationSheet.Nodes.FirstOrDefault(n =>
                         n.Type == NodeType.Volume &&
                         (string.Equals(n.Name, volName, StringComparison.OrdinalIgnoreCase) ||
                          string.Equals(n.EffectiveVolumeName, volName, StringComparison.OrdinalIgnoreCase)));
@@ -202,7 +233,7 @@ namespace DockerDiagram.ViewModels
                     if (existingVolNode != null) targetVolNode = existingVolNode;
                     else
                     {
-                        targetVolNode = new NodeViewModel(_containerService, _volumeService, _dialogService)
+                        targetVolNode = new NodeViewModel(containerService, volumeService, _dialogService)
                         {
                             Name = volName,
                             Type = NodeType.Volume,
@@ -210,12 +241,14 @@ namespace DockerDiagram.ViewModels
                             X = x + 250,
                             Y = y + (volIndex * 100),
                             StatusColor = "#E67E22",
-                            IsDockerConnected = true
+                            IsDockerConnected = true,
+                            DockerVolumeName = volName,
+                            VolumeExternal = !existingVolumes.IsReliable || existingVolumes.Names.Contains(volName)
                         };
-                        ActiveSheet.Nodes.Add(targetVolNode);
+                        creationSheet.Nodes.Add(targetVolNode);
                     }
 
-                    bool connExists = ActiveSheet.Connectors.Any(c =>
+                    bool connExists = creationSheet.Connectors.Any(c =>
                         (c.Source == node && c.Target == targetVolNode) || (c.Source == targetVolNode && c.Target == node));
 
                     if (!connExists)
@@ -225,17 +258,38 @@ namespace DockerDiagram.ViewModels
                             RelationType = RelationType.VolumeMount,
                             MountPath = mountPath
                         };
-                        ActiveSheet.Connectors.Add(conn);
+                        creationSheet.Connectors.Add(conn);
                     }
                     volIndex++;
                 }
-                Explorer.UpdateAvailableItems();
-                RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Create container {name}", History.IncludeDockerResourceHistory);
+                if (ReferenceEquals(ActiveSheet, creationSheet)) Explorer.UpdateAvailableItems();
+                RecordAdditionsFromSnapshot(creationSheet, historyBefore, $"Create container {name}", History.IncludeDockerResourceHistory);
             }
             catch (Exception ex)
             {
                 node.MarkCreationFailed($"컨테이너 생성 중 오류가 발생했습니다:\n{ex.Message}", retryContainerCreation);
                 _dialogService.ShowError($"컨테이너 생성 중 오류가 발생했습니다:\n{ex.Message}", "생성 실패");
+            }
+        }
+
+        private readonly record struct ExistingVolumeSnapshot(HashSet<string> Names, bool IsReliable);
+
+        private static async Task<ExistingVolumeSnapshot> GetExistingVolumeNamesAsync(IVolumeService volumeService)
+        {
+            try
+            {
+                HashSet<string> names = (await volumeService.GetVolumesAsync())
+                    .Select(volume => volume.Name)
+                    .Where(name => !string.IsNullOrWhiteSpace(name))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                return new ExistingVolumeSnapshot(names, IsReliable: true);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[DockerDiscovery] 기존 볼륨 소유권 조회 실패: {ex.Message}");
+                return new ExistingVolumeSnapshot(
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                    IsReliable: false);
             }
         }
 
@@ -257,20 +311,43 @@ namespace DockerDiagram.ViewModels
         }
         private readonly record struct DockerCliExecutionResult(int ExitCode, string StandardOutput, string StandardError);
 
-        private static async Task<DockerCliExecutionResult> ExecuteDockerCliCommandAsync(string cliCommand)
+        internal static List<string> ParseDockerRunCommand(string cliCommand)
+        {
+            var regex = new System.Text.RegularExpressions.Regex("\"[^\"]*\"|'[^']*'|\\S+");
+            List<string> tokens = regex.Matches(cliCommand)
+                .Cast<System.Text.RegularExpressions.Match>()
+                .Select(match => match.Value.Trim('\"', '\''))
+                .ToList();
+
+            if (tokens.Count < 3 ||
+                !(tokens[0].Equals("docker", StringComparison.OrdinalIgnoreCase) ||
+                  tokens[0].Equals("docker.exe", StringComparison.OrdinalIgnoreCase)) ||
+                !tokens[1].Equals("run", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("CLI 입력에는 단일 'docker run ...' 명령만 사용할 수 있습니다.");
+            }
+
+            return tokens;
+        }
+
+        private static async Task<DockerCliExecutionResult> ExecuteDockerCliCommandAsync(
+            IReadOnlyList<string> tokens,
+            ConnectionProfile profile)
         {
             var startInfo = new ProcessStartInfo
             {
-                FileName = "cmd.exe",
-                Arguments = $"/c {cliCommand}",
+                FileName = "docker.exe",
                 CreateNoWindow = true,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
+            foreach (string argument in tokens.Skip(1))
+                startInfo.ArgumentList.Add(argument);
+            DockerCliTargetEnvironment.Apply(startInfo, profile);
 
             using var process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("cmd.exe 프로세스를 시작할 수 없습니다.");
+                ?? throw new InvalidOperationException("docker.exe 프로세스를 시작할 수 없습니다.");
             Task<string> standardOutputTask = process.StandardOutput.ReadToEndAsync();
             Task<string> standardErrorTask = process.StandardError.ReadToEndAsync();
 
@@ -290,13 +367,27 @@ namespace DockerDiagram.ViewModels
                 ? string.Empty
                 : matches[^1].Value.Trim();
         }
-        public async Task ProcessCliCommandAsync(string cliCommand, double x, double y)
+        public async Task ProcessCliCommandAsync(string cliCommand, double x, double y, SheetViewModel? targetSheet = null)
         {
-            if (ActiveSheet == null) return;
-            var historyBefore = CaptureDiagramState(ActiveSheet);
+            SheetViewModel? creationSheet = targetSheet ?? ActiveSheet;
+            if (creationSheet == null) return;
+            IDockerService dockerService = creationSheet.DockerService;
+            IContainerService containerService = dockerService;
+            IVolumeService volumeService = dockerService;
+            INetworkService networkService = dockerService;
+            var historyBefore = CaptureDiagramState(creationSheet);
+            List<string> tokens;
+            try
+            {
+                tokens = ParseDockerRunCommand(cliCommand);
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError(ex.Message, "CLI 입력 오류");
+                return;
+            }
 
-            var regex = new System.Text.RegularExpressions.Regex("\"[^\"]*\"|'[^']*'|\\S+");
-            var tokens = regex.Matches(cliCommand).Cast<System.Text.RegularExpressions.Match>().Select(m => m.Value.Trim('\"', '\'')).ToList();
+            ExistingVolumeSnapshot existingVolumes = await GetExistingVolumeNamesAsync(volumeService);
 
             string name = $"cli-{Guid.NewGuid().ToString().Substring(0, 4)}";
 
@@ -334,14 +425,15 @@ namespace DockerDiagram.ViewModels
 
             }
 
-            string? resolvedName = await _resourceNames.ResolveContainerNameAsync(ActiveSheet, _containerService, name);
+            string? resolvedName = await _resourceNames.ResolveContainerNameAsync(creationSheet, containerService, name);
             if (resolvedName == null) return;
             name = resolvedName;
             cliCommand = ApplyContainerNameToCliCommand(cliCommand, name);
+            tokens = ParseDockerRunCommand(cliCommand);
 
             if (networkName != "bridge" && networkName != "host" && networkName != "none")
             {
-                var existingNetworks = await _networkService.GetNetworksAsync();
+                var existingNetworks = await networkService.GetNetworksAsync();
                 if (!existingNetworks.Any(n => n.Name == networkName))
                 {
                     _dialogService.ShowError($"명령어 실행 실패!\n\n도커 엔진에 '{networkName}' 네트워크가 존재하지 않습니다.\n먼저 해당 네트워크를 생성한 후 다시 시도해 주세요.", "네트워크 없음");
@@ -352,20 +444,25 @@ namespace DockerDiagram.ViewModels
             GroupViewModel? targetGroup = null;
             if (!string.IsNullOrWhiteSpace(networkName) && networkName != "bridge" && networkName != "host" && networkName != "none")
             {
-                targetGroup = ActiveSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == networkName);
+                targetGroup = creationSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == networkName);
                 if (targetGroup == null)
                 {
-                    targetGroup = new GroupViewModel(x, y, 220, 150, _networkService, _dialogService, networkName, GroupType.Network)
+                    DockerNetworkGroup? existingNetwork = (await networkService.GetNetworksAsync())
+                        .FirstOrDefault(network => string.Equals(network.Name, networkName, StringComparison.OrdinalIgnoreCase));
+                    targetGroup = new GroupViewModel(x, y, 220, 150, networkService, _dialogService, networkName, GroupType.Network)
                     {
+                        Id = existingNetwork?.Id ?? string.Empty,
+                        Driver = string.IsNullOrWhiteSpace(existingNetwork?.Driver) ? "bridge" : existingNetwork.Driver,
+                        External = true,
                         IsDockerConnected = true
                     };
-                    ActiveSheet.AddGroup(targetGroup);
+                    creationSheet.AddGroup(targetGroup);
                 }
                 x = targetGroup.X + 20;
                 y = targetGroup.Y + 40 + (targetGroup.ContainedNodes.Count * 100);
             }
 
-            var dummyNode = new NodeViewModel(_containerService, _volumeService, _dialogService)
+            var dummyNode = new NodeViewModel(containerService, volumeService, _dialogService)
             {
                 Name = $"{name} (Creating...)",
                 ImageName = "Docker CLI",
@@ -376,12 +473,10 @@ namespace DockerDiagram.ViewModels
                 StatusColor = "#FFC107"
             };
             dummyNode.SetCreationProgress("Running docker command...");
-            ActiveSheet.Nodes.Add(dummyNode);
-            var creationSheet = ActiveSheet;
+            creationSheet.Nodes.Add(dummyNode);
             Func<Task> retryCliCreation = async () =>
             {
-                ActiveSheet = creationSheet;
-                await ProcessCliCommandAsync(cliCommand, x, y);
+                await ProcessCliCommandAsync(cliCommand, x, y, creationSheet);
             };
 
             if (targetGroup != null)
@@ -391,7 +486,7 @@ namespace DockerDiagram.ViewModels
 
             try
             {
-                DockerCliExecutionResult execution = await ExecuteDockerCliCommandAsync(cliCommand);
+                DockerCliExecutionResult execution = await ExecuteDockerCliCommandAsync(tokens, creationSheet.Profile);
                 if (execution.ExitCode != 0)
                 {
                     string dockerError = string.IsNullOrWhiteSpace(execution.StandardError)
@@ -410,7 +505,7 @@ namespace DockerDiagram.ViewModels
                 DockerContainer? realContainer = null;
                 for (int attempt = 0; attempt < 5 && realContainer == null; attempt++)
                 {
-                    var allContainers = await _containerService.GetContainersAsync();
+                    var allContainers = await containerService.GetContainersAsync();
                     realContainer = allContainers.FirstOrDefault(container =>
                         (!string.IsNullOrWhiteSpace(outputContainerId) &&
                          (container.Id.Equals(outputContainerId, StringComparison.OrdinalIgnoreCase) ||
@@ -438,7 +533,7 @@ namespace DockerDiagram.ViewModels
 
                     try
                     {
-                        var inspectData = await _containerService.InspectContainerAsync(realContainer.Id);
+                        var inspectData = await containerService.InspectContainerAsync(realContainer.Id);
                         if (inspectData?.Mounts != null)
                         {
                             int volIndex = 0;
@@ -449,7 +544,7 @@ namespace DockerDiagram.ViewModels
                                     string volName = mount.Name;
                                     string mountPath = mount.Destination;
 
-                                    var existingVolNode = ActiveSheet.Nodes.FirstOrDefault(n =>
+                                    var existingVolNode = creationSheet.Nodes.FirstOrDefault(n =>
                                         n.Type == NodeType.Volume &&
                                         (string.Equals(n.Name, volName, StringComparison.OrdinalIgnoreCase) ||
                                          string.Equals(n.EffectiveVolumeName, volName, StringComparison.OrdinalIgnoreCase)));
@@ -458,7 +553,7 @@ namespace DockerDiagram.ViewModels
                                     if (existingVolNode != null) targetVolNode = existingVolNode;
                                     else
                                     {
-                                        targetVolNode = new NodeViewModel(_containerService, _volumeService, _dialogService)
+                                        targetVolNode = new NodeViewModel(containerService, volumeService, _dialogService)
                                         {
                                             Name = volName,
                                             Type = NodeType.Volume,
@@ -466,12 +561,14 @@ namespace DockerDiagram.ViewModels
                                             X = dummyNode.X + 250,
                                             Y = dummyNode.Y + (volIndex * 100),
                                             StatusColor = "#E67E22",
-                                            IsDockerConnected = true
+                                            IsDockerConnected = true,
+                                            DockerVolumeName = volName,
+                                            VolumeExternal = !existingVolumes.IsReliable || existingVolumes.Names.Contains(volName)
                                         };
-                                        ActiveSheet.Nodes.Add(targetVolNode);
+                                        creationSheet.Nodes.Add(targetVolNode);
                                     }
 
-                                    bool connExists = ActiveSheet.Connectors.Any(c =>
+                                    bool connExists = creationSheet.Connectors.Any(c =>
                                         (c.Source == dummyNode && c.Target == targetVolNode) || (c.Source == targetVolNode && c.Target == dummyNode));
 
                                     if (!connExists)
@@ -481,7 +578,7 @@ namespace DockerDiagram.ViewModels
                                             RelationType = RelationType.VolumeMount,
                                             MountPath = mountPath
                                         };
-                                        ActiveSheet.Connectors.Add(conn);
+                                        creationSheet.Connectors.Add(conn);
                                     }
                                     volIndex++;
                                 }
@@ -500,8 +597,8 @@ namespace DockerDiagram.ViewModels
                         );
                     }
 
-                    Explorer.UpdateAvailableItems();
-                    RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Create container {name}", History.IncludeDockerResourceHistory);
+                    if (ReferenceEquals(ActiveSheet, creationSheet)) Explorer.UpdateAvailableItems();
+                    RecordAdditionsFromSnapshot(creationSheet, historyBefore, $"Create container {name}", History.IncludeDockerResourceHistory);
                 }
                 else
                 {
@@ -518,9 +615,13 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        public async Task BuildImageAndCreateNodeAsync(string targetImageName, string dockerfileContent, string uploadedFilePath, double x, double y)
+        public async Task BuildImageAndCreateNodeAsync(string targetImageName, string dockerfileContent, string uploadedFilePath, double x, double y, SheetViewModel? targetSheet = null)
         {
-            if (ActiveSheet == null) return;
+            SheetViewModel? creationSheet = targetSheet ?? ActiveSheet;
+            if (creationSheet == null) return;
+            IImageService imageService = creationSheet.DockerService;
+            IContainerService containerService = creationSheet.DockerService;
+            IVolumeService volumeService = creationSheet.DockerService;
             if (string.IsNullOrWhiteSpace(targetImageName)) targetImageName = $"custom-app:{Guid.NewGuid().ToString().Substring(0, 4)}";
 
             string buildContextPath = "";
@@ -540,7 +641,7 @@ namespace DockerDiagram.ViewModels
                 await System.IO.File.WriteAllTextAsync(dockerfilePath, dockerfileContent);
             }
 
-            var dummyNode = new NodeViewModel(_containerService, _volumeService, _dialogService)
+            var dummyNode = new NodeViewModel(containerService, volumeService, _dialogService)
             {
                 Name = $"Building ({targetImageName})...",
                 ImageName = "Building...",
@@ -551,26 +652,25 @@ namespace DockerDiagram.ViewModels
                 StatusColor = "#17a2b8"
             };
             dummyNode.SetCreationProgress("Building image...");
-            ActiveSheet.Nodes.Add(dummyNode);
-            var creationSheet = ActiveSheet;
+            creationSheet.Nodes.Add(dummyNode);
             Func<Task> retryBuildCreation = async () =>
             {
-                ActiveSheet = creationSheet;
-                await BuildImageAndCreateNodeAsync(targetImageName, dockerfileContent, uploadedFilePath, x, y);
+                await BuildImageAndCreateNodeAsync(targetImageName, dockerfileContent, uploadedFilePath, x, y, creationSheet);
             };
 
             try
             {
-                await _imageService.BuildImageAsync(targetImageName, buildContextPath, dockerfilePath);
+                await imageService.BuildImageAsync(targetImageName, buildContextPath, dockerfilePath);
 
-                ActiveSheet.Nodes.Remove(dummyNode);
+                creationSheet.Nodes.Remove(dummyNode);
 
                 string containerName = targetImageName.Split(':')[0] + "-" + Guid.NewGuid().ToString().Substring(0, 4);
 
                 await CreateNewContainerNodeAsync(
                     containerName, targetImageName.Split(':')[0],
                     targetImageName.Contains(":") ? targetImageName.Split(':')[1] : "latest",
-                    new List<string>(), new List<string>(), new List<string>(), "no", 0, 0, x, y);
+                    new List<string>(), new List<string>(), new List<string>(), "no", 0, 0, x, y,
+                    targetSheet: creationSheet);
             }
             catch (Exception ex)
             {
@@ -581,6 +681,9 @@ namespace DockerDiagram.ViewModels
 
         public async Task BuildImageOnlyAsync(string targetImageName, string dockerfileContent, string uploadedFilePath)
         {
+            SheetViewModel? creationSheet = ActiveSheet;
+            if (creationSheet == null) return;
+            IImageService imageService = creationSheet.DockerService;
             if (string.IsNullOrWhiteSpace(targetImageName))
             {
                 targetImageName = $"custom-image:{Guid.NewGuid().ToString().Substring(0, 4)}";
@@ -611,10 +714,11 @@ namespace DockerDiagram.ViewModels
                     await File.WriteAllTextAsync(dockerfilePath, dockerfileContent);
                 }
 
-                await _imageService.BuildImageAsync(targetImageName, buildContextPath, dockerfilePath);
+                await imageService.BuildImageAsync(targetImageName, buildContextPath, dockerfilePath);
 
                 _dialogService.ShowConfirm($"[{targetImageName}] 이미지가 성공적으로 생성되었습니다!", "빌드 완료");
-                await Explorer.SyncWithDockerEngineAsync();
+                if (ReferenceEquals(ActiveSheet, creationSheet))
+                    await RefreshRuntimeResourcesAsync();
             }
             catch (Exception ex)
             {

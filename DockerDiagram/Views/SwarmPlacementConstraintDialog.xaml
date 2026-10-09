@@ -1,0 +1,40 @@
+<Window x:Class="DockerDiagram.Views.SwarmPlacementConstraintDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Swarm Placement Constraints" Height="500" Width="660"
+        MinHeight="430" MinWidth="580" WindowStartupLocation="CenterOwner"
+        Background="#F6F7FB" ShowInTaskbar="False">
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,14">
+            <TextBlock Text="Service Placement Constraints" FontSize="24" FontWeight="Bold" Foreground="#17213A"/>
+            <TextBlock x:Name="DescriptionTextBlock" Foreground="#667085" Margin="0,5,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+        <Border Grid.Row="1" Background="White" BorderBrush="#D7DAE2" BorderThickness="1" CornerRadius="4" Padding="18">
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                <TextBlock Text="Constraints (one per line)" FontWeight="SemiBold" Foreground="#2B3140"/>
+                <TextBox x:Name="ConstraintsTextBox" Grid.Row="1" AcceptsReturn="True" FontFamily="Consolas"
+                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                         Padding="8" Margin="0,6,0,12" BorderBrush="#C7CBD6"/>
+                <StackPanel Grid.Row="2">
+                    <TextBlock Text="Examples: node.labels.zone==seoul  ·  node.role==worker  ·  node.hostname!=worker-3"
+                               Foreground="#667085" FontSize="11" TextWrapping="Wrap"/>
+                    <TextBlock Text="An empty list removes all placement constraints. Other ServiceSpec fields are preserved."
+                               Foreground="#B54708" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+        <Grid Grid.Row="2" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="ValidationTextBlock" Foreground="#C62828" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,14,0"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button Content="Cancel" Width="92" Height="34" Margin="0,0,8,0" IsCancel="True"/>
+                <Button Content="Apply Constraints" Width="138" Height="34" IsDefault="True"
+                        Click="ApplyButton_Click" Background="#2563EB" Foreground="White" BorderBrush="#1D4ED8"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

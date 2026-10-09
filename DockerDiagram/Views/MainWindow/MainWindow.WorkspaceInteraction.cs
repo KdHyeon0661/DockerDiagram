@@ -30,11 +30,15 @@ namespace DockerDiagram
             TabScrollViewer.ScrollToHorizontalOffset(newOffset);
         }
 
-        private void AddContextButton_Click(object sender, RoutedEventArgs e)
+        private async void AddContextButton_Click(object sender, RoutedEventArgs e)
         {
             if (ViewModel.SheetManager.IsWorkspaceLayer)
             {
                 OpenNewSessionWindow();
+            }
+            else if (ViewModel.SheetManager.ActiveWorkspace?.RuntimeKind == RuntimeKind.DockerSwarm)
+            {
+                await SwarmStackController.CreateStackSheetAsync();
             }
             else
             {
@@ -427,3 +431,4 @@ namespace DockerDiagram
         // 1. 사이드바 아이콘 클릭 (네트워크면 그리기 모드 진입)
     }
 }
+

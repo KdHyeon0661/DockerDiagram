@@ -1,10 +1,11 @@
-﻿using DockerDiagram.Infrastructure;
+using DockerDiagram.Infrastructure;
 using DockerDiagram.Diagram;
 using DockerDiagram.ApplicationServices;
 using DockerDiagram.Contracts;
 using System.Runtime.Versioning;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
@@ -288,6 +289,7 @@ namespace DockerDiagram
         /// </summary>
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
+            InitializeSwarmStackController();
             UpdateScrollButtonsState();
 
             if (ViewModel == null) return;
@@ -399,7 +401,7 @@ namespace DockerDiagram
         /// <summary>
         /// 캔버스 위에서 사용자가 키보드의 'Delete' 키를 눌렀을 때 선택된 항목(노드, 선, 그룹 등)을 즉시 삭제하는 전역 단축키 처리기입니다.
         /// </summary>
-        private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+        private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.Escape && CancelAreaDrawingMode())
             {
@@ -407,11 +409,30 @@ namespace DockerDiagram
                 return;
             }
 
-            if (e.Key == Key.Delete)
+            if (e.Key == Key.Delete && !IsTextEditingControl(Keyboard.FocusedElement))
             {
-                (DataContext as MainViewModel)?.Inspector.DeleteCommand.Execute(null);
+                if (DataContext is MainViewModel viewModel)
+                    await viewModel.Inspector.DeleteSelectedAsync();
                 e.Handled = true;
             }
+        }
+
+        private static bool IsTextEditingControl(IInputElement? focusedElement)
+        {
+            if (focusedElement is TextBoxBase or PasswordBox)
+                return true;
+
+            DependencyObject? current = focusedElement as DependencyObject;
+            while (current != null)
+            {
+                if (current is TextBoxBase or PasswordBox)
+                    return true;
+                if (current is ComboBox { IsEditable: true })
+                    return true;
+                current = VisualTreeHelper.GetParent(current);
+            }
+
+            return false;
         }
 
         private bool CancelAreaDrawingMode()

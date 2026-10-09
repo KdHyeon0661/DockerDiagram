@@ -1,0 +1,53 @@
+<Window x:Class="DockerDiagram.Views.SwarmReadinessWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Swarm Readiness" Width="780" Height="610" MinWidth="560" MinHeight="420"
+        WindowStartupLocation="CenterOwner" Background="#F4F6F8">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="Swarm operational readiness" FontSize="20" FontWeight="SemiBold" Foreground="#27313A"/>
+            <TextBlock Text="Docker 상태를 변경하지 않고 CLI, Manager, quorum, Node와 Service 조회 가능 여부를 점검합니다."
+                       Margin="0,4,0,0" Foreground="#65717C" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <Border Grid.Row="1" Background="White" BorderBrush="#D5D9DE" BorderThickness="1" CornerRadius="5" Padding="12" Margin="0,0,0,10">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock x:Name="SummaryText" FontSize="14" FontWeight="SemiBold" Foreground="#27313A"/>
+                <TextBlock x:Name="CheckedAtText" Grid.Column="1" Foreground="#65717C"/>
+            </Grid>
+        </Border>
+
+        <ListView x:Name="ChecksList" Grid.Row="2" BorderBrush="#D5D9DE" BorderThickness="1">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="Status" Width="86">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusColor}" FontWeight="Bold"/>
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                    <GridViewColumn Header="Category" Width="110" DisplayMemberBinding="{Binding Category}"/>
+                    <GridViewColumn Header="Check" Width="150" DisplayMemberBinding="{Binding Name}"/>
+                    <GridViewColumn Header="Detail" Width="390" DisplayMemberBinding="{Binding Detail}"/>
+                </GridView>
+            </ListView.View>
+        </ListView>
+
+        <Grid Grid.Row="3" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="ProgressText" VerticalAlignment="Center" Foreground="#65717C"/>
+            <Button Grid.Column="1" Content="Copy report" MinWidth="96" Padding="12,6" Margin="0,0,8,0" Click="Copy_Click"/>
+            <Button x:Name="RefreshButton" Grid.Column="2" Content="Refresh" MinWidth="86" Padding="12,6" Margin="0,0,8,0" Click="Refresh_Click"/>
+            <Button Grid.Column="3" Content="Close" MinWidth="86" Padding="12,6" IsCancel="True" Click="Close_Click"/>
+        </Grid>
+    </Grid>
+</Window>

@@ -1,0 +1,86 @@
+<Window x:Class="DockerDiagram.Views.SwarmStackDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Swarm Stack" Width="760" Height="680" MinWidth="540" MinHeight="460"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
+        Background="#F4F6F8">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Grid Margin="18" MinHeight="600">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*" MinHeight="300"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Margin="0,0,0,14">
+                <TextBlock Text="Swarm Stack" FontSize="20" FontWeight="SemiBold" Foreground="#27313A"/>
+                <TextBlock Text="YAML을 저장만 하거나 Manager에 docker stack deploy로 배포합니다."
+                           Margin="0,4,0,0" Foreground="#65717C" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <Grid Grid.Row="1" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="130"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Stack name" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                <TextBox x:Name="StackNameTextBox" Grid.Column="1" MinHeight="30"
+                         TextChanged="Input_TextChanged"/>
+            </Grid>
+
+            <Grid Grid.Row="2" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="130"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Source YAML" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                <TextBox x:Name="SourcePathTextBox" Grid.Column="1" MinHeight="30" IsReadOnly="True"/>
+                <Button Grid.Column="2" Content="Browse..." Margin="8,0,0,0" Padding="14,4" Click="Browse_Click"/>
+            </Grid>
+
+            <Grid Grid.Row="3">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <TextBlock Text="Stack YAML" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <TextBox x:Name="YamlTextBox" Grid.Row="1" AcceptsReturn="True" AcceptsTab="True"
+                         FontFamily="Consolas" FontSize="12" TextWrapping="NoWrap"
+                         HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                         TextChanged="Input_TextChanged"/>
+            </Grid>
+
+            <Grid Grid.Row="4" Margin="0,12,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <CheckBox x:Name="PruneCheckBox" Content="Prune services removed from YAML" IsChecked="True" Margin="0,0,18,0"/>
+                <CheckBox x:Name="RegistryAuthCheckBox" Grid.Column="1" Content="Send registry auth"/>
+                <StackPanel Grid.Column="2" HorizontalAlignment="Right">
+                    <TextBlock Text="Command preview" FontSize="10" Foreground="#65717C"/>
+                    <TextBlock x:Name="CommandPreviewText" FontFamily="Consolas" FontSize="10" Foreground="#3D4651"
+                               MaxWidth="390" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+            </Grid>
+
+            <Grid Grid.Row="5">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="StateText" VerticalAlignment="Center" Foreground="#65717C" TextTrimming="CharacterEllipsis"/>
+                <Button Grid.Column="1" Content="Cancel" MinWidth="86" Margin="0,0,8,0" Padding="12,6" Click="Cancel_Click"/>
+                <Button Grid.Column="2" Content="Save Draft" MinWidth="96" Margin="0,0,8,0" Padding="12,6" Click="Save_Click"/>
+                <Button Grid.Column="3" Content="Deploy" MinWidth="96" Padding="12,6" Background="#4D7C6F" Foreground="White" Click="Deploy_Click"/>
+            </Grid>
+        </Grid>
+    </ScrollViewer>
+</Window>

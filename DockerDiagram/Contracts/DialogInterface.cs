@@ -49,6 +49,14 @@ namespace DockerDiagram.Contracts
         bool TryShowMountDialog(out string mountPath, out string owner);
         bool TryShowArrangeDialog(out int columns);
         bool TryShowComposeLayoutDialog(ComposeLayoutOptions initialOptions, out ComposeLayoutOptions options);
+        bool TryShowSwarmPublishedPortDialog(
+            SwarmPublishedPortOptions initialOptions,
+            out SwarmPublishedPortOptions options);
+        bool TryShowSwarmResourceReferenceDialog(
+            SwarmDataResourceKind kind,
+            string resourceName,
+            SwarmResourceTargetOptions initialOptions,
+            out SwarmResourceTargetOptions options);
         bool TryShowImageTagDialog(string sourceImage, string repository, string tag, out string newRepository, out string newTag, out bool force);
         bool TryShowImagePushDialog(string repository, string tag, out string newRepository, out string newTag, out string username, out string password, out string serverAddress);
         bool TryShowKubernetesPortForwardDialog(string kind, string target, int defaultLocalPort, int defaultRemotePort, out int localPort, out int remotePort);

@@ -40,8 +40,15 @@ namespace DockerDiagram.Infrastructure
             {
                 if (_activeTunnels.TryGetValue(connectionKey, out var existingTunnel))
                 {
-                    existingTunnel.ReferenceCount++;
-                    return existingTunnel.LocalPort;
+                    if (IsProcessAlive(existingTunnel.Process))
+                    {
+                        existingTunnel.ReferenceCount++;
+                        return existingTunnel.LocalPort;
+                    }
+
+                    _activeTunnels.TryRemove(connectionKey, out _);
+                    try { StopAndDispose(existingTunnel.Process); }
+                    catch { }
                 }
 
                 int localPort = GetAvailablePort(23750);
@@ -245,6 +252,18 @@ namespace DockerDiagram.Infrastructure
                 throw new ArgumentException("원격 Docker 소켓 경로에 사용할 수 없는 문자가 포함되어 있습니다.");
 
             return socketPath;
+        }
+
+        internal static bool IsProcessAlive(Process process)
+        {
+            try
+            {
+                return !process.HasExited;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
         }
 
         internal static IReadOnlyList<string> BuildOpenSshArguments(

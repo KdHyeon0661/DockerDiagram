@@ -128,7 +128,7 @@ namespace DockerDiagram.ViewModels
                 // 청소가 끝났으니 사이드바(Explorer) 담당자에게 새로고침을 지시
                 if (_mainVm.Explorer != null)
                 {
-                    await _mainVm.Explorer.SyncWithDockerEngineAsync();
+                    await _mainVm.RefreshRuntimeResourcesAsync();
                 }
 
                 _dialogService.ShowInfo($"Docker Engine API prune 실행\n\n[결과]\n{pruneResult.Summary}", "청소 완료");
@@ -188,7 +188,7 @@ namespace DockerDiagram.ViewModels
             }
 
             if (_mainVm.Explorer != null)
-                await _mainVm.Explorer.SyncWithDockerEngineAsync();
+                await _mainVm.RefreshRuntimeResourcesAsync();
 
             string result = $"삭제됨: {deleted.Count}개";
             if (deleted.Count > 0)

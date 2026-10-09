@@ -30,6 +30,12 @@ namespace DockerDiagram.ViewModels
         public bool ShowSwarmSetup => RuntimeKind is RuntimeKind.DockerEngine or RuntimeKind.DockerSwarm;
         public bool ShowDockerHistoryOptions => RuntimeKind == RuntimeKind.DockerEngine;
         public bool ShowDestructiveDockerMaintenance => RuntimeKind == RuntimeKind.DockerEngine;
+        public bool ShowTertiaryCanvasButton =>
+            RuntimeKind is RuntimeKind.DockerEngine or RuntimeKind.DockerSwarm;
+        public bool UseSwarmNodeButton => RuntimeKind == RuntimeKind.DockerSwarm;
+        public string TertiaryCanvasButtonToolTip => UseSwarmNodeButton
+            ? "Swarm 노드 관리"
+            : "Undo / Redo 옵션";
     }
 
     /// <summary>

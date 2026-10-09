@@ -122,6 +122,49 @@ namespace DockerDiagram.Views
             return false;
         }
 
+        public bool TryShowSwarmPublishedPortDialog(
+            SwarmPublishedPortOptions initialOptions,
+            out SwarmPublishedPortOptions options)
+        {
+            var dialog = new DockerDiagram.Views.SwarmPublishedPortDialog(this, initialOptions)
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                options = dialog.Options;
+                return true;
+            }
+
+            options = initialOptions;
+            return false;
+        }
+
+        public bool TryShowSwarmResourceReferenceDialog(
+            SwarmDataResourceKind kind,
+            string resourceName,
+            SwarmResourceTargetOptions initialOptions,
+            out SwarmResourceTargetOptions options)
+        {
+            var dialog = new DockerDiagram.Views.SwarmResourceReferenceDialog(
+                kind,
+                resourceName,
+                initialOptions)
+            {
+                Owner = Application.Current.MainWindow
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                options = dialog.Options;
+                return true;
+            }
+
+            options = initialOptions;
+            return false;
+        }
+
         public void ShowContainerDetail(object dataContext)
         {
             if (_containerDetailWindows.TryGetValue(dataContext, out var existingWindow))

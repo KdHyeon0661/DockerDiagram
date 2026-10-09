@@ -111,14 +111,6 @@ namespace DockerDiagram.Models
     }
 
     /// <summary>
-    /// 단순한 시각적 묶음을 위한 일반 폴더(그룹) 모델 클래스입니다.
-    /// </summary>
-    public class DockerGeneralGroup : DockerGroupBase // DockerResource 대신 DockerGroupBase 상속!
-    {
-        public override GroupType Type => GroupType.General; // override로 구현
-    }
-
-    /// <summary>
     /// 여러 컨테이너를 동일한 네트워크 대역으로 묶어주는 도커 네트워크 모델 클래스입니다.
     /// </summary>
     public class DockerNetworkGroup : DockerGroupBase // DockerResource 대신 DockerGroupBase 상속!
@@ -190,6 +182,10 @@ namespace DockerDiagram.Models
         public string ShortId => Id.Length > 12 ? Id[..12] : Id;
         public string ShortContainerId => ContainerId.Length > 12 ? ContainerId[..12] : ContainerId;
     }
+
+    public sealed record SwarmServiceTaskSnapshot(
+        IReadOnlyList<DockerSwarmTask> Tasks,
+        IReadOnlyList<DockerSwarmNode> Nodes);
 
     /// <summary>
     /// 한 Swarm node에 배치된 service task들을 UI에서 묶어 보여주기 위한 읽기 전용 투영 모델입니다.

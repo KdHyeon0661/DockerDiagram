@@ -705,14 +705,14 @@
                             PreviewMouseLeftButtonDown="Tool_PreviewMouseLeftButtonDown" PreviewMouseMove="Tool_PreviewMouseMove" PreviewMouseLeftButtonUp="Tool_PreviewMouseLeftButtonUp">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0">
                             <Path Data="{StaticResource DatabaseIcon}" Fill="#E67E22" Width="15" Height="15" Stretch="Uniform"/>
-                            <TextBlock Text="New Volume" FontWeight="SemiBold" Margin="10,0,0,0"/>
+                            <TextBlock Text="Volume Mount" FontWeight="SemiBold" Margin="10,0,0,0"/>
                         </StackPanel>
                     </Border>
                     <Border Background="White" BorderBrush="#ccc" BorderThickness="1" CornerRadius="5" Height="38" Margin="0,0,0,5" Cursor="Hand" Tag="SwarmExternalTraffic"
                             PreviewMouseLeftButtonDown="Tool_PreviewMouseLeftButtonDown" PreviewMouseMove="Tool_PreviewMouseMove" PreviewMouseLeftButtonUp="Tool_PreviewMouseLeftButtonUp">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0">
                             <Path Data="{StaticResource GlobeIcon}" Fill="#3498DB" Width="15" Height="15" Stretch="Uniform"/>
-                            <TextBlock Text="External Traffic" FontWeight="SemiBold" Margin="10,0,0,0"/>
+                            <TextBlock Text="Published Port" FontWeight="SemiBold" Margin="10,0,0,0"/>
                         </StackPanel>
                     </Border>
                     <Border Background="White" BorderBrush="#ccc" BorderThickness="1" CornerRadius="5" Height="38" Margin="0,0,0,5" Cursor="Hand" Tag="SwarmOverlayNetwork"
@@ -726,57 +726,185 @@
                         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/></Grid.ColumnDefinitions>
                         <Border Grid.Column="0" Background="White" BorderBrush="#ccc" BorderThickness="1" CornerRadius="5" Height="36" Cursor="Hand" Tag="SwarmSecret"
                                 PreviewMouseLeftButtonDown="Tool_PreviewMouseLeftButtonDown" PreviewMouseMove="Tool_PreviewMouseMove" PreviewMouseLeftButtonUp="Tool_PreviewMouseLeftButtonUp">
-                            <TextBlock Text="New Secret" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="11"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Path Data="{StaticResource KeyIcon}" Fill="#C78A16" Width="13" Height="13" Stretch="Uniform"/>
+                                <TextBlock Text="New Secret" FontWeight="SemiBold" Margin="6,0,0,0" FontSize="11"/>
+                            </StackPanel>
                         </Border>
                         <Border Grid.Column="2" Background="White" BorderBrush="#ccc" BorderThickness="1" CornerRadius="5" Height="36" Cursor="Hand" Tag="SwarmConfig"
                                 PreviewMouseLeftButtonDown="Tool_PreviewMouseLeftButtonDown" PreviewMouseMove="Tool_PreviewMouseMove" PreviewMouseLeftButtonUp="Tool_PreviewMouseLeftButtonUp">
-                            <TextBlock Text="New Config" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="11"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Path Data="{StaticResource DocumentIcon}" Fill="#5B7083" Width="13" Height="13" Stretch="Uniform"/>
+                                <TextBlock Text="New Config" FontWeight="SemiBold" Margin="6,0,0,0" FontSize="11"/>
+                            </StackPanel>
                         </Border>
                     </Grid>
                     <Border Background="White" BorderBrush="#ccc" BorderThickness="1" CornerRadius="5" Height="38" Cursor="Hand" Tag="SwarmGroup"
                             PreviewMouseLeftButtonDown="Tool_PreviewMouseLeftButtonDown" PreviewMouseMove="Tool_PreviewMouseMove" PreviewMouseLeftButtonUp="Tool_PreviewMouseLeftButtonUp">
-                        <TextBlock Text="New Group" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Path Data="{StaticResource FolderIcon}" Fill="#687A8B" Width="15" Height="15" Stretch="Uniform"/>
+                            <TextBlock Text="Visual Group" FontWeight="SemiBold" Margin="8,0,0,0"/>
+                        </StackPanel>
                     </Border>
+
+                    <TextBlock Margin="2,7,2,0" FontSize="9.5" Foreground="#6C7782" TextWrapping="Wrap"
+                               Text="Service, Overlay Network, Secret, Config는 클러스터에 생성됩니다. Volume Mount와 Published Port는 Service에 Apply Diagram 할 때 적용되며, Visual Group은 정리용입니다."/>
 
                     <Separator Margin="0,14,0,12" Background="#D5D9DE"/>
                     <TextBlock Text="Swarm Resources" FontWeight="SemiBold" FontSize="13" Foreground="#343A43" Margin="2,0,0,6"/>
 
-                    <Expander Header="Swarm Nodes" IsExpanded="True" Style="{StaticResource SidebarExpanderStyle}">
-                        <ItemsControl ItemsSource="{Binding Explorer.SwarmNodes}">
-                            <ItemsControl.ItemTemplate><DataTemplate>
-                                <StackPanel Margin="6,3">
-                                    <TextBlock Text="{Binding Hostname}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                    <TextBlock Text="{Binding RoleLabel}" FontSize="10" Foreground="#7A858D"/>
-                                </StackPanel>
-                            </DataTemplate></ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </Expander>
-                    <Expander Header="Services" IsExpanded="True" Style="{StaticResource SidebarExpanderStyle}">
+                    <Expander IsExpanded="True" Style="{StaticResource SidebarExpanderStyle}">
+                        <Expander.Header>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="22"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Path Data="{StaticResource ContainerIcon}" Fill="#287BAE" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="Services" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                    <TextBlock Text="{Binding Explorer.ExistingContainers.Count}" FontSize="10" Foreground="#59636F"/>
+                                </Border>
+                            </Grid>
+                        </Expander.Header>
                         <ItemsControl ItemsSource="{Binding Explorer.ExistingContainers}">
                             <ItemsControl.ItemTemplate><DataTemplate>
-                                <Border Padding="6,4" Cursor="Hand" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" PreviewMouseLeftButtonUp="ExistingItem_PreviewMouseUp" MouseMove="ExistingItem_MouseMove">
-                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                </Border>
+                                <DockPanel LastChildFill="True">
+                                    <Button DockPanel.Dock="Right" Content="×" Style="{StaticResource ResourceDeleteButtonStyle}"
+                                            Command="{Binding DataContext.Explorer.DeleteContainerItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            CommandParameter="{Binding}" ToolTip="Remove Swarm service"/>
+                                    <Border Padding="6,4" Cursor="Hand" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" PreviewMouseLeftButtonUp="ExistingItem_PreviewMouseUp" MouseMove="ExistingItem_MouseMove">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Data="{StaticResource ContainerIcon}" Fill="#287BAE" Width="14" Height="14" Stretch="Uniform" Margin="0,0,8,0"/>
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DockPanel>
                             </DataTemplate></ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </Expander>
-                    <Expander Header="Overlay Networks" IsExpanded="False" Style="{StaticResource SidebarExpanderStyle}">
+                    <Expander IsExpanded="False" Style="{StaticResource SidebarExpanderStyle}">
+                        <Expander.Header>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="22"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Path Data="{StaticResource KeyIcon}" Fill="#C78A16" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="Secrets" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                    <TextBlock Text="{Binding Explorer.SwarmSecrets.Count}" FontSize="10" Foreground="#59636F"/>
+                                </Border>
+                            </Grid>
+                        </Expander.Header>
+                        <ItemsControl ItemsSource="{Binding Explorer.SwarmSecrets}">
+                            <ItemsControl.ItemTemplate><DataTemplate>
+                                <DockPanel LastChildFill="True">
+                                    <Button DockPanel.Dock="Right" Content="×" Style="{StaticResource ResourceDeleteButtonStyle}"
+                                            Command="{Binding DataContext.Explorer.DeleteSwarmDataResourceItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            CommandParameter="{Binding}" ToolTip="Remove Swarm secret"/>
+                                    <Border Padding="6,4" Cursor="Hand" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" PreviewMouseLeftButtonUp="ExistingItem_PreviewMouseUp" MouseMove="ExistingItem_MouseMove">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Data="{StaticResource KeyIcon}" Fill="#C78A16" Width="14" Height="14" Stretch="Uniform" Margin="0,0,8,0"/>
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DockPanel>
+                            </DataTemplate></ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Expander>
+                    <Expander IsExpanded="False" Style="{StaticResource SidebarExpanderStyle}">
+                        <Expander.Header>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="22"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Path Data="{StaticResource DocumentIcon}" Fill="#5B7083" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="Configs" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                    <TextBlock Text="{Binding Explorer.SwarmConfigs.Count}" FontSize="10" Foreground="#59636F"/>
+                                </Border>
+                            </Grid>
+                        </Expander.Header>
+                        <ItemsControl ItemsSource="{Binding Explorer.SwarmConfigs}">
+                            <ItemsControl.ItemTemplate><DataTemplate>
+                                <DockPanel LastChildFill="True">
+                                    <Button DockPanel.Dock="Right" Content="×" Style="{StaticResource ResourceDeleteButtonStyle}"
+                                            Command="{Binding DataContext.Explorer.DeleteSwarmDataResourceItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            CommandParameter="{Binding}" ToolTip="Remove Swarm config"/>
+                                    <Border Padding="6,4" Cursor="Hand" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" PreviewMouseLeftButtonUp="ExistingItem_PreviewMouseUp" MouseMove="ExistingItem_MouseMove">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Data="{StaticResource DocumentIcon}" Fill="#5B7083" Width="14" Height="14" Stretch="Uniform" Margin="0,0,8,0"/>
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DockPanel>
+                            </DataTemplate></ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Expander>
+                    <Expander IsExpanded="False" Style="{StaticResource SidebarExpanderStyle}">
+                        <Expander.Header>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="22"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Path Data="{StaticResource CloudIcon}" Fill="#9B59B6" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="Overlay Networks" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                    <TextBlock Text="{Binding Explorer.ExistingNetworks.Count}" FontSize="10" Foreground="#59636F"/>
+                                </Border>
+                            </Grid>
+                        </Expander.Header>
                         <ItemsControl ItemsSource="{Binding Explorer.ExistingNetworks}">
                             <ItemsControl.ItemTemplate><DataTemplate>
-                                <Border Padding="6,4" Cursor="Hand" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" PreviewMouseLeftButtonUp="ExistingItem_PreviewMouseUp" MouseMove="ExistingItem_MouseMove">
-                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                </Border>
+                                <DockPanel LastChildFill="True">
+                                    <Button DockPanel.Dock="Right" Content="×" Style="{StaticResource ResourceDeleteButtonStyle}"
+                                            Command="{Binding DataContext.Explorer.DeleteNetworkItemCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            CommandParameter="{Binding}" ToolTip="Remove overlay network"/>
+                                    <Border Padding="6,4" Cursor="Hand" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" PreviewMouseLeftButtonUp="ExistingItem_PreviewMouseUp" MouseMove="ExistingItem_MouseMove">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Data="{StaticResource CloudIcon}" Fill="#9B59B6" Width="14" Height="14" Stretch="Uniform" Margin="0,0,8,0"/>
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"/>
+                                                <TextBlock Text="{Binding Driver}" FontSize="10" Foreground="#7A858D"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
+                                </DockPanel>
                             </DataTemplate></ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </Expander>
-                    <Expander Header="Manager Host Volumes" IsExpanded="False" Style="{StaticResource SidebarExpanderStyle}">
+                    <Expander IsExpanded="False" Style="{StaticResource SidebarExpanderStyle}">
+                        <Expander.Header>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="22"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Path Data="{StaticResource DatabaseIcon}" Fill="#E67E22" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="Manager Host Volumes" FontWeight="SemiBold" Foreground="#3D4651" VerticalAlignment="Center"/>
+                                <Border Grid.Column="2" Background="#DDE4EB" CornerRadius="8" Padding="6,1" Margin="6,0,0,0">
+                                    <TextBlock Text="{Binding Explorer.ExistingVolumes.Count}" FontSize="10" Foreground="#59636F"/>
+                                </Border>
+                            </Grid>
+                        </Expander.Header>
                         <StackPanel>
                             <TextBlock Text="현재 Manager 호스트의 로컬 볼륨입니다. 다른 Swarm 노드의 데이터는 포함하지 않습니다."
                                        Margin="6,2,6,4" FontSize="9.5" Foreground="#7A858D" TextWrapping="Wrap"/>
                             <ItemsControl ItemsSource="{Binding Explorer.ExistingVolumes}">
                                 <ItemsControl.ItemTemplate><DataTemplate>
                                     <Border Padding="6,4" Cursor="Hand" PreviewMouseLeftButtonDown="ExistingItem_PreviewMouseDown" PreviewMouseLeftButtonUp="ExistingItem_PreviewMouseUp" MouseMove="ExistingItem_MouseMove">
-                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Data="{StaticResource DatabaseIcon}" Fill="#E67E22" Width="14" Height="14" Stretch="Uniform" Margin="0,0,8,0"/>
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" VerticalAlignment="Center"/>
+                                        </StackPanel>
                                     </Border>
                                 </DataTemplate></ItemsControl.ItemTemplate>
                             </ItemsControl>
@@ -895,7 +1023,7 @@
                                                 <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="Bold" Foreground="{Binding HeaderFontColor}"/>
                                                 <TextBlock Text="{Binding RuntimeBadgeText}" FontSize="8" Foreground="#7652A8" Margin="7,2,0,0"
                                                            ToolTip="{Binding RuntimeBadgeText}"
-                                                           Visibility="{Binding HasRuntimeMetadata, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                           Visibility="{Binding ShowRuntimeBadge, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                             </StackPanel>
                                         </Border>
 
@@ -1488,27 +1616,35 @@
                 <Button x:Name="BtnUndoRedoOptions"
                         Click="UndoRedoOptionsButton_Click"
                         Style="{StaticResource CanvasMenuButtonStyle}"
-                        ToolTip="Undo / Redo 옵션">
-                    <Viewbox Width="22" Height="22">
-                        <Canvas Width="24" Height="24">
-                            <Path Data="M9,4 L4,9 L9,14 M4,9 H14 C18,9 20,11 20,14"
-                                  Fill="{x:Null}"
-                                  Stroke="#354A56"
-                                  StrokeThickness="2.2"
-                                  StrokeStartLineCap="Round"
-                                  StrokeEndLineCap="Round"
-                                  StrokeLineJoin="Round"
-                                  SnapsToDevicePixels="True"/>
-                            <Path Data="M15,10 L20,15 L15,20 M20,15 H10 C6,15 4,13 4,10"
-                                  Fill="{x:Null}"
-                                  Stroke="#354A56"
-                                  StrokeThickness="2.2"
-                                  StrokeStartLineCap="Round"
-                                  StrokeEndLineCap="Round"
-                                  StrokeLineJoin="Round"
-                                  SnapsToDevicePixels="True"/>
-                        </Canvas>
-                    </Viewbox>
+                        ToolTip="{Binding ActiveRuntimeUi.TertiaryCanvasButtonToolTip}"
+                        Visibility="{Binding ActiveRuntimeUi.ShowTertiaryCanvasButton, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Grid>
+                        <Viewbox Width="22" Height="22"
+                                 Visibility="{Binding ActiveRuntimeUi.ShowDockerHistoryOptions, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="M9,4 L4,9 L9,14 M4,9 H14 C18,9 20,11 20,14"
+                                      Fill="{x:Null}"
+                                      Stroke="#354A56"
+                                      StrokeThickness="2.2"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round"
+                                      SnapsToDevicePixels="True"/>
+                                <Path Data="M15,10 L20,15 L15,20 M20,15 H10 C6,15 4,13 4,10"
+                                      Fill="{x:Null}"
+                                      Stroke="#354A56"
+                                      StrokeThickness="2.2"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round"
+                                      SnapsToDevicePixels="True"/>
+                            </Canvas>
+                        </Viewbox>
+                        <Viewbox Width="21" Height="21"
+                                 Visibility="{Binding ActiveRuntimeUi.UseSwarmNodeButton, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Path Data="{StaticResource GearIcon}" Fill="#52606D" Stretch="Uniform"/>
+                        </Viewbox>
+                    </Grid>
                 </Button>
 
                 <Button x:Name="BtnCanvasSize"
@@ -1595,6 +1731,12 @@
                                     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="25"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="↻" HorizontalAlignment="Center" Foreground="#7652A8" FontWeight="Bold"/><TextBlock Grid.Column="1" Text="클러스터 새로고침"/></Grid>
                                 </DataTemplate></Button.ContentTemplate>
                             </Button>
+                            <Button Click="OpenSwarmReadiness_Click" Style="{StaticResource MenuItemStyle}" ToolTip="Docker 상태를 변경하지 않고 Manager, quorum, Node 및 Stack CLI 준비도를 점검합니다."
+                                    Visibility="{Binding ActiveRuntimeUi.ShowSwarmCommands, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Button.ContentTemplate><DataTemplate>
+                                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="25"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="✓" HorizontalAlignment="Center" Foreground="#2E7D32" FontWeight="Bold"/><TextBlock Grid.Column="1" Text="Swarm 준비도 점검..."/></Grid>
+                                </DataTemplate></Button.ContentTemplate>
+                            </Button>
                             <Button Click="ConnectSwarmManager_Click" Style="{StaticResource MenuItemStyle}" ToolTip="SSH로 다른 Swarm Manager에 연결해 별도 클러스터 세션을 엽니다."
                                     Visibility="{Binding ActiveRuntimeUi.ShowSwarmCommands, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <Button.ContentTemplate><DataTemplate>
@@ -1676,11 +1818,6 @@
                                 <CheckBox IsChecked="{Binding History.IncludeDockerResourceHistory, Mode=TwoWay}" Margin="12,8,8,7" ToolTip="체크하면 컨테이너/볼륨/네트워크 생성과 삭제도 Undo/Redo 스택에 저장합니다."><TextBlock Text="Docker 생성/삭제도 실행 취소 기록" FontSize="12" Foreground="#333"/></CheckBox>
                                 <CheckBox IsChecked="{Binding History.IncludeVolumeBackupForUndo, Mode=TwoWay}" Margin="12,0,8,8" ToolTip="볼륨 삭제 전에 임시 tar 백업을 만들어 Undo 때 데이터를 복원합니다."><TextBlock Text="실행 취소 전에 볼륨 백업" FontSize="12" Foreground="#333"/></CheckBox>
                             </StackPanel>
-                            <Border Padding="12,10" Background="#EEE8F7"
-                                    Visibility="{Binding ActiveRuntimeUi.ShowSwarmCommands, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                <TextBlock Text="Swarm Draft의 노드·그룹·연결·배치 변경만 Undo/Redo 합니다. 실제 클러스터 변경은 아직 실행하지 않습니다."
-                                           FontSize="11" Foreground="#5D467B" TextWrapping="Wrap"/>
-                            </Border>
                         </StackPanel>
                     </Border>
                 </Popup>
@@ -1718,8 +1855,15 @@
                             Background="Transparent" BorderBrush="#DDDDDD" ToolTip="Undo">
                         <TextBlock Text="↶" FontSize="16" Foreground="#333" HorizontalAlignment="Center"/>
                     </Button>
-                    <TextBlock Text="{Binding History.StatusText}" MinWidth="190" FontSize="11" Foreground="#555"
-                               VerticalAlignment="Center" TextAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <Grid MinWidth="190">
+                        <TextBlock Text="{Binding History.StatusText}" FontSize="11" Foreground="#555"
+                                   VerticalAlignment="Center" TextAlignment="Center" TextTrimming="CharacterEllipsis"
+                                   Visibility="{Binding ActiveRuntimeUi.ShowDockerHistoryOptions, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                        <TextBlock Text="{Binding History.DiagramStatusText}" FontSize="11" Foreground="#555"
+                                   VerticalAlignment="Center" TextAlignment="Center" TextTrimming="CharacterEllipsis"
+                                   Visibility="{Binding ActiveRuntimeUi.ShowSwarmCommands, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                   ToolTip="Swarm 리소스 생성/삭제는 실행 취소하지 않으며 캔버스 배치와 연결만 Undo/Redo 합니다."/>
+                    </Grid>
                     <Button Command="{Binding History.RedoCommand}" Width="30" Height="24" Margin="6,0,0,0"
                             Background="Transparent" BorderBrush="#DDDDDD" ToolTip="Redo">
                         <TextBlock Text="↷" FontSize="16" Foreground="#333" HorizontalAlignment="Center"/>
@@ -2013,17 +2157,24 @@
                                             <TextBlock Text="Type: Swarm Published Port" FontWeight="Bold" Foreground="#287BAE" Margin="0,0,0,10"/>
                                             <Border Background="#EAF4FA" BorderBrush="#C8DFEC" BorderThickness="1" CornerRadius="4" Padding="10">
                                                 <StackPanel>
-                                                    <TextBlock Text="Public Port" Foreground="#555"/>
-                                                    <TextBox Text="{Binding PublishedPort, UpdateSourceTrigger=PropertyChanged}" Padding="6,4" Margin="0,3,0,8" ToolTip="클러스터 외부에 공개할 포트"/>
+                                                    <TextBlock Text="Public Port (optional)" Foreground="#555"/>
+                                                    <TextBox Text="{Binding PublishedPort, UpdateSourceTrigger=PropertyChanged}" Padding="6,4" Margin="0,3,0,8" ToolTip="비워 두면 Docker가 사용 가능한 포트를 자동 할당합니다."/>
                                                     <TextBlock Text="Service Target Port" Foreground="#555"/>
                                                     <TextBox Text="{Binding TargetPort, UpdateSourceTrigger=PropertyChanged}" Padding="6,4" Margin="0,3,0,8" ToolTip="Service가 전달할 컨테이너 포트"/>
                                                     <TextBlock Text="Protocol" Foreground="#555"/>
-                                                    <ComboBox SelectedValue="{Binding Protocol, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Content" Padding="5,3" Margin="0,3,0,0">
+                                                    <ComboBox SelectedValue="{Binding Protocol, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Content" Padding="5,3" Margin="0,3,0,8">
                                                         <ComboBoxItem Content="tcp"/><ComboBoxItem Content="udp"/><ComboBoxItem Content="sctp"/>
                                                     </ComboBox>
+                                                    <TextBlock Text="Publish Mode" Foreground="#555"/>
+                                                    <ComboBox SelectedValue="{Binding PublishMode, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Content" Padding="5,3" Margin="0,3,0,8">
+                                                        <ComboBoxItem Content="ingress"/><ComboBoxItem Content="host"/>
+                                                    </ComboBox>
+                                                    <TextBlock Text="{Binding PublishedPortValidationMessage}" Foreground="#B42318" FontSize="10" TextWrapping="Wrap"
+                                                               Visibility="{Binding HasPublishedPortValidationError, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                                 </StackPanel>
                                             </Border>
-                                            <TextBlock Text="External Traffic에서 Service 방향으로 고정됩니다." FontSize="10" Foreground="#66717D" Margin="0,5,0,10"/>
+                                            <TextBlock Text="External Traffic에서 Service 방향으로 고정됩니다. 연결선 하나가 공개 포트 하나를 나타냅니다."
+                                                       FontSize="10" Foreground="#66717D" Margin="0,5,0,10" TextWrapping="Wrap"/>
                                         </StackPanel>
 
                                         <StackPanel>
@@ -2031,7 +2182,23 @@
                                                 <Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding RelationType}" Value="SwarmSecretReference"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style>
                                             </StackPanel.Style>
                                             <TextBlock Text="Type: Swarm Secret Reference" FontWeight="Bold" Foreground="#C08A00" Margin="0,0,0,5"/>
-                                            <Border Background="#FFF8E1" Padding="8" CornerRadius="3"><TextBlock Text="Service가 이 Secret을 참조합니다." Foreground="#725400" TextWrapping="Wrap"/></Border>
+                                            <Border Background="#FFF8E1" Padding="8" CornerRadius="3">
+                                                <StackPanel>
+                                                    <TextBlock Text="Target file name or absolute path" Foreground="#725400"/>
+                                                    <TextBox Text="{Binding SwarmReferenceTarget, UpdateSourceTrigger=PropertyChanged}" Padding="5,3" Margin="0,3,0,8"/>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                                        <StackPanel><TextBlock Text="UID" Foreground="#725400"/><TextBox Text="{Binding SwarmReferenceUid, UpdateSourceTrigger=PropertyChanged}" Padding="5,3" Margin="0,3,0,8"/></StackPanel>
+                                                        <StackPanel Grid.Column="2"><TextBlock Text="GID" Foreground="#725400"/><TextBox Text="{Binding SwarmReferenceGid, UpdateSourceTrigger=PropertyChanged}" Padding="5,3" Margin="0,3,0,8"/></StackPanel>
+                                                    </Grid>
+                                                    <TextBlock Text="Mode (octal)" Foreground="#725400"/>
+                                                    <TextBox Text="{Binding SwarmReferenceMode, UpdateSourceTrigger=PropertyChanged}" Padding="5,3" Margin="0,3,0,6"/>
+                                                    <TextBlock Text="{Binding SwarmReferenceValidationMessage}" Foreground="#B42318" FontSize="10" TextWrapping="Wrap"
+                                                               Visibility="{Binding HasSwarmReferenceValidationError, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                    <TextBlock Text="단순 파일명은 /run/secrets 아래에 배치됩니다. 변경 후 Service의 Apply Diagram을 실행하세요."
+                                                               Foreground="#725400" FontSize="10" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </Border>
                                         </StackPanel>
 
                                         <StackPanel>
@@ -2039,7 +2206,23 @@
                                                 <Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding RelationType}" Value="SwarmConfigReference"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style>
                                             </StackPanel.Style>
                                             <TextBlock Text="Type: Swarm Config Reference" FontWeight="Bold" Foreground="#4D7C6F" Margin="0,8,0,5"/>
-                                            <Border Background="#EAF3F0" Padding="8" CornerRadius="3"><TextBlock Text="Service가 이 Config를 참조합니다." Foreground="#315B50" TextWrapping="Wrap"/></Border>
+                                            <Border Background="#EAF3F0" Padding="8" CornerRadius="3">
+                                                <StackPanel>
+                                                    <TextBlock Text="Target file name or absolute path" Foreground="#315B50"/>
+                                                    <TextBox Text="{Binding SwarmReferenceTarget, UpdateSourceTrigger=PropertyChanged}" Padding="5,3" Margin="0,3,0,8"/>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                                        <StackPanel><TextBlock Text="UID" Foreground="#315B50"/><TextBox Text="{Binding SwarmReferenceUid, UpdateSourceTrigger=PropertyChanged}" Padding="5,3" Margin="0,3,0,8"/></StackPanel>
+                                                        <StackPanel Grid.Column="2"><TextBlock Text="GID" Foreground="#315B50"/><TextBox Text="{Binding SwarmReferenceGid, UpdateSourceTrigger=PropertyChanged}" Padding="5,3" Margin="0,3,0,8"/></StackPanel>
+                                                    </Grid>
+                                                    <TextBlock Text="Mode (octal)" Foreground="#315B50"/>
+                                                    <TextBox Text="{Binding SwarmReferenceMode, UpdateSourceTrigger=PropertyChanged}" Padding="5,3" Margin="0,3,0,6"/>
+                                                    <TextBlock Text="{Binding SwarmReferenceValidationMessage}" Foreground="#B42318" FontSize="10" TextWrapping="Wrap"
+                                                               Visibility="{Binding HasSwarmReferenceValidationError, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                    <TextBlock Text="단순 파일명은 Linux 컨테이너의 / 아래에 배치됩니다. 변경 후 Service의 Apply Diagram을 실행하세요."
+                                                               Foreground="#315B50" FontSize="10" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </Border>
                                         </StackPanel>
 
                                         <StackPanel>
@@ -2223,6 +2406,22 @@
                                         <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="17" Foreground="#222"
                                                    Margin="0,5,0,15" TextWrapping="Wrap"/>
 
+                                        <Border Background="#F4ECFA" BorderBrush="#D8CBE8" BorderThickness="1" CornerRadius="4"
+                                                Padding="9" Margin="0,0,0,12">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ResourceKind}" Value="SwarmOverlayNetwork">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="Place a service inside this boundary, then use Apply Diagram on the service to attach it to this overlay network."
+                                                       Foreground="#5D467B" FontSize="10" TextWrapping="Wrap"/>
+                                        </Border>
+
                                         <DockPanel Margin="0,0,0,6">
                                             <TextBlock Text="Network Details" FontWeight="Bold" FontSize="13" Foreground="#555"/>
                                             <TextBlock Text="Loading..." Foreground="#777" FontSize="11" HorizontalAlignment="Right"
@@ -2355,29 +2554,13 @@
                                         <StackPanel Margin="0,0,4,0">
                                             <Border Background="#EEE8F7" BorderBrush="#D8CBE8" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,12">
                                                 <StackPanel>
-                                                    <TextBlock Text="Swarm Draft Group" FontSize="15" FontWeight="Bold" Foreground="#5D467B"/>
-                                                    <TextBlock Text="아직 실제 클러스터에는 생성되지 않은 설계 요소입니다." FontSize="10" Foreground="#6E5A84" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                                    <TextBlock Text="Visual Group" FontSize="15" FontWeight="Bold" Foreground="#5D467B"/>
+                                                    <TextBlock Text="서비스를 보기 좋게 묶는 캔버스 전용 그룹입니다. 실제 Swarm 리소스를 만들지 않습니다." FontSize="10" Foreground="#6E5A84" Margin="0,4,0,0" TextWrapping="Wrap"/>
                                                 </StackPanel>
                                             </Border>
 
                                             <TextBlock Text="Name" FontWeight="SemiBold" Foreground="#555"/>
                                             <TextBox Text="{Binding Title, UpdateSourceTrigger=PropertyChanged}" MaxLength="40" Padding="6,4" Margin="0,4,0,12"/>
-
-                                            <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1" CornerRadius="4" Padding="9" Margin="0,0,0,12">
-                                                <StackPanel>
-                                                    <Grid Margin="0,0,0,6"><Grid.ColumnDefinitions><ColumnDefinition Width="70"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="Kind" Foreground="#888"/><TextBlock Grid.Column="1" Text="{Binding ResourceKind}" FontWeight="SemiBold"/></Grid>
-                                                    <Grid Margin="0,0,0,6"><Grid.ColumnDefinitions><ColumnDefinition Width="70"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="State" Foreground="#888"/><TextBlock Grid.Column="1" Text="{Binding BindingState}" Foreground="#7652A8" FontWeight="SemiBold"/></Grid>
-                                                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="70"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="Created by" Foreground="#888"/><TextBlock Grid.Column="1" Text="{Binding Origin}"/></Grid>
-                                                </StackPanel>
-                                            </Border>
-
-                                            <StackPanel Margin="0,0,0,12">
-                                                <StackPanel.Style>
-                                                    <Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding ResourceKind}" Value="SwarmOverlayNetwork"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style>
-                                                </StackPanel.Style>
-                                                <TextBlock Text="Overlay Driver" FontWeight="SemiBold" Foreground="#555"/>
-                                                <TextBox Text="{Binding Driver, UpdateSourceTrigger=PropertyChanged}" Padding="6,4" Margin="0,4,0,0"/>
-                                            </StackPanel>
 
                                             <TextBlock Text="Contained Nodes" FontWeight="SemiBold" Foreground="#555" Margin="0,0,0,5"/>
                                             <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1" CornerRadius="4" MinHeight="90" Padding="6">
@@ -2804,8 +2987,30 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </StackPanel.Style>
-                                            <TextBlock Text="External Network" FontWeight="Bold" FontSize="12" Foreground="#555" Margin="0,0,0,5"/>
-                                            <TextBlock Text="Represents an external connection or the public internet." TextWrapping="Wrap" Foreground="#888" FontSize="11" Margin="0,0,0,15"/>
+                                            <TextBlock FontWeight="Bold" FontSize="12" Foreground="#555" Margin="0,0,0,5">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Text" Value="External Network"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding ResourceKind}" Value="SwarmExternalTraffic">
+                                                                <Setter Property="Text" Value="External Traffic"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock TextWrapping="Wrap" Foreground="#888" FontSize="11" Margin="0,0,0,15">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Text" Value="Represents an external connection or the public internet."/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding ResourceKind}" Value="SwarmExternalTraffic">
+                                                                <Setter Property="Text" Value="이 노드와 Service의 연결선이 실제 Swarm Published Port를 나타냅니다. 포트 설정은 연결선을 선택해 수정합니다."/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
                                             <TextBlock Text="Connected Nodes" FontWeight="Bold" FontSize="12" Foreground="#555" Margin="0,0,0,5"/>
                                             <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1" CornerRadius="3" Height="160">
                                                 <ListBox ItemsSource="{Binding ConnectedNodes}" Background="Transparent" BorderThickness="0" ScrollViewer.VerticalScrollBarVisibility="Hidden" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
@@ -2826,8 +3031,30 @@
                                         <StackPanel Margin="0,0,4,0">
                                             <Border Background="#EEE8F7" BorderBrush="#D8CBE8" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,12">
                                                 <StackPanel>
-                                                    <TextBlock Text="Swarm Draft Resource" FontSize="15" FontWeight="Bold" Foreground="#5D467B"/>
-                                                    <TextBlock Text="아직 실제 클러스터에는 생성되지 않은 설계 요소입니다." FontSize="10" Foreground="#6E5A84" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                                    <TextBlock FontSize="15" FontWeight="Bold" Foreground="#5D467B">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="Swarm Draft Resource"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding ResourceKind}" Value="SwarmExternalTraffic">
+                                                                        <Setter Property="Text" Value="External Traffic"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <TextBlock FontSize="10" Foreground="#6E5A84" Margin="0,4,0,0" TextWrapping="Wrap">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="아직 실제 클러스터에는 생성되지 않은 설계 요소입니다."/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding ResourceKind}" Value="SwarmExternalTraffic">
+                                                                        <Setter Property="Text" Value="독립된 Swarm 리소스가 아니라 Service의 Published Port를 설계하는 입력 요소입니다."/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
                                                 </StackPanel>
                                             </Border>
 
@@ -2835,10 +3062,37 @@
                                             <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" MaxLength="50" Padding="6,4" Margin="0,4,0,12"/>
 
                                             <Border Background="#FAFAFA" BorderBrush="#DDD" BorderThickness="1" CornerRadius="4" Padding="9" Margin="0,0,0,12">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding ResourceKind}" Value="SwarmExternalTraffic">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
                                                 <StackPanel>
                                                     <Grid Margin="0,0,0,6"><Grid.ColumnDefinitions><ColumnDefinition Width="70"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="Kind" Foreground="#888"/><TextBlock Grid.Column="1" Text="{Binding ResourceKind}" FontWeight="SemiBold"/></Grid>
                                                     <Grid Margin="0,0,0,6"><Grid.ColumnDefinitions><ColumnDefinition Width="70"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="State" Foreground="#888"/><TextBlock Grid.Column="1" Text="{Binding BindingState}" Foreground="#7652A8" FontWeight="SemiBold"/></Grid>
-                                                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="70"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="Created by" Foreground="#888"/><TextBlock Grid.Column="1" Text="{Binding Origin}"/></Grid>
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Background="#EAF4FA" BorderBrush="#C8DFEC" BorderThickness="1" CornerRadius="4" Padding="9" Margin="0,0,0,12">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding ResourceKind}" Value="SwarmExternalTraffic">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <TextBlock Text="사용 방법" FontWeight="SemiBold" Foreground="#285A73"/>
+                                                    <TextBlock Text="1. 이 노드를 Service와 연결합니다.&#10;2. 연결 창에서 Public/Target Port, Protocol, Publish Mode를 설정합니다.&#10;3. Service를 선택하고 Apply Diagram을 실행합니다.&#10;&#10;포트를 더 공개하려면 External Traffic 노드를 하나 더 추가합니다."
+                                                               FontSize="10" Foreground="#285A73" Margin="0,4,0,0" TextWrapping="Wrap"/>
                                                 </StackPanel>
                                             </Border>
 
@@ -2906,7 +3160,7 @@
                         </Grid.ColumnDefinitions>
                         <Button Content="Delete" Height="34" Background="#dc3545" Foreground="White" BorderThickness="0"
                                 IsEnabled="{Binding Inspector.CanDeleteSelected}"
-                                Command="{Binding Inspector.DeleteCommand}"/>
+                                Click="InspectorDelete_Click"/>
                         <Button Grid.Column="2" Content="Close" Height="34"
                                 Command="{Binding Inspector.ClosePanelCommand}"/>
                     </Grid>
@@ -3046,7 +3300,8 @@
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate TargetType="ListBoxItem">
-                                            <Border x:Name="TabBorder" Background="Transparent" BorderBrush="#ccc" BorderThickness="0,0,1,0" Padding="15,5" MinWidth="100" Cursor="Hand">
+                                            <Border x:Name="TabBorder" Background="Transparent" BorderBrush="#ccc" BorderThickness="0,0,1,0" Padding="15,5" MinWidth="100" Cursor="Hand"
+                                                    ContextMenuOpening="SheetTab_ContextMenuOpening">
                                                 <Border.ContextMenu>
                                                     <ContextMenu>
                                                         <MenuItem Header="이름 바꾸기" Click="RenameSheet_Click"/>

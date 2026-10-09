@@ -77,17 +77,6 @@
         SwarmVisualGroup
     }
 
-    public enum ElementOrigin
-    {
-        Unknown,
-        Toolbox,
-        RuntimeDiscovery,
-        ComposeImport,
-        StackImport,
-        Template,
-        FileRestore
-    }
-
     public enum RuntimeBindingState
     {
         Bound,

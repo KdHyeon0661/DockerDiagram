@@ -1,0 +1,86 @@
+<Window x:Class="DockerDiagram.Views.SwarmPublishedPortDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Publish Swarm Service Port"
+        SizeToContent="Height"
+        Width="440"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        WindowStyle="ToolWindow">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="#EAF4FA" BorderBrush="#C8DFEC"
+                BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,14">
+            <TextBlock Text="이 연결 하나가 Swarm Service의 공개 포트 하나를 나타냅니다. Public Port를 비우면 Docker가 사용 가능한 포트를 자동 할당합니다."
+                       Foreground="#285A73" FontSize="11" TextWrapping="Wrap"/>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="135"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Public Port" VerticalAlignment="Center" FontWeight="SemiBold"/>
+            <TextBox Grid.Column="1" x:Name="txtPublishedPort" Padding="6,4"
+                     ToolTip="Optional. Leave blank for automatic assignment."/>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="135"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Service Target Port *" VerticalAlignment="Center" FontWeight="SemiBold"/>
+            <TextBox Grid.Column="1" x:Name="txtTargetPort" Padding="6,4"/>
+        </Grid>
+
+        <Grid Grid.Row="3" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="135"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Protocol" VerticalAlignment="Center" FontWeight="SemiBold"/>
+            <ComboBox Grid.Column="1" x:Name="cmbProtocol" Padding="5,3">
+                <ComboBoxItem Content="tcp"/>
+                <ComboBoxItem Content="udp"/>
+                <ComboBoxItem Content="sctp"/>
+            </ComboBox>
+        </Grid>
+
+        <Grid Grid.Row="4" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="135"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Publish Mode" VerticalAlignment="Center" FontWeight="SemiBold"/>
+            <ComboBox Grid.Column="1" x:Name="cmbPublishMode" Padding="5,3">
+                <ComboBoxItem Content="ingress"/>
+                <ComboBoxItem Content="host"/>
+            </ComboBox>
+        </Grid>
+
+        <Border Grid.Row="5" Background="#FAFAFA" BorderBrush="#DDD"
+                BorderThickness="1" CornerRadius="4" Padding="9" Margin="0,2,0,14">
+            <StackPanel>
+                <TextBlock Text="ingress: 모든 Swarm 노드의 routing mesh를 통해 접근" FontSize="10" Foreground="#555" TextWrapping="Wrap"/>
+                <TextBlock Text="host: Task가 실행 중인 노드의 포트로 직접 접근" FontSize="10" Foreground="#555" Margin="0,3,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Add Port" IsDefault="True" Click="BtnOk_Click"
+                    Width="90" Height="30" Margin="0,0,10,0"
+                    Background="#287BAE" Foreground="White"/>
+            <Button Content="Cancel" IsCancel="True" Width="80" Height="30"/>
+        </StackPanel>
+    </Grid>
+</Window>

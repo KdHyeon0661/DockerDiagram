@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Input;
 using System.Linq;
 using DockerDiagram.Contracts;
@@ -29,6 +29,13 @@ namespace DockerDiagram
         private void UndoRedoOptionsButton_Click(object sender, RoutedEventArgs e)
         {
             CloseAllOptionPopups();
+
+            if (ViewModel.ActiveSheet?.RuntimeKind == RuntimeKind.DockerSwarm)
+            {
+                ManageSwarmNodesButton_Click(sender, e);
+                return;
+            }
+
             UndoRedoOptionsPopup.IsOpen = true;
         }
 
@@ -60,7 +67,7 @@ namespace DockerDiagram
 
             if (DataContext is not MainViewModel vm ||
                 vm.ActiveSheet?.RuntimeKind != RuntimeKind.DockerSwarm ||
-                vm.ActiveSheet.DockerService is not ISwarmService swarmService)
+                vm.ActiveSheet.DockerService is not ISwarmService)
             {
                 _dialogService.ShowInfo("활성 Swarm Manager 세션이 없습니다.", "Docker Swarm");
                 return;
@@ -69,8 +76,8 @@ namespace DockerDiagram
             try
             {
                 Mouse.OverrideCursor = Cursors.Wait;
-                var nodes = await swarmService.GetSwarmNodesAsync();
-                await vm.Explorer.SyncWithDockerEngineAsync();
+                await vm.RefreshRuntimeResourcesAsync();
+                var nodes = vm.Explorer.SwarmNodes.ToList();
 
                 int managers = nodes.Count(node =>
                     node.Role.Equals("manager", System.StringComparison.OrdinalIgnoreCase) ||
@@ -125,10 +132,10 @@ namespace DockerDiagram
             ConnectionManagerButton_Click(sender, e);
         }
 
-        private void AddSwarmStackSheet_Click(object sender, RoutedEventArgs e)
+        private async void AddSwarmStackSheet_Click(object sender, RoutedEventArgs e)
         {
             CloseAllOptionPopups();
-            ViewModel.SheetManager.AddSwarmStackSheet();
+            await SwarmStackController.CreateStackSheetAsync();
         }
         /// <summary>
         /// 톱니바퀴(옵션) 팝업 메뉴에서 [이미지 관리] 버튼을 클릭했을 때 호출됩니다.
@@ -169,7 +176,7 @@ namespace DockerDiagram
             {
                 Mouse.OverrideCursor = Cursors.Wait;
                 await vm.ActiveSheet.DockerService.ImportImageFromTarAsync(window.TarPath, window.Repository, window.ImageTag, window.Message);
-                await vm.Explorer.SyncWithDockerEngineAsync();
+                await vm.RefreshRuntimeResourcesAsync();
                 _dialogService.ShowInfo($"이미지를 import했습니다.\n{window.Repository}:{window.ImageTag}", "Import Image");
             }
             catch (Exception ex)
@@ -204,7 +211,7 @@ namespace DockerDiagram
             {
                 Mouse.OverrideCursor = Cursors.Wait;
                 await vm.ActiveSheet.DockerService.LoadImageFromTarAsync(dialog.FileName);
-                await vm.Explorer.SyncWithDockerEngineAsync();
+                await vm.RefreshRuntimeResourcesAsync();
                 _dialogService.ShowInfo($"이미지를 load했습니다.\n{dialog.FileName}", "Load Image");
             }
             catch (Exception ex)

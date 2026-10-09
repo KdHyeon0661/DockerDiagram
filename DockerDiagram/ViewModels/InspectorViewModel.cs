@@ -1,5 +1,6 @@
 ﻿using DockerDiagram.Diagram;
 using DockerDiagram.Contracts;
+using DockerDiagram.ApplicationServices;
 using DockerDiagram.Common;
 using System;
 using System.ComponentModel;
@@ -8,6 +9,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using DockerDiagram.Models;
+using Docker.DotNet.Models;
 
 namespace DockerDiagram.ViewModels
 {
@@ -251,7 +253,9 @@ namespace DockerDiagram.ViewModels
                 {
                     await _mainVm.History.ExecuteAndRecordAsync(_mainVm.CreateConnectorDeleteCommand(sheet, conn));
                 }
-                else if (conn.RelationType == RelationType.VolumeMount)
+                else if (DiagramDeletionSupport.RequiresStandaloneVolumeUnmount(
+                             sheet.RuntimeKind,
+                             conn.RelationType))
                 {
                     var result = _dialogService.ShowYesNoCancel(
                         "실제 Docker 컨테이너에서도 볼륨 연결을 해제하시겠습니까?\n" +
@@ -305,6 +309,27 @@ namespace DockerDiagram.ViewModels
                     return;
                 }
 
+                if (node.ResourceKind is RuntimeResourceKind.SwarmVolume or RuntimeResourceKind.SwarmExternalTraffic)
+                {
+                    if (!_dialogService.ShowConfirm(
+                            $"'{node.Name}'은(는) Swarm service 설정을 표현하는 다이어그램 항목입니다.\n다이어그램에서 제거하시겠습니까?",
+                            "Swarm Diagram Resource"))
+                    {
+                        return;
+                    }
+
+                    await _mainVm.History.ExecuteAndRecordAsync(
+                        _mainVm.CreateNodeDeleteCommand(sheet, node, deleteDocker: false));
+                    SelectedElement = null;
+                    return;
+                }
+
+                if (node.ResourceKind is RuntimeResourceKind.SwarmService or RuntimeResourceKind.SwarmSecret or RuntimeResourceKind.SwarmConfig)
+                {
+                    await DeleteSwarmRuntimeNodeAsync(sheet, node);
+                    return;
+                }
+
                 if (node.IsDockerDisconnected)
                 {
                     if (!_dialogService.ShowConfirm(
@@ -338,8 +363,18 @@ namespace DockerDiagram.ViewModels
                     forceVolumeDelete = decision.Force;
                 }
 
-                await _mainVm.History.ExecuteAndRecordAsync(
-                    _mainVm.CreateNodeDeleteCommand(sheet, node, deleteDocker, forceVolumeDelete));
+                try
+                {
+                    await _mainVm.History.ExecuteAndRecordAsync(
+                        _mainVm.CreateNodeDeleteCommand(sheet, node, deleteDocker, forceVolumeDelete));
+                }
+                catch (Exception ex)
+                {
+                    _dialogService.ShowError(
+                        $"'{node.Name}' 삭제 실패:\n{ex.GetBaseException().Message}\n\n다이어그램 항목은 유지했습니다.",
+                        "Delete Resource");
+                    return;
+                }
             }
 
             // =========================================================
@@ -363,6 +398,12 @@ namespace DockerDiagram.ViewModels
                     return;
                 }
 
+                if (group.ResourceKind == RuntimeResourceKind.SwarmOverlayNetwork)
+                {
+                    await DeleteSwarmOverlayNetworkAsync(sheet, group, networkService);
+                    return;
+                }
+
                 if (group.IsDockerDisconnected)
                 {
                     if (!_dialogService.ShowConfirm(
@@ -377,109 +418,187 @@ namespace DockerDiagram.ViewModels
                     return;
                 }
 
-                await _mainVm.History.ExecuteAndRecordAsync(
-                    _mainVm.CreateGroupDeleteCommand(sheet, group, deleteDocker: group.Type == GroupType.Network));
+                try
+                {
+                    await _mainVm.History.ExecuteAndRecordAsync(
+                        _mainVm.CreateGroupDeleteCommand(sheet, group, deleteDocker: group.Type == GroupType.Network));
+                }
+                catch (Exception ex)
+                {
+                    _dialogService.ShowError(
+                        $"'{group.Title}' 삭제 실패:\n{ex.GetBaseException().Message}\n\n다이어그램 항목은 유지했습니다.",
+                        "Delete Network");
+                    return;
+                }
             }
 
             SelectedElement = null;
         }
 
-        private static void RemoveGroupFromSheetOnly(SheetViewModel sheet, GroupViewModel group)
+        private async Task DeleteSwarmRuntimeNodeAsync(SheetViewModel sheet, NodeViewModel node)
         {
-            if (group.ContainedNodes != null)
+            string kind = node.ResourceKind switch
             {
-                foreach (var childNode in group.ContainedNodes.ToList())
-                {
-                    childNode.X += group.X;
-                    childNode.Y += group.Y;
-                    if (!sheet.Nodes.Contains(childNode))
-                        sheet.Nodes.Add(childNode);
-                }
+                RuntimeResourceKind.SwarmService => "Service",
+                RuntimeResourceKind.SwarmSecret => "Secret",
+                _ => "Config"
+            };
+            DialogChoice choice = _dialogService.ShowYesNoCancel(
+                $"Swarm {kind} '{node.Name}'을 삭제하시겠습니까?\n" +
+                "[예(Yes)] : Swarm에서도 영구 삭제\n" +
+                "[아니요(No)] : 다이어그램에서만 제거\n" +
+                "[취소(Cancel)] : 취소",
+                $"Delete Swarm {kind}");
+            if (choice == DialogChoice.Cancel) return;
+
+            if (choice == DialogChoice.No)
+            {
+                await _mainVm.History.ExecuteAndRecordAsync(
+                    _mainVm.CreateNodeDeleteCommand(sheet, node, deleteDocker: false));
+                SelectedElement = null;
+                return;
             }
 
+            try
+            {
+                if (node.ResourceKind == RuntimeResourceKind.SwarmService)
+                {
+                    if (sheet.DockerService is not ISwarmService swarmService)
+                        throw new InvalidOperationException("활성 Swarm Manager 연결이 없습니다.");
+                    await swarmService.RemoveSwarmServiceAsync(node.ContainerId);
+                }
+                else
+                {
+                    if (sheet.DockerService is not ISwarmDataResourceMutationService mutationService)
+                        throw new InvalidOperationException("활성 Swarm Manager 연결이 없습니다.");
+                    SwarmDataResourceKind dataKind = node.ResourceKind == RuntimeResourceKind.SwarmSecret
+                        ? SwarmDataResourceKind.Secret
+                        : SwarmDataResourceKind.Config;
+                    await mutationService.RemoveSwarmDataResourceAsync(dataKind, node.ContainerId);
+                }
+
+                await sheet.RemoveNodeAsync(node);
+                await sheet.NotifyRuntimeResourcesChangedAsync();
+                SelectedElement = null;
+                _mainVm.IsModified = true;
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError(
+                    $"Swarm {kind} 삭제 실패:\n{ex.GetBaseException().Message}",
+                    $"Delete Swarm {kind}");
+            }
+        }
+
+        private async Task DeleteSwarmOverlayNetworkAsync(
+            SheetViewModel sheet,
+            GroupViewModel group,
+            INetworkService networkService)
+        {
+            DialogChoice choice = _dialogService.ShowYesNoCancel(
+                $"Swarm overlay network '{group.Title}'을 삭제하시겠습니까?\n" +
+                "[예(Yes)] : Swarm에서도 영구 삭제\n" +
+                "[아니요(No)] : 다이어그램에서만 제거\n" +
+                "[취소(Cancel)] : 취소",
+                "Delete Swarm Overlay Network");
+            if (choice == DialogChoice.Cancel) return;
+
+            if (choice == DialogChoice.No)
+            {
+                await _mainVm.History.ExecuteAndRecordAsync(
+                    _mainVm.CreateGroupDeleteCommand(sheet, group, deleteDocker: false));
+                SelectedElement = null;
+                return;
+            }
+
+            try
+            {
+                await networkService.RemoveNetworkAsync(
+                    string.IsNullOrWhiteSpace(group.Id) ? group.DockerNetworkName : group.Id);
+                RemoveGroupFromSheetOnly(sheet, group);
+                await sheet.NotifyRuntimeResourcesChangedAsync();
+                SelectedElement = null;
+                _mainVm.IsModified = true;
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError(
+                    $"Swarm overlay network 삭제 실패:\n{ex.GetBaseException().Message}",
+                    "Delete Swarm Overlay Network");
+            }
+        }
+
+        private static void RemoveGroupFromSheetOnly(SheetViewModel sheet, GroupViewModel group)
+        {
             var relatedConnectors = sheet.Connectors
                 .Where(c => c.Source == (IConnectableItem)group || c.Target == (IConnectableItem)group).ToList();
-            foreach (var c in relatedConnectors) sheet.Connectors.Remove(c);
-
-            sheet.Groups.Remove(group);
+            DiagramDeletionSupport.RemoveGroupFromDiagram(sheet, group, relatedConnectors);
         }
 
         private async Task<bool> UnmountVolumeFromContainerAsync(NodeViewModel containerNode, NodeViewModel volumeNode, IContainerService containerService)
         {
             string containerId = containerNode.ContainerId;
-            string volumeNameToRemove = volumeNode.Name;
+            string volumeNameToRemove = volumeNode.EffectiveVolumeName;
             bool keepBackup = false;
+            bool originalRemoved = false;
+            bool wasRunning = false;
+            string? replacementId = null;
+            ContainerInspectResponse? inspect = null;
             string tempHostPath = Path.Combine(Path.GetTempPath(), "docker_backup_" + Guid.NewGuid());
 
             _dialogService.SetBusyCursor(true);
             try
             {
-                if (containerNode.IsRunning) await containerService.StopContainerAsync(containerId);
+                inspect = await containerService.InspectContainerAsync(containerId);
+                wasRunning = inspect.State?.Running == true;
+                MountPoint? targetMount = inspect.Mounts?.FirstOrDefault(mount =>
+                    string.Equals(mount.Name, volumeNameToRemove, StringComparison.OrdinalIgnoreCase));
+                if (targetMount == null)
+                {
+                    _dialogService.ShowError(
+                        $"컨테이너에서 볼륨 '{volumeNameToRemove}' 마운트를 찾을 수 없습니다.",
+                        "볼륨 연결 해제");
+                    return false;
+                }
+
+                if (wasRunning && inspect.HostConfig?.AutoRemove != true)
+                    await containerService.StopContainerAsync(containerId);
                 if (!Directory.Exists(tempHostPath)) Directory.CreateDirectory(tempHostPath);
 
-                var inspect = await containerService.InspectContainerAsync(containerId);
-                string mountPath = "/data";
-                foreach (var m in inspect.Mounts)
-                {
-                    if (m.Name == volumeNameToRemove) { mountPath = m.Destination; break; }
-                }
+                string mountPath = targetMount.Destination;
 
                 await containerService.CopyFromContainerAsync(containerId, mountPath, tempHostPath);
 
-                var oldConfig = inspect.Config;
-                var oldHostConfig = inspect.HostConfig;
-
-                string imageName = oldConfig.Image;
-                string imgRepo = imageName;
-                string imgTag = "latest";
-                int lastColonIndex = imageName.LastIndexOf(':');
-                if (lastColonIndex > 0)
-                {
-                    imgRepo = imageName[..lastColonIndex];
-                    imgTag = imageName[(lastColonIndex + 1)..];
-                }
-
-                var envs = oldConfig.Env != null ? oldConfig.Env.ToList() : new System.Collections.Generic.List<string>();
-
-                var ports = new System.Collections.Generic.List<string>();
-                if (oldHostConfig.PortBindings != null)
-                {
-                    foreach (var pb in oldHostConfig.PortBindings)
-                    {
-                        string containerPort = pb.Key.Split('/')[0];
-                        if (pb.Value != null && pb.Value.Count > 0)
-                            ports.Add($"{pb.Value[0].HostPort}:{containerPort}");
-                    }
-                }
-
-                var newVolumes = new System.Collections.Generic.List<string>();
-                if (oldHostConfig.Binds != null)
-                {
-                    foreach (var bind in oldHostConfig.Binds)
-                    {
-                        if (!bind.StartsWith(volumeNameToRemove + ":")) newVolumes.Add(bind);
-                    }
-                }
-
-                string command = oldConfig.Cmd != null ? string.Join(" ", oldConfig.Cmd) : "";
-                bool tty = oldConfig.Tty;
+                var newVolumes = inspect.HostConfig?.Binds?
+                    .Where(bind => !bind.StartsWith(volumeNameToRemove + ":", StringComparison.OrdinalIgnoreCase))
+                    .ToList() ?? new System.Collections.Generic.List<string>();
+                var newMounts = inspect.HostConfig?.Mounts?
+                    .Where(mount => !(string.Equals(mount.Type, "volume", StringComparison.OrdinalIgnoreCase) &&
+                                      string.Equals(mount.Source, volumeNameToRemove, StringComparison.OrdinalIgnoreCase)))
+                    .ToList();
 
                 await containerService.RemoveContainerAsync(containerId);
+                originalRemoved = true;
 
-                string newId = await containerService.CreateAndStartContainerAsync(
-                    containerNode.Name, imgRepo, imgTag, ports, envs, newVolumes,
-                    oldHostConfig.RestartPolicy.Name.ToString(), 0, 0, command, tty);
-
-                containerNode.ContainerId = newId;
+                replacementId = await containerService.RecreateContainerFromInspectAsync(
+                    inspect.Name,
+                    inspect,
+                    newVolumes,
+                    startContainer: true,
+                    mounts: newMounts);
 
                 string folderName = Path.GetFileName(mountPath.TrimEnd('/'));
                 string actualSourcePath = Path.Combine(tempHostPath, folderName);
 
                 if (Directory.Exists(actualSourcePath))
-                    await containerService.CopyToContainerAsync(newId, actualSourcePath, mountPath);
+                    await containerService.CopyToContainerAsync(replacementId, actualSourcePath, mountPath);
                 else
-                    await containerService.CopyToContainerAsync(newId, tempHostPath, mountPath);
+                    await containerService.CopyToContainerAsync(replacementId, tempHostPath, mountPath);
 
+                if (!wasRunning)
+                    await containerService.StopContainerAsync(replacementId);
+
+                containerNode.ContainerId = replacementId;
                 await containerNode.RefreshDetailsAsync();
 
                 _dialogService.ShowMessage("볼륨 연결 해제 및 컨테이너 재생성이 완료되었습니다.");
@@ -488,7 +607,38 @@ namespace DockerDiagram.ViewModels
             catch (Exception ex)
             {
                 keepBackup = true;
-                _dialogService.ShowMessage($"해제 중 오류 발생: {ex.Message}\n\n백업: {tempHostPath}");
+                string recoveryMessage = string.Empty;
+                if (originalRemoved && inspect != null)
+                {
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(replacementId))
+                        {
+                            try { await containerService.RemoveContainerAsync(replacementId); } catch { }
+                        }
+
+                        string restoredId = await containerService.RecreateContainerFromInspectAsync(
+                            inspect.Name,
+                            inspect,
+                            inspect.HostConfig?.Binds?.ToList() ?? new System.Collections.Generic.List<string>(),
+                            wasRunning);
+                        containerNode.ContainerId = restoredId;
+                        await containerNode.RefreshDetailsAsync();
+                        keepBackup = false;
+                        recoveryMessage = "\n원본 컨테이너 설정은 복구했습니다.";
+                    }
+                    catch (Exception recoveryEx)
+                    {
+                        recoveryMessage = $"\n원본 컨테이너 자동 복구도 실패했습니다: {recoveryEx.GetBaseException().Message}";
+                    }
+                }
+                else if (wasRunning)
+                {
+                    try { await containerService.StartContainerAsync(containerId); } catch { }
+                }
+
+                string backupMessage = keepBackup ? $"\n\n백업: {tempHostPath}" : string.Empty;
+                _dialogService.ShowMessage($"해제 중 오류 발생: {ex.GetBaseException().Message}{recoveryMessage}{backupMessage}");
                 return false;
             }
             finally

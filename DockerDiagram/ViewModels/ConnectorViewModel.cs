@@ -1,4 +1,5 @@
 using DockerDiagram.Diagram;
+using DockerDiagram.ApplicationServices;
 using DockerDiagram.Contracts;
 using DockerDiagram.Common;
 using System;
@@ -35,6 +36,11 @@ namespace DockerDiagram.ViewModels
         private string _publishedPort = string.Empty;
         private string _targetPort = string.Empty;
         private string _protocol = "tcp";
+        private string _publishMode = "ingress";
+        private string _swarmReferenceTarget = string.Empty;
+        private string _swarmReferenceUid = "0";
+        private string _swarmReferenceGid = "0";
+        private string _swarmReferenceMode = "0444";
         #endregion
 
         #region Events
@@ -136,6 +142,8 @@ namespace DockerDiagram.ViewModels
                     OnPropertyChanged(nameof(HasTargetDisplayLabel));
                     OnPropertyChanged(nameof(CanReverseDirection));
                     OnPropertyChanged(nameof(CanChangeDirectionMode));
+                    NotifyPublishedPortValidationChanged();
+                    NotifySwarmReferenceValidationChanged();
                     OnModified?.Invoke(this, EventArgs.Empty);
                 }
             }
@@ -200,6 +208,9 @@ namespace DockerDiagram.ViewModels
                 {
                     OnPropertyChanged(nameof(SourceDisplayLabel));
                     OnPropertyChanged(nameof(HasSourceDisplayLabel));
+                    OnPropertyChanged(nameof(SourceLabelX));
+                    OnPropertyChanged(nameof(SourceLabelY));
+                    NotifyPublishedPortValidationChanged();
                     OnModified?.Invoke(this, EventArgs.Empty);
                 }
             }
@@ -214,6 +225,9 @@ namespace DockerDiagram.ViewModels
                 {
                     OnPropertyChanged(nameof(TargetDisplayLabel));
                     OnPropertyChanged(nameof(HasTargetDisplayLabel));
+                    OnPropertyChanged(nameof(TargetLabelX));
+                    OnPropertyChanged(nameof(TargetLabelY));
+                    NotifyPublishedPortValidationChanged();
                     OnModified?.Invoke(this, EventArgs.Empty);
                 }
             }
@@ -228,13 +242,149 @@ namespace DockerDiagram.ViewModels
                 {
                     OnPropertyChanged(nameof(TargetDisplayLabel));
                     OnPropertyChanged(nameof(HasTargetDisplayLabel));
+                    OnPropertyChanged(nameof(TargetLabelX));
+                    OnPropertyChanged(nameof(TargetLabelY));
+                    NotifyPublishedPortValidationChanged();
                     OnModified?.Invoke(this, EventArgs.Empty);
                 }
             }
         }
 
+        public string PublishMode
+        {
+            get => _publishMode;
+            set
+            {
+                if (SetProperty(ref _publishMode, string.IsNullOrWhiteSpace(value) ? "ingress" : value.ToLowerInvariant()))
+                {
+                    OnPropertyChanged(nameof(SourceDisplayLabel));
+                    OnPropertyChanged(nameof(HasSourceDisplayLabel));
+                    OnPropertyChanged(nameof(SourceLabelX));
+                    OnPropertyChanged(nameof(SourceLabelY));
+                    NotifyPublishedPortValidationChanged();
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public string PublishedPortValidationMessage =>
+            RelationType == RelationType.SwarmPublishedPort &&
+            !SwarmPublishedPortInputParser.TryParse(
+                PublishedPort,
+                TargetPort,
+                Protocol,
+                PublishMode,
+                out _,
+                out string error)
+                ? error
+                : string.Empty;
+
+        public bool HasPublishedPortValidationError =>
+            !string.IsNullOrWhiteSpace(PublishedPortValidationMessage);
+
+        public SwarmPublishedPortOptions GetSwarmPublishedPortOptions() =>
+            SwarmPublishedPortInputParser.Parse(
+                PublishedPort,
+                TargetPort,
+                Protocol,
+                PublishMode);
+
+        public string SwarmReferenceTarget
+        {
+            get => _swarmReferenceTarget;
+            set
+            {
+                if (SetProperty(ref _swarmReferenceTarget, value ?? string.Empty))
+                {
+                    OnPropertyChanged(nameof(SourceDisplayLabel));
+                    OnPropertyChanged(nameof(HasSourceDisplayLabel));
+                    OnPropertyChanged(nameof(SourceLabelX));
+                    OnPropertyChanged(nameof(SourceLabelY));
+                    NotifySwarmReferenceValidationChanged();
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public string SwarmReferenceUid
+        {
+            get => _swarmReferenceUid;
+            set
+            {
+                if (SetProperty(ref _swarmReferenceUid, value ?? string.Empty))
+                {
+                    NotifySwarmReferenceValidationChanged();
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public string SwarmReferenceGid
+        {
+            get => _swarmReferenceGid;
+            set
+            {
+                if (SetProperty(ref _swarmReferenceGid, value ?? string.Empty))
+                {
+                    NotifySwarmReferenceValidationChanged();
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public string SwarmReferenceMode
+        {
+            get => _swarmReferenceMode;
+            set
+            {
+                if (SetProperty(ref _swarmReferenceMode, value ?? string.Empty))
+                {
+                    NotifySwarmReferenceValidationChanged();
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public string SwarmReferenceValidationMessage =>
+            IsSwarmDataReference &&
+            !SwarmResourceReferenceInputParser.TryParse(
+                SwarmReferenceTarget,
+                SwarmReferenceUid,
+                SwarmReferenceGid,
+                SwarmReferenceMode,
+                out _,
+                out string error)
+                ? error
+                : string.Empty;
+
+        public bool HasSwarmReferenceValidationError =>
+            !string.IsNullOrWhiteSpace(SwarmReferenceValidationMessage);
+
+        public SwarmServiceResourceReferenceOptions GetSwarmResourceReferenceOptions(
+            string resourceId,
+            string resourceName)
+        {
+            SwarmResourceTargetOptions target = SwarmResourceReferenceInputParser.Parse(
+                SwarmReferenceTarget,
+                SwarmReferenceUid,
+                SwarmReferenceGid,
+                SwarmReferenceMode);
+            return new SwarmServiceResourceReferenceOptions(
+                resourceId,
+                resourceName,
+                target.FileName,
+                target.Uid,
+                target.Gid,
+                target.Mode);
+        }
+
+        private bool IsSwarmDataReference =>
+            RelationType is RelationType.SwarmSecretReference or RelationType.SwarmConfigReference;
+
         public string SourceDisplayLabel => RelationType == RelationType.SwarmPublishedPort
-            ? (string.IsNullOrWhiteSpace(PublishedPort) ? "published" : $"public {PublishedPort}")
+            ? $"public {(string.IsNullOrWhiteSpace(PublishedPort) ? "auto" : PublishedPort)} ({PublishMode})"
+            : IsSwarmDataReference
+                ? $"target {SwarmReferenceTarget}"
             : SourceDataLabel;
         public string TargetDisplayLabel => RelationType == RelationType.SwarmPublishedPort
             ? (string.IsNullOrWhiteSpace(TargetPort) ? Protocol : $"{TargetPort}/{Protocol}")
@@ -245,6 +395,18 @@ namespace DockerDiagram.ViewModels
             and not RelationType.SwarmSecretReference
             and not RelationType.SwarmConfigReference;
         public bool CanChangeDirectionMode => CanReverseDirection;
+
+        private void NotifyPublishedPortValidationChanged()
+        {
+            OnPropertyChanged(nameof(PublishedPortValidationMessage));
+            OnPropertyChanged(nameof(HasPublishedPortValidationError));
+        }
+
+        private void NotifySwarmReferenceValidationChanged()
+        {
+            OnPropertyChanged(nameof(SwarmReferenceValidationMessage));
+            OnPropertyChanged(nameof(HasSwarmReferenceValidationError));
+        }
 
         public string StrokeColor => RelationType switch
         {
@@ -377,7 +539,7 @@ namespace DockerDiagram.ViewModels
             inward.Normalize();
 
             Point anchor = endpoint + (inward * 22);
-            string label = sourceSide ? SourceDataLabel : TargetDataLabel;
+            string label = sourceSide ? SourceDisplayLabel : TargetDisplayLabel;
             double estimatedWidth = EstimateLabelWidth(label);
             const double estimatedHeight = 22;
 

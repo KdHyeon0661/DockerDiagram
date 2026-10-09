@@ -12,6 +12,11 @@ namespace DockerDiagram.Diagram
         {
             ArgumentNullException.ThrowIfNull(network);
 
+            // ingress belongs to Swarm's routing mesh. Users do not create, attach,
+            // or delete it as an application overlay network.
+            if (network.Name.Equals("ingress", StringComparison.OrdinalIgnoreCase))
+                return false;
+
             return network.Driver.Equals("overlay", StringComparison.OrdinalIgnoreCase) ||
                    network.Scope.Equals("swarm", StringComparison.OrdinalIgnoreCase);
         }

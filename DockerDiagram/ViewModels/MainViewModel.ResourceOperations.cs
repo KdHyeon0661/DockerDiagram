@@ -1,6 +1,8 @@
 ﻿using DockerDiagram.Diagram;
 using Docker.DotNet.Models;
 using DockerDiagram.Models;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Contracts;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -17,10 +19,11 @@ namespace DockerDiagram.ViewModels
         public async Task AddConnectionAsync(IConnectableItem source, IConnectableItem target, PortDirection sourceDir, PortDirection targetDir)
         {
             if (ActiveSheet == null || source == target) return;
+            SheetViewModel sheet = ActiveSheet;
 
             RelationType? swarmRelation = null;
             bool reverseForSemanticDirection = false;
-            if (ActiveSheet.RuntimeKind == RuntimeKind.DockerSwarm)
+            if (sheet.RuntimeKind == RuntimeKind.DockerSwarm)
             {
                 SwarmConnectionDecision decision = SwarmConnectionPolicy.Resolve(
                     GetEffectiveSwarmKind(source),
@@ -64,17 +67,35 @@ namespace DockerDiagram.ViewModels
                 .Any(item => item.IsDraft);
 
             // 볼륨 마운트는 연결 방향과 무관하게 양 끝의 리소스 역할로 처리합니다.
-            if (isVolumeMount && ActiveSheet.RuntimeKind != RuntimeKind.DockerSwarm && !isDraftConnection)
+            if (isVolumeMount && sheet.RuntimeKind != RuntimeKind.DockerSwarm && !isDraftConnection)
             {
                 bool isSuccess = await ConnectVolumeToContainerAsync(volumeContainer!, volumeNode!);
                 if (!isSuccess) return;
             }
 
-            bool exists = ActiveSheet.Connectors.Any(c =>
+            bool exists = sheet.Connectors.Any(c =>
                 (c.Source == finalSource && c.Target == finalTarget) ||
                 (c.Source == finalTarget && c.Target == finalSource));
 
-            if (!exists)
+            if (exists)
+            {
+                if (swarmRelation == RelationType.SwarmPublishedPort)
+                {
+                    _dialogService.ShowInfo(
+                        "이 External Traffic과 Service 사이에는 이미 공개 포트 연결이 있습니다.\n" +
+                        "같은 Service에 포트를 하나 더 공개하려면 External Traffic 노드를 하나 더 추가해 주세요.",
+                        "Swarm Published Port");
+                }
+                else if (swarmRelation is RelationType.SwarmSecretReference or RelationType.SwarmConfigReference)
+                {
+                    _dialogService.ShowInfo(
+                        "이 Service와 리소스는 이미 연결되어 있습니다.\n" +
+                        "Target, UID, GID, Mode는 연결선을 선택해 오른쪽 속성에서 수정할 수 있습니다.",
+                        "Swarm Resource Reference");
+                }
+                return;
+            }
+
             {
                 var newConnector = new ConnectorViewModel(finalSource, finalTarget, finalSourceDir, finalTargetDir, _dialogService);
 
@@ -85,9 +106,51 @@ namespace DockerDiagram.ViewModels
                         newConnector.MountPath = "/data";
                     else if (swarmRelation == RelationType.SwarmPublishedPort)
                     {
-                        newConnector.PublishedPort = "8080";
-                        newConnector.TargetPort = "80";
-                        newConnector.Protocol = "tcp";
+                        var initialPort = new SwarmPublishedPortOptions(
+                            80,
+                            8080,
+                            SwarmPortProtocol.Tcp,
+                            SwarmPublishMode.Ingress);
+                        if (!_dialogService.TryShowSwarmPublishedPortDialog(
+                                initialPort,
+                                out SwarmPublishedPortOptions configuredPort))
+                        {
+                            return;
+                        }
+
+                        newConnector.PublishedPort = configuredPort.PublishedPort?.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+                        newConnector.TargetPort = configuredPort.TargetPort.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture);
+                        newConnector.Protocol = configuredPort.Protocol.ToString().ToLowerInvariant();
+                        newConnector.PublishMode = configuredPort.PublishMode.ToString().ToLowerInvariant();
+                        newConnector.IsBidirectional = false;
+                    }
+                    else if (swarmRelation is RelationType.SwarmSecretReference or RelationType.SwarmConfigReference)
+                    {
+                        NodeViewModel? resourceNode = new[] { finalSource, finalTarget }
+                            .OfType<NodeViewModel>()
+                            .FirstOrDefault(node => node.ResourceKind is RuntimeResourceKind.SwarmSecret or RuntimeResourceKind.SwarmConfig);
+                        if (resourceNode == null) return;
+
+                        SwarmDataResourceKind resourceKind = swarmRelation == RelationType.SwarmSecretReference
+                            ? SwarmDataResourceKind.Secret
+                            : SwarmDataResourceKind.Config;
+                        var initialReference = new SwarmResourceTargetOptions(resourceNode.Name);
+                        if (!_dialogService.TryShowSwarmResourceReferenceDialog(
+                                resourceKind,
+                                resourceNode.Name,
+                                initialReference,
+                                out SwarmResourceTargetOptions configuredReference))
+                        {
+                            return;
+                        }
+
+                        newConnector.SwarmReferenceTarget = configuredReference.FileName;
+                        newConnector.SwarmReferenceUid = configuredReference.Uid;
+                        newConnector.SwarmReferenceGid = configuredReference.Gid;
+                        newConnector.SwarmReferenceMode =
+                            SwarmResourceReferenceInputParser.FormatMode(configuredReference.Mode);
                         newConnector.IsBidirectional = false;
                     }
                 }
@@ -105,8 +168,8 @@ namespace DockerDiagram.ViewModels
                 {
                     newConnector.RelationType = RelationType.Dependency;
                 }
-                ActiveSheet.Connectors.Add(newConnector);
-                RecordConnectorAdd(ActiveSheet, newConnector);
+                sheet.Connectors.Add(newConnector);
+                RecordConnectorAdd(sheet, newConnector);
             }
 
             IsModified = true;
@@ -147,23 +210,43 @@ namespace DockerDiagram.ViewModels
         // 🧱 노드(Node) 및 도커 리소스 생성 로직 모음
         // =========================================================
 
-        public async Task CreateNodeAtAsync(object item, double x, double y)
+        public async Task CreateNodeAtAsync(object item, double x, double y, SheetViewModel? targetSheet = null)
         {
-            if (ActiveSheet == null) return;
-            var historyBefore = CaptureDiagramState(ActiveSheet);
+            SheetViewModel? creationSheet = targetSheet ?? ActiveSheet;
+            if (creationSheet == null) return;
+            IContainerService containerService = creationSheet.DockerService;
+            INetworkService networkService = creationSheet.DockerService;
+            var historyBefore = CaptureDiagramState(creationSheet);
 
             // [CASE 1] 컨테이너 (DockerContainer)
             if (item is DockerContainer container)
             {
-                ActiveSheet.CreateNodeAt(container, x, y);
+                creationSheet.CreateNodeAt(container, x, y);
+                NodeViewModel? placedNode = creationSheet.Nodes.LastOrDefault(node =>
+                    string.Equals(node.ContainerId, container.Id, StringComparison.OrdinalIgnoreCase));
                 IsModified = true;
                 Explorer.RegisterTemplateUsage(container.Image);
+
+                if (container.IsSwarmService && placedNode != null)
+                {
+                    try
+                    {
+                        await RestoreExistingSwarmServiceTopologyAsync(creationSheet, placedNode);
+                    }
+                    catch (Exception ex)
+                    {
+                        placedNode.IsSwarmDiagramDirty = false;
+                        _dialogService.ShowError(
+                            $"Service는 배치했지만 현재 ServiceSpec의 관계를 복원하지 못했습니다:\n{ex.GetBaseException().Message}",
+                            "Swarm Topology Import");
+                    }
+                }
 
                 if (!container.IsSwarmService && !string.IsNullOrEmpty(container.Id))
                 {
                     try
                     {
-                        var info = await _containerService.InspectContainerAsync(container.Id);
+                        var info = await containerService.InspectContainerAsync(container.Id);
 
                         // 네트워크 복구
                         if (info.NetworkSettings != null && info.NetworkSettings.Networks != null)
@@ -173,18 +256,21 @@ namespace DockerDiagram.ViewModels
                                 string netName = netKvp.Key;
                                 if (netName == "bridge") continue;
 
-                                var existingGroup = ActiveSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == netName);
+                                var existingGroup = creationSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == netName);
 
                                 if (existingGroup == null)
                                 {
-                                    existingGroup = new GroupViewModel(x - 30, y - 40, 220, 150, _networkService, _dialogService, netName, GroupType.Network)
+                                    existingGroup = new GroupViewModel(x - 30, y - 40, 220, 150, networkService, _dialogService, netName, GroupType.Network)
                                     {
+                                        Id = netKvp.Value.NetworkID,
+                                        Driver = "bridge",
+                                        External = true,
                                         IsDockerConnected = true
                                     };
-                                    ActiveSheet.AddGroup(existingGroup);
+                                    creationSheet.AddGroup(existingGroup);
                                 }
 
-                                var newNode = ActiveSheet.Nodes.LastOrDefault(n => n.ContainerId == container.Id);
+                                var newNode = creationSheet.Nodes.LastOrDefault(n => n.ContainerId == container.Id);
                                 if (newNode != null)
                                 {
                                     await existingGroup.AddNodeAsync(newNode, isRestoring: true);
@@ -203,7 +289,7 @@ namespace DockerDiagram.ViewModels
                                     string volName = mount.Name;
                                     string destination = mount.Destination;
 
-                                    var existingVolNode = ActiveSheet.Nodes.FirstOrDefault(n =>
+                                    var existingVolNode = creationSheet.Nodes.FirstOrDefault(n =>
                                         n.Type == NodeType.Volume &&
                                         (string.Equals(n.Name, volName, StringComparison.OrdinalIgnoreCase) ||
                                          string.Equals(n.EffectiveVolumeName, volName, StringComparison.OrdinalIgnoreCase)));
@@ -216,14 +302,14 @@ namespace DockerDiagram.ViewModels
                                     else
                                     {
                                         var volModel = new DockerVolume { Name = volName };
-                                        ActiveSheet.CreateNodeAt(volModel, x + 250, y + (volIndex * 120));
-                                        targetVolNode = ActiveSheet.Nodes.Last();
+                                        creationSheet.CreateNodeAt(volModel, x + 250, y + (volIndex * 120));
+                                        targetVolNode = creationSheet.Nodes.Last();
                                     }
 
-                                    var newNode = ActiveSheet.Nodes.LastOrDefault(n => n.ContainerId == container.Id);
+                                    var newNode = creationSheet.Nodes.LastOrDefault(n => n.ContainerId == container.Id);
                                     if (newNode != null)
                                     {
-                                        bool connExists = ActiveSheet.Connectors.Any(c =>
+                                        bool connExists = creationSheet.Connectors.Any(c =>
                                             (c.Source == newNode && c.Target == targetVolNode) ||
                                             (c.Source == targetVolNode && c.Target == newNode));
 
@@ -234,7 +320,7 @@ namespace DockerDiagram.ViewModels
                                                 RelationType = RelationType.VolumeMount,
                                                 MountPath = destination
                                             };
-                                            ActiveSheet.Connectors.Add(conn);
+                                            creationSheet.Connectors.Add(conn);
                                         }
                                     }
                                     volIndex++;
@@ -251,47 +337,76 @@ namespace DockerDiagram.ViewModels
             // [CASE 2] 볼륨 (DockerVolume)
             else if (item is DockerVolume volume)
             {
-                ActiveSheet.CreateNodeAt(volume, x, y);
+                creationSheet.CreateNodeAt(volume, x, y);
                 IsModified = true;
             }
             // [CASE 3] 인터넷 (DockerInternet)
             else if (item is DockerInternet internet)
             {
-                ActiveSheet.CreateNodeAt(internet, x, y);
+                creationSheet.CreateNodeAt(internet, x, y);
                 IsModified = true;
             }
             // [CASE 4] 네트워크 그룹 (DockerGroup)
             else if (item is DockerNetworkGroup network)
             {
-                var groupVm = new GroupViewModel(x, y, 220, 150, _networkService, _dialogService, network.Name, GroupType.Network)
+                bool isSwarmOverlay = creationSheet.RuntimeKind == RuntimeKind.DockerSwarm;
+                if (isSwarmOverlay && !SwarmResourceFilter.IsOverlayNetwork(network))
+                {
+                    _dialogService.ShowError(
+                        $"'{network.Name}' is not a user-managed Swarm overlay network.",
+                        "Overlay Network");
+                    return;
+                }
+
+                var groupVm = new GroupViewModel(x, y, 220, 150, networkService, _dialogService, network.Name, GroupType.Network)
                 {
                     Id = network.Id,
                     Driver = network.Driver,
+                    ComposeNetworkName = network.Name,
+                    RuntimeKind = isSwarmOverlay ? RuntimeKind.DockerSwarm : RuntimeKind.DockerEngine,
+                    ResourceKind = isSwarmOverlay
+                        ? RuntimeResourceKind.SwarmOverlayNetwork
+                        : RuntimeResourceKind.DockerNetwork,
+                    BindingState = RuntimeBindingState.Bound,
                     IsDockerConnected = true
                 };
-                ActiveSheet.AddGroup(groupVm);
+                creationSheet.AddGroup(groupVm);
+                await creationSheet.RefreshGroupContainmentAsync(groupVm);
+                creationSheet.UpdateGroupLayering();
                 IsModified = true;
             }
 
-            RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, "Add diagram item", affectsDocker: false);
+            RecordAdditionsFromSnapshot(creationSheet, historyBefore, "Add diagram item", affectsDocker: false);
         }
 
-        public Task CreateExistingNetworkGroupAsync(
+        public async Task CreateExistingNetworkGroupAsync(
             DockerNetworkGroup network,
             double x,
             double y,
             double width,
-            double height)
+            double height,
+            SheetViewModel? targetSheet = null)
         {
-            if (ActiveSheet == null) return Task.CompletedTask;
+            SheetViewModel? creationSheet = targetSheet ?? ActiveSheet;
+            if (creationSheet == null) return;
+            INetworkService networkService = creationSheet.DockerService;
 
-            var historyBefore = CaptureDiagramState(ActiveSheet);
+            bool isSwarmOverlay = creationSheet.RuntimeKind == RuntimeKind.DockerSwarm;
+            if (isSwarmOverlay && !SwarmResourceFilter.IsOverlayNetwork(network))
+            {
+                _dialogService.ShowError(
+                    $"'{network.Name}' is not a user-managed Swarm overlay network.",
+                    "Overlay Network");
+                return;
+            }
+
+            var historyBefore = CaptureDiagramState(creationSheet);
             var group = new GroupViewModel(
                 x,
                 y,
                 Math.Max(GroupViewModel.MinimumWidth, width),
                 Math.Max(GroupViewModel.MinimumHeight, height),
-                _networkService,
+                networkService,
                 _dialogService,
                 network.Name,
                 GroupType.Network)
@@ -299,14 +414,20 @@ namespace DockerDiagram.ViewModels
                 Id = network.Id,
                 Driver = string.IsNullOrWhiteSpace(network.Driver) ? "bridge" : network.Driver,
                 ComposeNetworkName = network.Name,
+                RuntimeKind = isSwarmOverlay ? RuntimeKind.DockerSwarm : RuntimeKind.DockerEngine,
+                ResourceKind = isSwarmOverlay
+                    ? RuntimeResourceKind.SwarmOverlayNetwork
+                    : RuntimeResourceKind.DockerNetwork,
+                BindingState = RuntimeBindingState.Bound,
+                External = true,
                 IsDockerConnected = true
             };
 
-            ActiveSheet.AddGroup(group);
-            ActiveSheet.UpdateGroupLayering();
+            creationSheet.AddGroup(group);
+            await creationSheet.RefreshGroupContainmentAsync(group);
+            creationSheet.UpdateGroupLayering();
             IsModified = true;
-            RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, "Add existing Docker network", affectsDocker: false);
-            return Task.CompletedTask;
+            RecordAdditionsFromSnapshot(creationSheet, historyBefore, "Add existing Docker network", affectsDocker: false);
         }
 
         public Task CreateSwarmDraftNodeAsync(RuntimeResourceKind kind, double x, double y)
@@ -334,7 +455,6 @@ namespace DockerDiagram.ViewModels
                 Y = y,
                 RuntimeKind = RuntimeKind.DockerSwarm,
                 ResourceKind = kind,
-                Origin = ElementOrigin.Toolbox,
                 BindingState = RuntimeBindingState.Draft,
                 IsSwarmService = isService,
                 SwarmMode = isService ? "replicated" : string.Empty,
@@ -351,6 +471,46 @@ namespace DockerDiagram.ViewModels
             return Task.CompletedTask;
         }
 
+        public Task CreateSwarmVolumeDraftNodeAsync(VolumeCreateOptions options, double x, double y)
+        {
+            ArgumentNullException.ThrowIfNull(options);
+            if (ActiveSheet?.RuntimeKind != RuntimeKind.DockerSwarm) return Task.CompletedTask;
+
+            string displayName = options.Name.Trim();
+            if (displayName.Length == 0)
+                throw new ArgumentException("Volume 이름이 비어 있습니다.", nameof(options));
+
+            string sourceName = options.EffectiveDockerVolumeName.Trim();
+            string driver = string.IsNullOrWhiteSpace(options.Driver) ? "local" : options.Driver.Trim();
+            var historyBefore = CaptureDiagramState(ActiveSheet);
+            var node = new NodeViewModel(_containerService, _volumeService, _dialogService)
+            {
+                Name = displayName,
+                DockerVolumeName = sourceName,
+                Driver = driver,
+                ImageName = driver,
+                Type = NodeType.Volume,
+                X = x,
+                Y = y,
+                RuntimeKind = RuntimeKind.DockerSwarm,
+                ResourceKind = RuntimeResourceKind.SwarmVolume,
+                BindingState = RuntimeBindingState.Draft,
+                VolumeExternal = options.External,
+                VolumeLabels = new Dictionary<string, string>(options.Labels),
+                VolumeDriverOptions = new Dictionary<string, string>(options.DriverOptions),
+                DetailStatus = options.External
+                    ? $"Draft · existing {sourceName}"
+                    : $"Draft · {driver}",
+                StatusColor = "#7652A8",
+                IsDockerConnected = false
+            };
+
+            ActiveSheet.Nodes.Add(node);
+            IsModified = true;
+            RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Add draft volume {displayName}", affectsDocker: false);
+            return Task.CompletedTask;
+        }
+
         public async Task CreateSwarmDraftGroupAsync(
             RuntimeResourceKind kind,
             double x,
@@ -358,36 +518,35 @@ namespace DockerDiagram.ViewModels
             double width,
             double height)
         {
-            if (ActiveSheet?.RuntimeKind != RuntimeKind.DockerSwarm) return;
-            if (kind is not RuntimeResourceKind.SwarmOverlayNetwork and not RuntimeResourceKind.SwarmVisualGroup)
+            SheetViewModel? sheet = ActiveSheet;
+            if (sheet?.RuntimeKind != RuntimeKind.DockerSwarm) return;
+            if (kind != RuntimeResourceKind.SwarmVisualGroup)
                 throw new ArgumentOutOfRangeException(nameof(kind), kind, "지원하지 않는 Swarm 그룹 종류입니다.");
 
-            var historyBefore = CaptureDiagramState(ActiveSheet);
-            int ordinal = ActiveSheet.Groups.Count(group => group.ResourceKind == kind) + 1;
-            bool isNetwork = kind == RuntimeResourceKind.SwarmOverlayNetwork;
+            var historyBefore = CaptureDiagramState(sheet);
+            int ordinal = sheet.Groups.Count(group => group.ResourceKind == kind) + 1;
             var group = new GroupViewModel(
                 x,
                 y,
                 Math.Max(GroupViewModel.MinimumWidth, width),
                 Math.Max(GroupViewModel.MinimumHeight, height),
-                _networkService,
+                sheet.DockerService,
                 _dialogService,
-                isNetwork ? $"Overlay Network {ordinal}" : $"Group {ordinal}",
-                isNetwork ? GroupType.Network : GroupType.General)
+                $"Group {ordinal}",
+                GroupType.General)
             {
                 RuntimeKind = RuntimeKind.DockerSwarm,
                 ResourceKind = kind,
-                Origin = ElementOrigin.Toolbox,
                 BindingState = RuntimeBindingState.Draft,
-                Driver = isNetwork ? "overlay" : string.Empty,
+                Driver = string.Empty,
                 IsDockerConnected = false
             };
 
-            ActiveSheet.AddGroup(group);
-            await ActiveSheet.RefreshGroupContainmentAsync(group);
-            ActiveSheet.UpdateGroupLayering();
+            sheet.AddGroup(group);
+            await sheet.RefreshGroupContainmentAsync(group);
+            sheet.UpdateGroupLayering();
             IsModified = true;
-            RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Add draft {group.Title}", affectsDocker: false);
+            RecordAdditionsFromSnapshot(sheet, historyBefore, $"Add draft {group.Title}", affectsDocker: false);
         }
 
         public async Task CreateNewNetworkGroupAsync(string name, string driver, double x, double y, double w, double h)
@@ -395,15 +554,17 @@ namespace DockerDiagram.ViewModels
             await CreateNewNetworkGroupAsync(NetworkCreateOptions.Basic(name, driver), x, y, w, h);
         }
 
-        public async Task CreateNewNetworkGroupAsync(NetworkCreateOptions options, double x, double y, double w, double h)
+        public async Task CreateNewNetworkGroupAsync(NetworkCreateOptions options, double x, double y, double w, double h, SheetViewModel? targetSheet = null)
         {
-            if (string.IsNullOrWhiteSpace(options.Name) || ActiveSheet == null) return;
+            SheetViewModel? creationSheet = targetSheet ?? ActiveSheet;
+            if (string.IsNullOrWhiteSpace(options.Name) || creationSheet == null) return;
+            INetworkService networkService = creationSheet.DockerService;
 
             string requestedNetworkName = options.Name.Trim();
             string externalDockerName = string.IsNullOrWhiteSpace(options.ComposeNetworkName)
                 ? requestedNetworkName
                 : options.ComposeNetworkName.Trim();
-            string? resolvedName = await _resourceNames.ResolveNetworkNameAsync(ActiveSheet, _networkService, requestedNetworkName, options.External);
+            string? resolvedName = await _resourceNames.ResolveNetworkNameAsync(creationSheet, networkService, requestedNetworkName, options.External);
             if (resolvedName == null) return;
 
             options.Name = resolvedName;
@@ -414,7 +575,7 @@ namespace DockerDiagram.ViewModels
                 options.ComposeNetworkName = externalDockerName;
             }
 
-            var historyBefore = CaptureDiagramState(ActiveSheet);
+            var historyBefore = CaptureDiagramState(creationSheet);
 
             try
             {
@@ -422,7 +583,7 @@ namespace DockerDiagram.ViewModels
                 if (options.External)
                 {
                     var dockerNetworkName = string.IsNullOrWhiteSpace(options.ComposeNetworkName) ? options.Name : options.ComposeNetworkName;
-                    var networks = await _networkService.GetNetworksAsync();
+                    var networks = await networkService.GetNetworksAsync();
                     var existingNetwork = networks.FirstOrDefault(n => string.Equals(n.Name, dockerNetworkName, StringComparison.OrdinalIgnoreCase));
                     if (existingNetwork == null)
                     {
@@ -435,10 +596,10 @@ namespace DockerDiagram.ViewModels
                 }
                 else
                 {
-                    networkId = await _networkService.CreateNetworkAsync(options);
+                    networkId = await networkService.CreateNetworkAsync(options);
                 }
 
-                var newNetworkGroup = new GroupViewModel(x, y, w, h, _networkService, _dialogService, options.Name, GroupType.Network)
+                var newNetworkGroup = new GroupViewModel(x, y, w, h, networkService, _dialogService, options.Name, GroupType.Network)
                 {
                     Id = networkId,
                     Driver = options.Driver,
@@ -455,20 +616,155 @@ namespace DockerDiagram.ViewModels
                     DriverOptions = new Dictionary<string, string>(options.DriverOptions),
                     AuxAddresses = new Dictionary<string, string>(options.AuxAddresses),
                     IsDockerConnected = true,
-                    ParentSheet = this.ActiveSheet
+                    ParentSheet = creationSheet
                 };
 
-                ActiveSheet.Groups.Add(newNetworkGroup);
-                ActiveSheet.UpdateGroupLayering();
+                creationSheet.Groups.Add(newNetworkGroup);
+                creationSheet.UpdateGroupLayering();
 
-                await ActiveSheet.RefreshGroupContainmentAsync(newNetworkGroup);
+                await creationSheet.RefreshGroupContainmentAsync(newNetworkGroup);
 
                 IsModified = true;
-                RecordAdditionsFromSnapshot(ActiveSheet, historyBefore, $"Create network {options.Name}", !options.External && History.IncludeDockerResourceHistory);
+                RecordAdditionsFromSnapshot(creationSheet, historyBefore, $"Create network {options.Name}", !options.External && History.IncludeDockerResourceHistory);
             }
             catch (Exception ex)
             {
                 _dialogService.ShowError($"'{options.Name}' 네트워크 생성에 실패했습니다:\n{ex.Message}", "Network Create Error");
+            }
+        }
+
+        public async Task CreateSwarmOverlayNetworkGroupAsync(
+            NetworkCreateOptions options,
+            double x,
+            double y,
+            double width,
+            double height,
+            SheetViewModel? targetSheet = null)
+        {
+            SheetViewModel? creationSheet = targetSheet ?? ActiveSheet;
+            if (creationSheet?.RuntimeKind != RuntimeKind.DockerSwarm ||
+                string.IsNullOrWhiteSpace(options.Name))
+            {
+                return;
+            }
+            INetworkService networkService = creationSheet.DockerService;
+
+            string requestedNetworkName = options.Name.Trim();
+            if (requestedNetworkName.Equals("ingress", StringComparison.OrdinalIgnoreCase))
+            {
+                _dialogService.ShowError(
+                    "'ingress' is the Swarm routing-mesh network and cannot be created or managed here.",
+                    "Overlay Network");
+                return;
+            }
+
+            string externalDockerName = string.IsNullOrWhiteSpace(options.ComposeNetworkName)
+                ? requestedNetworkName
+                : options.ComposeNetworkName.Trim();
+            string? resolvedName = await _resourceNames.ResolveNetworkNameAsync(
+                creationSheet,
+                networkService,
+                requestedNetworkName,
+                options.External);
+            if (resolvedName == null) return;
+
+            options.Name = resolvedName;
+            if (options.External &&
+                !string.Equals(resolvedName, requestedNetworkName, StringComparison.OrdinalIgnoreCase) &&
+                string.IsNullOrWhiteSpace(options.ComposeNetworkName))
+            {
+                options.ComposeNetworkName = externalDockerName;
+            }
+
+            var historyBefore = CaptureDiagramState(creationSheet);
+            try
+            {
+                string networkId;
+                if (options.External)
+                {
+                    string dockerNetworkName = string.IsNullOrWhiteSpace(options.ComposeNetworkName)
+                        ? options.Name
+                        : options.ComposeNetworkName.Trim();
+                    List<DockerNetworkGroup> networks = await networkService.GetNetworksAsync();
+                    DockerNetworkGroup? existingNetwork = networks.FirstOrDefault(network =>
+                        string.Equals(network.Name, dockerNetworkName, StringComparison.OrdinalIgnoreCase));
+                    if (existingNetwork == null)
+                    {
+                        _dialogService.ShowError(
+                            $"Existing overlay network '{dockerNetworkName}' was not found on the Swarm manager.",
+                            "External Overlay Network");
+                        return;
+                    }
+
+                    if (!SwarmResourceFilter.IsOverlayNetwork(existingNetwork))
+                    {
+                        _dialogService.ShowError(
+                            $"'{dockerNetworkName}' is not a user-managed overlay network. " +
+                            "Select an overlay network other than the built-in ingress network.",
+                            "External Overlay Network");
+                        return;
+                    }
+
+                    networkId = existingNetwork.Id;
+                    options.Driver = existingNetwork.Driver;
+                    options.ComposeNetworkName = existingNetwork.Name;
+                }
+                else
+                {
+                    options.Driver = "overlay";
+                    networkId = await networkService.CreateNetworkAsync(options);
+                }
+
+                var group = new GroupViewModel(
+                    x,
+                    y,
+                    Math.Max(GroupViewModel.MinimumWidth, width),
+                    Math.Max(GroupViewModel.MinimumHeight, height),
+                    networkService,
+                    _dialogService,
+                    options.Name,
+                    GroupType.Network)
+                {
+                    Id = networkId,
+                    Driver = "overlay",
+                    Subnet = options.Subnet,
+                    Gateway = options.Gateway,
+                    IpRange = options.IpRange,
+                    Internal = options.Internal,
+                    Attachable = options.Attachable,
+                    EnableIPv6 = options.EnableIPv6,
+                    External = options.External,
+                    ComposeNetworkName = options.ComposeNetworkName,
+                    ComposeRawNetworkYaml = options.ComposeRawNetworkYaml,
+                    Labels = new Dictionary<string, string>(options.Labels),
+                    DriverOptions = new Dictionary<string, string>(options.DriverOptions),
+                    AuxAddresses = new Dictionary<string, string>(options.AuxAddresses),
+                    RuntimeKind = RuntimeKind.DockerSwarm,
+                    ResourceKind = RuntimeResourceKind.SwarmOverlayNetwork,
+                    BindingState = RuntimeBindingState.Bound,
+                    IsDockerConnected = true,
+                    ParentSheet = creationSheet
+                };
+
+                creationSheet.AddGroup(group);
+                await creationSheet.RefreshGroupContainmentAsync(group);
+                creationSheet.UpdateGroupLayering();
+                IsModified = true;
+                RecordAdditionsFromSnapshot(
+                    creationSheet,
+                    historyBefore,
+                    options.External
+                        ? $"Add overlay network {options.Name}"
+                        : $"Create overlay network {options.Name}",
+                    affectsDocker: false);
+                if (ReferenceEquals(ActiveSheet, creationSheet))
+                    await RefreshRuntimeResourcesAsync();
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError(
+                    $"Failed to create overlay network '{options.Name}':\n{ex.GetBaseException().Message}",
+                    "Overlay Network Create Error");
             }
         }
 
@@ -477,10 +773,13 @@ namespace DockerDiagram.ViewModels
             await CreateNewVolumeNodeAsync(VolumeCreateOptions.Basic(name, driver), x, y);
         }
 
-        public async Task CreateNewVolumeNodeAsync(VolumeCreateOptions options, double x, double y)
+        public async Task CreateNewVolumeNodeAsync(VolumeCreateOptions options, double x, double y, SheetViewModel? targetSheet = null)
         {
-            if (ActiveSheet == null) return;
-            var historyBefore = CaptureDiagramState(ActiveSheet);
+            SheetViewModel? creationSheet = targetSheet ?? ActiveSheet;
+            if (creationSheet == null) return;
+            IContainerService containerService = creationSheet.DockerService;
+            IVolumeService volumeService = creationSheet.DockerService;
+            var historyBefore = CaptureDiagramState(creationSheet);
             string displayName = options.Name.Trim();
             string dockerVolumeName = options.EffectiveDockerVolumeName.Trim();
             string driver = string.IsNullOrWhiteSpace(options.Driver) ? "local" : options.Driver.Trim();
@@ -488,14 +787,14 @@ namespace DockerDiagram.ViewModels
             options.DockerVolumeName = dockerVolumeName;
             options.Driver = driver;
 
-            var resolvedNames = await _resourceNames.ResolveVolumeNamesAsync(ActiveSheet, _volumeService, displayName, dockerVolumeName, options.External);
+            var resolvedNames = await _resourceNames.ResolveVolumeNamesAsync(creationSheet, volumeService, displayName, dockerVolumeName, options.External);
             if (resolvedNames == null) return;
             displayName = resolvedNames.Value.DisplayName;
             dockerVolumeName = resolvedNames.Value.DockerName;
             options.Name = displayName;
             options.DockerVolumeName = dockerVolumeName;
 
-            var node = new NodeViewModel(_containerService, _volumeService, _dialogService)
+            var node = new NodeViewModel(containerService, volumeService, _dialogService)
             {
                 Name = $"{displayName} (Creating...)",
                 ImageName = driver,
@@ -505,24 +804,22 @@ namespace DockerDiagram.ViewModels
                 IsCreating = true,
                 StatusColor = "#FFC107"
             };
-            ActiveSheet.Nodes.Add(node);
-            var creationSheet = ActiveSheet;
+            creationSheet.Nodes.Add(node);
             Func<Task> retryVolumeCreation = async () =>
             {
-                ActiveSheet = creationSheet;
-                await CreateNewVolumeNodeAsync(options, x, y);
+                await CreateNewVolumeNodeAsync(options, x, y, creationSheet);
             };
 
             try
             {
                 if (options.External)
                 {
-                    var existing = await _volumeService.InspectVolumeAsync(dockerVolumeName);
+                    var existing = await volumeService.InspectVolumeAsync(dockerVolumeName);
                     driver = string.IsNullOrWhiteSpace(existing.Driver) ? driver : existing.Driver;
                 }
                 else
                 {
-                    await _volumeService.CreateVolumeAsync(options);
+                    await volumeService.CreateVolumeAsync(options);
                 }
 
                 node.Name = displayName;
@@ -540,7 +837,7 @@ namespace DockerDiagram.ViewModels
                 node.StatusColor = "#E67E22";
                 node.IsDockerConnected = true;
                 RecordAdditionsFromSnapshot(
-                    ActiveSheet,
+                    creationSheet,
                     historyBefore,
                     options.External ? $"Add external volume {dockerVolumeName}" : $"Create volume {dockerVolumeName}",
                     !options.External && History.IncludeDockerResourceHistory);
@@ -556,19 +853,28 @@ namespace DockerDiagram.ViewModels
         {
             if (!_dialogService.TryShowMountDialog(out string mountPath, out string owner)) return false;
 
+            IContainerService containerService = containerNode.ParentSheet?.DockerService
+                                                 ?? ActiveSheet?.DockerService
+                                                 ?? _defaultDockerService;
             string containerId = containerNode.ContainerId;
-            string volumeName = volumeNode.Name;
+            string volumeName = volumeNode.EffectiveVolumeName;
 
             bool keepBackup = false;
+            bool originalRemoved = false;
+            bool wasRunning = false;
+            string? replacementId = null;
+            ContainerInspectResponse? inspect = null;
             string tempHostPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "docker_backup_" + Guid.NewGuid());
 
             _dialogService.SetBusyCursor(true);
 
             try
             {
-                if (containerNode.IsRunning)
+                inspect = await containerService.InspectContainerAsync(containerId);
+                wasRunning = inspect.State?.Running == true;
+                if (wasRunning && inspect.HostConfig?.AutoRemove != true)
                 {
-                    await _containerService.StopContainerAsync(containerId);
+                    await containerService.StopContainerAsync(containerId);
                 }
 
                 if (!System.IO.Directory.Exists(tempHostPath))
@@ -576,7 +882,7 @@ namespace DockerDiagram.ViewModels
 
                 try
                 {
-                    await _containerService.CopyFromContainerAsync(containerId, mountPath, tempHostPath);
+                    await containerService.CopyFromContainerAsync(containerId, mountPath, tempHostPath);
                 }
                 catch (Exception ex)
                 {
@@ -596,74 +902,52 @@ namespace DockerDiagram.ViewModels
 
                         if (!proceed)
                         {
-                            if (System.IO.Directory.Exists(tempHostPath)) System.IO.Directory.Delete(tempHostPath, true);
+                            if (wasRunning && inspect.HostConfig?.AutoRemove != true)
+                                await containerService.StartContainerAsync(containerId);
                             return false;
                         }
                     }
                 }
 
-                var inspect = await _containerService.InspectContainerAsync(containerId);
-                var oldConfig = inspect.Config;
-                var oldHostConfig = inspect.HostConfig;
-
-                string imageName = oldConfig.Image;
-                string imgRepo = imageName;
-                string imgTag = "latest";
-                int lastColonIndex = imageName.LastIndexOf(':');
-                if (lastColonIndex > 0)
-                {
-                    imgRepo = imageName[..lastColonIndex];
-                    imgTag = imageName[(lastColonIndex + 1)..];
-                }
-
-                var ports = new List<string>();
-                if (oldHostConfig.PortBindings != null)
-                {
-                    foreach (var pb in oldHostConfig.PortBindings)
-                    {
-                        string containerPort = pb.Key.Split('/')[0];
-                        if (pb.Value != null && pb.Value.Count > 0)
-                            ports.Add($"{pb.Value[0].HostPort}:{containerPort}");
-                    }
-                }
-
-                var envs = oldConfig.Env != null ? oldConfig.Env.ToList() : new List<string>();
-
-                var volumes = new List<string>();
-                if (oldHostConfig.Binds != null) volumes.AddRange(oldHostConfig.Binds);
+                var volumes = inspect.HostConfig?.Binds?.ToList() ?? new List<string>();
+                volumes.RemoveAll(bind => bind.StartsWith(volumeName + ":", StringComparison.OrdinalIgnoreCase));
                 volumes.Add($"{volumeName}:{mountPath}");
 
-                string command = oldConfig.Cmd != null ? string.Join(" ", oldConfig.Cmd) : "";
-                bool tty = oldConfig.Tty;
+                await containerService.RemoveContainerAsync(containerId);
+                originalRemoved = true;
 
-                await _containerService.RemoveContainerAsync(containerId);
-
-                string newId = await _containerService.CreateAndStartContainerAsync(
-                    containerNode.Name, imgRepo, imgTag, ports, envs, volumes,
-                    oldHostConfig.RestartPolicy.Name.ToString(), 0, 0,
-                    command,
-                    tty
-                );
+                replacementId = await containerService.RecreateContainerFromInspectAsync(
+                    inspect.Name,
+                    inspect,
+                    volumes,
+                    startContainer: true);
 
                 string folderName = System.IO.Path.GetFileName(mountPath.TrimEnd('/'));
                 string actualSourcePath = System.IO.Path.Combine(tempHostPath, folderName);
 
                 if (System.IO.Directory.Exists(actualSourcePath))
                 {
-                    await _containerService.CopyToContainerAsync(newId, actualSourcePath, mountPath);
+                    await containerService.CopyToContainerAsync(replacementId, actualSourcePath, mountPath);
                 }
                 else
                 {
-                    await _containerService.CopyToContainerAsync(newId, tempHostPath, mountPath);
+                    await containerService.CopyToContainerAsync(replacementId, tempHostPath, mountPath);
                 }
 
                 if (!string.IsNullOrWhiteSpace(owner))
                 {
-                    string cmd = $"chown -R {owner} {mountPath}";
-                    await _containerService.ExecuteCommandAsync(newId, cmd);
+                    string quotedPath = "'" + mountPath.Replace("'", "'\"'\"'") + "'";
+                    ExecCommandResult result = await containerService.ExecuteCommandWithOutputAsync(
+                        replacementId,
+                        $"chown -R {owner} {quotedPath}");
+                    if (result.ExitCode != 0)
+                        throw new InvalidOperationException($"볼륨 소유권 변경 실패: {result.Stderr}");
                 }
 
-                containerNode.ContainerId = newId;
+                if (!wasRunning)
+                    await containerService.StopContainerAsync(replacementId);
+
+                containerNode.ContainerId = replacementId;
                 await containerNode.RefreshDetailsAsync();
 
                 _dialogService.ShowMessage("볼륨 연결 완료!");
@@ -672,7 +956,38 @@ namespace DockerDiagram.ViewModels
             catch (Exception ex)
             {
                 keepBackup = true;
-                _dialogService.ShowMessage($"오류 발생: {ex.Message}");
+                string recoveryMessage = string.Empty;
+                if (originalRemoved && inspect != null)
+                {
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(replacementId))
+                        {
+                            try { await containerService.RemoveContainerAsync(replacementId); } catch { }
+                        }
+
+                        string restoredId = await containerService.RecreateContainerFromInspectAsync(
+                            inspect.Name,
+                            inspect,
+                            inspect.HostConfig?.Binds?.ToList() ?? new List<string>(),
+                            wasRunning);
+                        containerNode.ContainerId = restoredId;
+                        await containerNode.RefreshDetailsAsync();
+                        keepBackup = false;
+                        recoveryMessage = "\n원본 컨테이너 설정은 복구했습니다.";
+                    }
+                    catch (Exception recoveryEx)
+                    {
+                        recoveryMessage = $"\n원본 컨테이너 자동 복구도 실패했습니다: {recoveryEx.GetBaseException().Message}";
+                    }
+                }
+                else if (wasRunning)
+                {
+                    try { await containerService.StartContainerAsync(containerId); } catch { }
+                }
+
+                string backupMessage = keepBackup ? $"\n\n백업: {tempHostPath}" : string.Empty;
+                _dialogService.ShowMessage($"오류 발생: {ex.GetBaseException().Message}{recoveryMessage}{backupMessage}");
                 return false;
             }
             finally

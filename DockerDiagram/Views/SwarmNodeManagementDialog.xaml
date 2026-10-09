@@ -1,0 +1,226 @@
+<Window x:Class="DockerDiagram.Views.SwarmNodeManagementDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Manage Swarm Node" Height="570" Width="720"
+        MinHeight="550" MinWidth="660" WindowStartupLocation="CenterOwner"
+        Background="#F6F7FB" ShowInTaskbar="False">
+    <Window.Resources>
+        <Style TargetType="TextBox">
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="BorderBrush" Value="#C7CBD6"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Padding" Value="8,5"/>
+        </Style>
+        <Style TargetType="TextBlock" x:Key="FieldLabel">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#344054"/>
+        </Style>
+        <Style TargetType="Border" x:Key="StatusBadge">
+            <Setter Property="CornerRadius" Value="11"/>
+            <Setter Property="Padding" Value="9,3"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style TargetType="TextBlock" x:Key="StatusBadgeText">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style TargetType="Button" x:Key="ActionButton">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="MinWidth" Value="96"/>
+            <Setter Property="Padding" Value="16,0"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style TargetType="Button" x:Key="PrimaryButton" BasedOn="{StaticResource ActionButton}">
+            <Setter Property="Background" Value="#2563EB"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#1D4ED8"/>
+        </Style>
+        <Style TargetType="Button" x:Key="SecondaryButton" BasedOn="{StaticResource ActionButton}">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="Foreground" Value="#344054"/>
+            <Setter Property="BorderBrush" Value="#B8BEC9"/>
+        </Style>
+        <Style TargetType="Button" x:Key="DangerButton" BasedOn="{StaticResource ActionButton}">
+            <Setter Property="Background" Value="#B42318"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#912018"/>
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#E4E7EC"/>
+                    <Setter Property="Foreground" Value="#98A2B3"/>
+                    <Setter Property="BorderBrush" Value="#D0D5DD"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="Button" x:Key="CompactButton">
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="Foreground" Value="#344054"/>
+            <Setter Property="BorderBrush" Value="#C7CBD6"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Margin="0,0,0,18">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Text="Manage Swarm Node" FontSize="24" FontWeight="Bold" Foreground="#17213A"/>
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
+                <Border x:Name="StatusBadgeBorder" Style="{StaticResource StatusBadge}"
+                        Background="#EAF7EF" BorderBrush="#B7E4C7">
+                    <TextBlock x:Name="StatusBadgeTextBlock" Style="{StaticResource StatusBadgeText}" Foreground="#18794E"/>
+                </Border>
+                <Border Style="{StaticResource StatusBadge}" Background="#EEF4FF" BorderBrush="#C7D7FE">
+                    <TextBlock x:Name="RoleBadgeTextBlock" Style="{StaticResource StatusBadgeText}" Foreground="#244AA5"/>
+                </Border>
+                <Border x:Name="ManagerStatusBadge" Style="{StaticResource StatusBadge}"
+                        Background="#F4F0FF" BorderBrush="#D9CCFF" Visibility="Collapsed">
+                    <TextBlock x:Name="ManagerStatusBadgeTextBlock" Style="{StaticResource StatusBadgeText}" Foreground="#6941C6"/>
+                </Border>
+                <TextBlock x:Name="RevisionTextBlock" VerticalAlignment="Center" Foreground="#667085" FontSize="11"/>
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="1" Background="White" BorderBrush="#D7DAE2" BorderThickness="1"
+                CornerRadius="6" Padding="20">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <Grid Margin="0,0,0,20">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="20"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Hostname" Style="{StaticResource FieldLabel}"/>
+                        <TextBlock x:Name="HostnameTextBlock" Margin="0,7,0,0" FontSize="16" Foreground="#101828"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Node ID" Style="{StaticResource FieldLabel}"/>
+                        <Border Margin="0,6,0,0" Padding="9,4" Background="#F8FAFC"
+                                BorderBrush="#E4E7EC" BorderThickness="1" CornerRadius="3">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="NodeIdTextBlock" VerticalAlignment="Center"
+                                           FontFamily="Consolas" FontSize="11" Foreground="#344054"
+                                           TextTrimming="CharacterEllipsis"/>
+                                <Button x:Name="CopyNodeIdButton" Grid.Column="1" Content="Copy"
+                                        Margin="8,0,0,0" Style="{StaticResource CompactButton}"
+                                        Click="CopyNodeIdButton_Click"/>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+
+                <Grid Grid.Row="1" Margin="0,0,0,18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="20"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Role" Style="{StaticResource FieldLabel}"/>
+                        <ComboBox x:Name="RoleComboBox" Margin="0,6,0,0">
+                            <ComboBoxItem Tag="worker" Content="Worker"/>
+                            <ComboBoxItem Tag="manager" Content="Manager"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Availability" Style="{StaticResource FieldLabel}"/>
+                        <ComboBox x:Name="AvailabilityComboBox" Margin="0,6,0,0">
+                            <ComboBoxItem Tag="active" Content="Active — accept tasks"/>
+                            <ComboBoxItem Tag="pause" Content="Pause — keep tasks, reject new tasks"/>
+                            <ComboBoxItem Tag="drain" Content="Drain — reschedule service tasks"/>
+                        </ComboBox>
+                    </StackPanel>
+                </Grid>
+
+                <Grid Grid.Row="2">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Node labels" Style="{StaticResource FieldLabel}"/>
+                        <TextBlock Grid.Column="1" Text="One key=value per line · example: zone=seoul"
+                                   Foreground="#667085" FontSize="11"/>
+                    </Grid>
+                    <TextBox x:Name="LabelsTextBox" Grid.Row="1" Height="104" Margin="0,8,0,0"
+                             AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto" FontFamily="Consolas"
+                             SpellCheck.IsEnabled="False"/>
+                </Grid>
+
+                <Border x:Name="SafetyNoticeBorder" Grid.Row="3" Margin="0,16,0,0"
+                        Background="#FFF8EB" BorderBrush="#F5C26B" BorderThickness="1"
+                        CornerRadius="4" Padding="12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Width="22" Height="22" CornerRadius="11" Background="#F79009" VerticalAlignment="Top">
+                            <TextBlock Text="!" Foreground="White" FontWeight="Bold"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                            <TextBlock Text="Operational impact" FontWeight="SemiBold" Foreground="#8A4B08"/>
+                            <TextBlock x:Name="SafetyNoticeTextBlock" Margin="0,3,0,0"
+                                       Foreground="#8A4B08" FontSize="11" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2" Margin="0,18,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Button x:Name="RemoveNodeButton" Content="Remove Node"
+                    Style="{StaticResource DangerButton}" Click="RemoveButton_Click"/>
+            <Border x:Name="ValidationBorder" Grid.Column="1" Margin="14,0"
+                    Background="#FEF3F2" BorderBrush="#FECDCA" BorderThickness="1"
+                    CornerRadius="3" Padding="10,6" Visibility="Collapsed">
+                <TextBlock x:Name="ValidationTextBlock" Foreground="#B42318"
+                           VerticalAlignment="Center" TextWrapping="Wrap" FontSize="11"/>
+            </Border>
+            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <Button Content="Cancel" Margin="0,0,8,0" IsCancel="True"
+                        Style="{StaticResource SecondaryButton}"/>
+                <Button Content="Apply Changes" MinWidth="124" IsDefault="True"
+                        Style="{StaticResource PrimaryButton}" Click="ApplyButton_Click"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

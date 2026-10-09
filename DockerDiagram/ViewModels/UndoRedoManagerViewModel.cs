@@ -119,6 +119,7 @@ namespace DockerDiagram.ViewModels
 
         public bool CanUndo => _undoStack.Count > 0 && !IsReplaying;
         public bool CanRedo => _redoStack.Count > 0 && !IsReplaying;
+        public string DiagramStatusText => $"Diagram only | Undo {_undoStack.Count} / Redo {_redoStack.Count}";
 
         public void Clear()
         {
@@ -225,6 +226,7 @@ namespace DockerDiagram.ViewModels
             string dockerMode = IncludeDockerResourceHistory ? $"Docker history on ({dockerCount})" : "Docker history off";
             if (IncludeVolumeBackupForUndo) dockerMode += " + volume backup";
             StatusText = $"{dockerMode} | Undo {_undoStack.Count} / Redo {_redoStack.Count}";
+            OnPropertyChanged(nameof(DiagramStatusText));
             RaiseCommandStates();
         }
 

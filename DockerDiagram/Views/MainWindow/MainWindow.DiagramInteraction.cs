@@ -436,12 +436,33 @@ namespace DockerDiagram
                             // A) 일반 그룹 생성
                             if (_pendingSwarmDraftGroupKind.HasValue)
                             {
-                                await vm.CreateSwarmDraftGroupAsync(
-                                    _pendingSwarmDraftGroupKind.Value,
-                                    x,
-                                    y,
-                                    w,
-                                    h);
+                                if (_pendingSwarmDraftGroupKind.Value == RuntimeResourceKind.SwarmOverlayNetwork)
+                                {
+                                    var dialog = new Views.NetworkDialog(
+                                        _dialogService,
+                                        Views.NetworkDialogMode.SwarmOverlay)
+                                    {
+                                        Owner = this
+                                    };
+                                    if (dialog.ShowDialog() == true)
+                                    {
+                                        await vm.CreateSwarmOverlayNetworkGroupAsync(
+                                            dialog.CreateOptions,
+                                            x,
+                                            y,
+                                            w,
+                                            h);
+                                    }
+                                }
+                                else
+                                {
+                                    await vm.CreateSwarmDraftGroupAsync(
+                                        _pendingSwarmDraftGroupKind.Value,
+                                        x,
+                                        y,
+                                        w,
+                                        h);
+                                }
                             }
                             else if (_isGroupingMode && vm.ActiveSheet?.DockerService is INetworkService netService)
                             {

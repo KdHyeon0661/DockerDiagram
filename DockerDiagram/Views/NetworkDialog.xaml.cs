@@ -7,9 +7,16 @@ using System.Windows.Controls;
 
 namespace DockerDiagram.Views
 {
+    public enum NetworkDialogMode
+    {
+        DockerNetwork,
+        SwarmOverlay
+    }
+
     public partial class NetworkDialog : Window
     {
         private readonly IDialogService _dialogService;
+        private readonly NetworkDialogMode _mode;
 
         public string NetworkName => txtName.Text.Trim();
 
@@ -32,13 +39,39 @@ namespace DockerDiagram.Views
             AuxAddresses = ParseKeyValueLines(txtAuxAddresses.Text)
         };
 
-        public NetworkDialog(IDialogService dialogService)
+        public NetworkDialog(
+            IDialogService dialogService,
+            NetworkDialogMode mode = NetworkDialogMode.DockerNetwork)
         {
             InitializeComponent();
             _dialogService = dialogService;
+            _mode = mode;
+
+            if (_mode == NetworkDialogMode.SwarmOverlay)
+            {
+                Title = "Create Swarm Overlay Network";
+                overlayDriverItem.Visibility = Visibility.Visible;
+                SelectDriver("overlay");
+                cmbDriver.IsEnabled = false;
+                chkAttachable.IsChecked = true;
+                btnCreate.Content = "Create Overlay";
+                btnCreate.Width = 110;
+                txtComposeName.ToolTip = "For External, enter the existing Docker overlay network name";
+            }
 
             UpdateDriverSpecificOptions();
             txtName.Focus();
+        }
+
+        private void SelectDriver(string driver)
+        {
+            ComboBoxItem? item = cmbDriver.Items
+                .OfType<ComboBoxItem>()
+                .FirstOrDefault(candidate => string.Equals(
+                    candidate.Content?.ToString(),
+                    driver,
+                    System.StringComparison.OrdinalIgnoreCase));
+            if (item != null) cmbDriver.SelectedItem = item;
         }
 
         private void Driver_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -52,6 +85,15 @@ namespace DockerDiagram.Views
             if (string.IsNullOrWhiteSpace(NetworkName))
             {
                 _dialogService.ShowError("Enter a network name.", "Input Error");
+                return;
+            }
+
+            if (_mode == NetworkDialogMode.SwarmOverlay &&
+                string.Equals(NetworkName, "ingress", System.StringComparison.OrdinalIgnoreCase))
+            {
+                _dialogService.ShowError(
+                    "'ingress' is reserved for Swarm routing mesh and is managed automatically.",
+                    "Input Error");
                 return;
             }
 

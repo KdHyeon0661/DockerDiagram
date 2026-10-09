@@ -42,6 +42,13 @@ namespace DockerDiagram.Contracts
         Task ExportContainerAsync(string containerId, string tarFilePath);
 
         Task<string> CreateAndStartContainerAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, string command = "", bool tty = false, string networkName = "", Dictionary<string, string>? labels = null);
+        Task<string> RecreateContainerFromInspectAsync(
+            string name,
+            ContainerInspectResponse source,
+            IList<string> binds,
+            bool startContainer,
+            IList<Mount>? mounts = null) =>
+            throw new NotSupportedException("이 컨테이너 서비스는 inspect 기반 재생성을 지원하지 않습니다.");
         Task UpdateContainerResourcesAsync(string containerId, double cpuCount, long memoryMb);
 
         Task CopyFromContainerAsync(string containerId, string containerPath, string hostPath);
@@ -131,6 +138,7 @@ namespace DockerDiagram.Contracts
         Task<List<DockerContainer>> GetSwarmServicesAsync();
         Task<List<DockerSwarmNode>> GetSwarmNodesAsync();
         Task<List<DockerSwarmTask>> GetSwarmServiceTasksAsync(string serviceId);
+        Task<SwarmServiceTaskSnapshot> GetSwarmServiceTaskSnapshotAsync(string serviceId);
         Task<object> InspectSwarmServiceRawAsync(string serviceId);
         Task ScaleSwarmServiceAsync(string serviceId, ulong replicas);
         Task RemoveSwarmServiceAsync(string serviceId);

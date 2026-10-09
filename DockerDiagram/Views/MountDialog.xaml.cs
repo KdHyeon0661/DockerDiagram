@@ -59,6 +59,16 @@ namespace DockerDiagram.Views
                 return;
             }
 
+            if (!string.IsNullOrWhiteSpace(VolumeOwner) &&
+                !Regex.IsMatch(VolumeOwner, @"^[a-zA-Z0-9_.-]+(?::[a-zA-Z0-9_.-]+)?$"))
+            {
+                _dialogService.ShowError(
+                    "소유자는 user 또는 user:group 형식만 사용할 수 있습니다.",
+                    "소유자 형식 오류");
+                txtOwner.Focus();
+                return;
+            }
+
             DialogResult = true;
         }
     }

@@ -12,15 +12,23 @@
 			<RowDefinition Height="Auto"/>
 			<RowDefinition Height="Auto"/>
 			<RowDefinition Height="Auto"/>
+			<RowDefinition Height="Auto"/>
 		</Grid.RowDefinitions>
 
-		<TextBlock Grid.Row="0" Text="Volume Name:" FontWeight="Bold" Margin="0,0,0,5"/>
-		<TextBox Grid.Row="1" x:Name="txtName" Padding="5" Margin="0,0,0,15"/>
+		<Border x:Name="SwarmDefinitionNotice" Grid.Row="0" Visibility="Collapsed"
+				Background="#FFF8E8" BorderBrush="#E8C46A" BorderThickness="1"
+				CornerRadius="4" Padding="10,8" Margin="0,0,0,14">
+			<TextBlock Text="Swarm 서비스용 볼륨 정의를 만듭니다. local 볼륨은 Task가 실행되는 각 노드에서 생성됩니다."
+					   Foreground="#72510D" TextWrapping="Wrap"/>
+		</Border>
 
-		<TextBlock Grid.Row="2" Text="Driver (Default: local):" FontWeight="Bold" Margin="0,0,0,5"/>
-		<TextBox Grid.Row="3" x:Name="txtDriver" Padding="5" Margin="0,0,0,15" Text="local"/>
+		<TextBlock Grid.Row="1" Text="Volume Name:" FontWeight="Bold" Margin="0,0,0,5"/>
+		<TextBox Grid.Row="2" x:Name="txtName" Padding="5" Margin="0,0,0,15"/>
 
-		<Expander Grid.Row="4" Header="Advanced" Margin="0,0,0,10">
+		<TextBlock Grid.Row="3" Text="Driver (Default: local):" FontWeight="Bold" Margin="0,0,0,5"/>
+		<TextBox Grid.Row="4" x:Name="txtDriver" Padding="5" Margin="0,0,0,15" Text="local"/>
+
+		<Expander Grid.Row="5" Header="Advanced" Margin="0,0,0,10">
 			<Grid Margin="0,10,0,0">
 				<Grid.RowDefinitions>
 					<RowDefinition Height="Auto"/>
@@ -34,7 +42,7 @@
 
 				<CheckBox Grid.Row="0" x:Name="chkExternal" Content="External volume (use existing Docker volume)" Margin="0,0,0,10"/>
 
-				<TextBlock Grid.Row="1" Text="Docker Volume Name:" FontWeight="Bold" Margin="0,0,0,5"/>
+				<TextBlock x:Name="DockerVolumeNameLabel" Grid.Row="1" Text="Docker Volume Name:" FontWeight="Bold" Margin="0,0,0,5"/>
 				<TextBox Grid.Row="2" x:Name="txtDockerVolumeName" Padding="5" Margin="0,0,0,12"/>
 
 				<TextBlock Grid.Row="3" Text="Labels (key=value, one per line):" FontWeight="Bold" Margin="0,0,0,5"/>
@@ -45,7 +53,7 @@
 			</Grid>
 		</Expander>
 
-		<StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+		<StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
 			<Button x:Name="btnOk" Content="Create" IsDefault="True" Click="BtnOk_Click" Width="80" Height="30" Margin="0,0,10,0" Background="#E67E22" Foreground="White"/>
 			<Button Content="Cancel" IsCancel="True" Width="80" Height="30"/>
 		</StackPanel>

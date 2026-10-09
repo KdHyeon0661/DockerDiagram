@@ -34,6 +34,8 @@ namespace DockerDiagram.ViewModels
         public ObservableCollection<DockerImage> LocalImages { get; } = new();
         public ObservableCollection<DockerComposeProject> ComposeProjects { get; } = new();
         public ObservableCollection<DockerSwarmNode> SwarmNodes { get; } = new();
+        public ObservableCollection<SwarmDataResourceSnapshot> SwarmSecrets { get; } = new();
+        public ObservableCollection<SwarmDataResourceSnapshot> SwarmConfigs { get; } = new();
         public ObservableCollection<DockerKubernetesNode> KubernetesNodes { get; } = new();
         public ObservableCollection<DockerContainer> KubernetesDeployments { get; } = new();
         public ObservableCollection<DockerContainer> KubernetesReplicaSets { get; } = new();
@@ -95,6 +97,8 @@ namespace DockerDiagram.ViewModels
         private List<DockerNetworkGroup> _rawNetworks = new();
         private List<DockerImage> _rawImages = new();
         private List<DockerComposeProject> _rawComposeProjects = new();
+        private List<SwarmDataResourceSnapshot> _rawSwarmSecrets = new();
+        private List<SwarmDataResourceSnapshot> _rawSwarmConfigs = new();
         private List<DockerContainer> _rawKubernetesDeployments = new();
         private List<DockerContainer> _rawKubernetesReplicaSets = new();
         private List<DockerContainer> _rawKubernetesServices = new();
@@ -103,11 +107,14 @@ namespace DockerDiagram.ViewModels
         private List<DockerContainer> _rawKubernetesIngresses = new();
         private List<DockerContainer> _rawKubernetesPersistentVolumeClaims = new();
         private Dictionary<string, int> _usageStats = new();
+        private int _availableItemsUpdateDeferral;
+        private bool _availableItemsUpdatePending;
 
         // --- 4. 명령(Commands) ---
         public ICommand DeleteContainerItemCommand { get; }
         public ICommand DeleteVolumeItemCommand { get; }
         public ICommand DeleteNetworkItemCommand { get; }
+        public ICommand DeleteSwarmDataResourceItemCommand { get; }
         public ICommand DeleteImageCommand { get; }
         public ICommand TagImageCommand { get; }
         public ICommand PushImageCommand { get; }
@@ -124,6 +131,7 @@ namespace DockerDiagram.ViewModels
             DeleteContainerItemCommand = new AsyncRelayCommand(DeleteContainerItemAsync);
             DeleteVolumeItemCommand = new AsyncRelayCommand(DeleteVolumeItemAsync);
             DeleteNetworkItemCommand = new AsyncRelayCommand(DeleteNetworkItemAsync);
+            DeleteSwarmDataResourceItemCommand = new AsyncRelayCommand(DeleteSwarmDataResourceItemAsync);
             DeleteImageCommand = new AsyncRelayCommand(DeleteImageAsync);
             TagImageCommand = new AsyncRelayCommand(TagImageAsync);
             PushImageCommand = new AsyncRelayCommand(PushImageAsync);
@@ -138,11 +146,11 @@ namespace DockerDiagram.ViewModels
 
         // --- 5. 비즈니스 로직 ---
 
-        public async Task SyncWithDockerEngineAsync()
+        internal async Task SyncCoreWithDockerEngineAsync(
+            SheetViewModel? sheet,
+            IDockerService service)
         {
-            var sheet = _mainVm.ActiveSheet;
-            var service = sheet?.DockerService ?? _defaultDockerService;
-            if (service == null) return;
+            if (!IsSyncContextCurrent(sheet, service)) return;
             RaiseRuntimeLabelsChanged();
 
             bool usesDockerEngine = sheet?.RuntimeKind != RuntimeKind.Kubernetes;
@@ -164,18 +172,33 @@ namespace DockerDiagram.ViewModels
                 {
                     try
                     {
-                        _rawContainers = await ((IKubernetesService)service).GetKubernetesPodsAsync();
-                        SyncCollection(KubernetesNodes, await ((IKubernetesService)service).GetKubernetesNodesAsync(), node => node.Id);
-                        _rawKubernetesDeployments = await ((IKubernetesService)service).GetKubernetesDeploymentsAsync();
-                        _rawKubernetesReplicaSets = await ((IKubernetesService)service).GetKubernetesReplicaSetsAsync();
-                        _rawKubernetesServices = await ((IKubernetesService)service).GetKubernetesServicesAsync();
-                        _rawKubernetesConfigMaps = await ((IKubernetesService)service).GetKubernetesConfigMapsAsync();
-                        _rawKubernetesSecrets = await ((IKubernetesService)service).GetKubernetesSecretsAsync();
-                        _rawKubernetesIngresses = await ((IKubernetesService)service).GetKubernetesIngressesAsync();
-                        _rawKubernetesPersistentVolumeClaims = await ((IKubernetesService)service).GetKubernetesPersistentVolumeClaimsAsync();
+                        var kubernetesService = (IKubernetesService)service;
+                        List<DockerContainer> pods = await kubernetesService.GetKubernetesPodsAsync();
+                        List<DockerKubernetesNode> nodes = await kubernetesService.GetKubernetesNodesAsync();
+                        List<DockerContainer> deployments = await kubernetesService.GetKubernetesDeploymentsAsync();
+                        List<DockerContainer> replicaSets = await kubernetesService.GetKubernetesReplicaSetsAsync();
+                        List<DockerContainer> services = await kubernetesService.GetKubernetesServicesAsync();
+                        List<DockerContainer> configMaps = await kubernetesService.GetKubernetesConfigMapsAsync();
+                        List<DockerContainer> secrets = await kubernetesService.GetKubernetesSecretsAsync();
+                        List<DockerContainer> ingresses = await kubernetesService.GetKubernetesIngressesAsync();
+                        List<DockerContainer> claims = await kubernetesService.GetKubernetesPersistentVolumeClaimsAsync();
+
+                        if (!IsSyncContextCurrent(sheet, service)) return;
+
+                        _rawContainers = pods;
+                        SyncCollection(KubernetesNodes, nodes, node => node.Id);
+                        _rawKubernetesDeployments = deployments;
+                        _rawKubernetesReplicaSets = replicaSets;
+                        _rawKubernetesServices = services;
+                        _rawKubernetesConfigMaps = configMaps;
+                        _rawKubernetesSecrets = secrets;
+                        _rawKubernetesIngresses = ingresses;
+                        _rawKubernetesPersistentVolumeClaims = claims;
                     }
                     catch (Exception kubernetesEx)
                     {
+                        if (!IsSyncContextCurrent(sheet, service)) return;
+
                         MarkRuntimeUnavailable(
                             sheet,
                             "Kubernetes runtime is unavailable. Saved resources remain visible as an offline snapshot; live controls are disabled.");
@@ -185,6 +208,7 @@ namespace DockerDiagram.ViewModels
                         _rawImages.Clear();
                         ComposeProjects.Clear();
                         SwarmNodes.Clear();
+                        ClearSwarmDataResources();
                         ClearKubernetesResourceCollections(clearNodes: true);
                         UpdateAvailableItems();
                         LastSyncTime = "Kubernetes unavailable";
@@ -197,64 +221,115 @@ namespace DockerDiagram.ViewModels
                     _rawImages.Clear();
                     ComposeProjects.Clear();
                     SwarmNodes.Clear();
+                    ClearSwarmDataResources();
                 }
                 else if (!await ((ISystemService)service).PingAsync())
                 {
+                    if (!IsSyncContextCurrent(sheet, service)) return;
                     MarkRuntimeUnavailable(sheet, "Docker engine is not reachable. This sheet is shown as an offline snapshot.");
                     return;
                 }
                 else if (sheet?.RuntimeKind == RuntimeKind.DockerSwarm)
                 {
+                    if (!IsSyncContextCurrent(sheet, service)) return;
+
                     var failedResources = new List<string>();
+                    var swarmService = (ISwarmService)service;
+                    var networkService = (INetworkService)service;
+                    var volumeService = (IVolumeService)service;
+                    Task<List<DockerContainer>> servicesTask = swarmService.GetSwarmServicesAsync();
+                    Task<List<DockerSwarmNode>> nodesTask = swarmService.GetSwarmNodesAsync();
+                    Task<List<DockerNetworkGroup>> networksTask = networkService.GetNetworksAsync();
+                    Task<List<DockerVolume>> volumesTask = volumeService.GetVolumesAsync();
+                    ISwarmDataResourceQueryService? dataResourceQuery = service as ISwarmDataResourceQueryService;
+                    Task<IReadOnlyList<SwarmDataResourceSnapshot>>? secretsTask =
+                        dataResourceQuery?.GetSwarmDataResourcesAsync(SwarmDataResourceKind.Secret);
+                    Task<IReadOnlyList<SwarmDataResourceSnapshot>>? configsTask =
+                        dataResourceQuery?.GetSwarmDataResourcesAsync(SwarmDataResourceKind.Config);
+                    var containers = new List<DockerContainer>();
+                    var nodes = new List<DockerSwarmNode>();
+                    var networks = new List<DockerNetworkGroup>();
+                    var volumes = new List<DockerVolume>();
+                    var secrets = new List<SwarmDataResourceSnapshot>();
+                    var configs = new List<SwarmDataResourceSnapshot>();
 
                     try
                     {
-                        _rawContainers = await ((ISwarmService)service).GetSwarmServicesAsync();
+                        containers = await servicesTask;
                     }
                     catch (Exception swarmEx)
                     {
-                        _rawContainers.Clear();
                         failedResources.Add("Services");
                         Debug.WriteLine($"[ResourceExplorer] Swarm Services Sync Error: {swarmEx.Message}");
                     }
 
                     try
                     {
-                        SyncCollection(
-                            SwarmNodes,
-                            await ((ISwarmService)service).GetSwarmNodesAsync(),
-                            node => node.Id);
+                        nodes = await nodesTask;
                     }
                     catch (Exception nodeEx)
                     {
-                        SwarmNodes.Clear();
                         failedResources.Add("Nodes");
                         Debug.WriteLine($"[ResourceExplorer] Swarm Nodes Sync Error: {nodeEx.Message}");
                     }
 
                     try
                     {
-                        _rawNetworks = (await ((INetworkService)service).GetNetworksAsync())
+                        networks = (await networksTask)
                             .Where(SwarmResourceFilter.IsOverlayNetwork)
                             .ToList();
                     }
                     catch (Exception networkEx)
                     {
-                        _rawNetworks.Clear();
                         failedResources.Add("Overlay Networks");
                         Debug.WriteLine($"[ResourceExplorer] Swarm Overlay Networks Sync Error: {networkEx.Message}");
                     }
 
                     try
                     {
-                        _rawVolumes = await ((IVolumeService)service).GetVolumesAsync();
+                        volumes = await volumesTask;
                     }
                     catch (Exception volumeEx)
                     {
-                        _rawVolumes.Clear();
                         failedResources.Add("Manager Host Volumes");
                         Debug.WriteLine($"[ResourceExplorer] Swarm Manager Volumes Sync Error: {volumeEx.Message}");
                     }
+
+                    if (dataResourceQuery != null && secretsTask != null && configsTask != null)
+                    {
+                        try
+                        {
+                            secrets = (await secretsTask).ToList();
+                        }
+                        catch (Exception secretEx)
+                        {
+                            failedResources.Add("Secrets");
+                            Debug.WriteLine($"[ResourceExplorer] Swarm Secrets Sync Error: {secretEx.Message}");
+                        }
+
+                        try
+                        {
+                            configs = (await configsTask).ToList();
+                        }
+                        catch (Exception configEx)
+                        {
+                            failedResources.Add("Configs");
+                            Debug.WriteLine($"[ResourceExplorer] Swarm Configs Sync Error: {configEx.Message}");
+                        }
+                    }
+                    else
+                    {
+                        failedResources.Add("Secrets/Configs");
+                    }
+
+                    if (!IsSyncContextCurrent(sheet, service)) return;
+
+                    _rawContainers = containers;
+                    SyncCollection(SwarmNodes, nodes, node => node.Id);
+                    _rawNetworks = networks;
+                    _rawVolumes = volumes;
+                    _rawSwarmSecrets = secrets;
+                    _rawSwarmConfigs = configs;
 
                     _rawImages.Clear();
                     ClearKubernetesResourceCollections(clearNodes: true);
@@ -280,12 +355,22 @@ namespace DockerDiagram.ViewModels
                 }
                 else
                 {
+                    if (!IsSyncContextCurrent(sheet, service)) return;
+
+                    List<DockerContainer> containers = await ((IContainerService)service).GetContainersAsync();
+                    List<DockerVolume> volumes = await ((IVolumeService)service).GetVolumesAsync();
+                    List<DockerNetworkGroup> networks = await ((INetworkService)service).GetNetworksAsync();
+                    List<DockerImage> images = await ((IImageService)service).GetImagesAsync();
+
+                    if (!IsSyncContextCurrent(sheet, service)) return;
+
                     ClearRuntimeUnavailable(sheet);
-                    _rawContainers = await ((IContainerService)service).GetContainersAsync();
-                    _rawVolumes = await ((IVolumeService)service).GetVolumesAsync();
-                    _rawNetworks = await ((INetworkService)service).GetNetworksAsync();
-                    _rawImages = await ((IImageService)service).GetImagesAsync();
+                    _rawContainers = containers;
+                    _rawVolumes = volumes;
+                    _rawNetworks = networks;
+                    _rawImages = images;
                     SwarmNodes.Clear();
+                    ClearSwarmDataResources();
                     ClearKubernetesResourceCollections(clearNodes: true);
                 }
 
@@ -297,26 +382,20 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
+                if (!IsSyncContextCurrent(sheet, service)) return;
+
                 LastSyncTime = "Sync failed";
                 MarkRuntimeUnavailable(sheet, "Runtime sync failed. This sheet is shown as an offline snapshot.");
                 Debug.WriteLine($"[ResourceExplorer] Sync Error: {ex.Message}");
             }
         }
 
-        private static void MarkRuntimeUnavailable(SheetViewModel? sheet, string message)
-        {
-            if (sheet == null) return;
+        private bool IsSyncContextCurrent(SheetViewModel? sheet, IDockerService service) =>
+            ReferenceEquals(sheet, _mainVm.ActiveSheet) &&
+            ReferenceEquals(service, sheet?.DockerService ?? _defaultDockerService);
 
-            sheet.RuntimeStatusMessage = message;
-            sheet.IsRuntimeUnavailable = true;
-
-            foreach (var node in sheet.Nodes.Where(node => node.IsSwarmService || node.IsKubernetesResource))
-            {
-                node.IsDockerConnected = false;
-                node.StatusColor = "#808080";
-                node.NotifyRuntimeAvailabilityChanged();
-            }
-        }
+        private static void MarkRuntimeUnavailable(SheetViewModel? sheet, string message) =>
+            RuntimeAvailabilityMarker.MarkUnavailable(sheet, message);
 
         private static void ClearRuntimeUnavailable(SheetViewModel? sheet)
         {
@@ -328,6 +407,12 @@ namespace DockerDiagram.ViewModels
 
         public void UpdateAvailableItems()
         {
+            if (_availableItemsUpdateDeferral > 0)
+            {
+                _availableItemsUpdatePending = true;
+                return;
+            }
+
             if (_mainVm.Sheets == null) return;
             RaiseRuntimeLabelsChanged();
 
@@ -383,6 +468,29 @@ namespace DockerDiagram.ViewModels
                 .Where(n => string.IsNullOrEmpty(NetworkSearchText) || n.Name.Contains(NetworkSearchText, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             SyncCollection(ExistingNetworks, filteredNetworks, n => n.Id);
+
+            var usedSwarmDataIds = new HashSet<string>(
+                allNodes
+                    .Where(node => node.ResourceKind is RuntimeResourceKind.SwarmSecret or RuntimeResourceKind.SwarmConfig)
+                    .Select(node => node.ContainerId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id)),
+                StringComparer.OrdinalIgnoreCase);
+            var usedSwarmSecretNames = new HashSet<string>(
+                allNodes.Where(node => node.ResourceKind == RuntimeResourceKind.SwarmSecret).Select(node => node.Name),
+                StringComparer.OrdinalIgnoreCase);
+            var usedSwarmConfigNames = new HashSet<string>(
+                allNodes.Where(node => node.ResourceKind == RuntimeResourceKind.SwarmConfig).Select(node => node.Name),
+                StringComparer.OrdinalIgnoreCase);
+            SyncCollection(
+                SwarmSecrets,
+                _rawSwarmSecrets.Where(resource =>
+                    !usedSwarmDataIds.Contains(resource.Id) && !usedSwarmSecretNames.Contains(resource.Name)).ToList(),
+                resource => resource.Id);
+            SyncCollection(
+                SwarmConfigs,
+                _rawSwarmConfigs.Where(resource =>
+                    !usedSwarmDataIds.Contains(resource.Id) && !usedSwarmConfigNames.Contains(resource.Name)).ToList(),
+                resource => resource.Id);
 
             var filteredImages = _rawImages
                 .Where(i => string.IsNullOrEmpty(ImageSearchText) || i.Repository.Contains(ImageSearchText, StringComparison.OrdinalIgnoreCase))
@@ -452,6 +560,51 @@ namespace DockerDiagram.ViewModels
             KubernetesIngresses.Clear();
             KubernetesPersistentVolumeClaims.Clear();
             OnPropertyChanged(nameof(KubernetesResourceCount));
+        }
+
+        private void ClearSwarmDataResources()
+        {
+            _rawSwarmSecrets.Clear();
+            _rawSwarmConfigs.Clear();
+            SwarmSecrets.Clear();
+            SwarmConfigs.Clear();
+        }
+
+        public IReadOnlyList<SwarmDataResourceSnapshot> GetSwarmDataResources(SwarmDataResourceKind kind) =>
+            kind == SwarmDataResourceKind.Secret
+                ? _rawSwarmSecrets.ToArray()
+                : _rawSwarmConfigs.ToArray();
+
+        internal IReadOnlyList<DockerContainer> GetSwarmServicesSnapshot() => _rawContainers.ToArray();
+        internal IReadOnlyList<DockerNetworkGroup> GetSwarmNetworksSnapshot() => _rawNetworks.ToArray();
+
+        internal IDisposable DeferAvailableItemsUpdates()
+        {
+            _availableItemsUpdateDeferral++;
+            return new AvailableItemsUpdateScope(this);
+        }
+
+        private void EndAvailableItemsUpdateDeferral()
+        {
+            if (_availableItemsUpdateDeferral == 0) return;
+            _availableItemsUpdateDeferral--;
+            if (_availableItemsUpdateDeferral != 0 || !_availableItemsUpdatePending) return;
+
+            _availableItemsUpdatePending = false;
+            UpdateAvailableItems();
+        }
+
+        private sealed class AvailableItemsUpdateScope : IDisposable
+        {
+            private ResourceExplorerViewModel? _owner;
+
+            public AvailableItemsUpdateScope(ResourceExplorerViewModel owner) => _owner = owner;
+
+            public void Dispose()
+            {
+                ResourceExplorerViewModel? owner = Interlocked.Exchange(ref _owner, null);
+                owner?.EndAvailableItemsUpdateDeferral();
+            }
         }
 
         private void UpdateComposeProjects()
@@ -687,13 +840,36 @@ namespace DockerDiagram.ViewModels
             return matches.Count == 1 ? matches[0] : null;
         }
 
-        private async Task DeleteContainerItemAsync(object? param)
+        internal async Task DeleteContainerItemAsync(object? param)
         {
             if (param is DockerContainer c)
             {
                 if (c.IsSwarmService)
                 {
-                    _dialogService.ShowInfo("Swarm service 삭제는 다음 단계에서 별도 동작으로 추가할 예정입니다.", "Swarm Service");
+                    if (!_dialogService.ShowConfirm(
+                            $"Swarm service '{c.Name}'을 클러스터에서 영구 삭제하시겠습니까?",
+                            "Remove Swarm Service"))
+                    {
+                        return;
+                    }
+
+                    if ((_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService) is not ISwarmService swarmService)
+                    {
+                        _dialogService.ShowError("활성 Swarm Manager 연결이 없습니다.", "Remove Swarm Service");
+                        return;
+                    }
+
+                    try
+                    {
+                        await swarmService.RemoveSwarmServiceAsync(c.Id);
+                        await _mainVm.RefreshRuntimeResourcesAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        _dialogService.ShowError(
+                            $"Swarm service 삭제 실패:\n{ex.GetBaseException().Message}",
+                            "Remove Swarm Service");
+                    }
                     return;
                 }
 
@@ -703,7 +879,7 @@ namespace DockerDiagram.ViewModels
                     {
                         var service = (IContainerService)(_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService);
                         await service.RemoveContainerAsync(c.Id);
-                        await SyncWithDockerEngineAsync();
+                        await _mainVm.RefreshRuntimeResourcesAsync();
                     }
                     catch (Exception ex) { _dialogService.ShowMessage($"삭제 실패: {ex.Message}"); }
                 }
@@ -734,27 +910,58 @@ namespace DockerDiagram.ViewModels
                         if (!decision.ShouldDelete) return;
 
                         await service.RemoveVolumeAsync(v.Name, decision.Force);
-                        await SyncWithDockerEngineAsync();
+                        await _mainVm.RefreshRuntimeResourcesAsync();
                     }
                     catch (Exception ex) { _dialogService.ShowMessage($"볼륨 삭제 실패: {ex.Message}"); }
                 }
             }
         }
 
-        private async Task DeleteNetworkItemAsync(object? param)
+        internal async Task DeleteNetworkItemAsync(object? param)
         {
             if (param is DockerNetworkGroup n)
             {
-                if (_dialogService.ShowConfirm($"네트워크 '{n.Name}'을 영구 삭제하시겠습니까?", "확인"))
+                bool isSwarmOverlay = _mainVm.ActiveSheet?.RuntimeKind == RuntimeKind.DockerSwarm;
+                string resourceLabel = isSwarmOverlay ? "Swarm overlay network" : "네트워크";
+                if (_dialogService.ShowConfirm($"{resourceLabel} '{n.Name}'을 영구 삭제하시겠습니까?", "확인"))
                 {
                     try
                     {
                         var service = (INetworkService)(_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService);
                         await service.RemoveNetworkAsync(n.Id);
-                        await SyncWithDockerEngineAsync();
+                        await _mainVm.RefreshRuntimeResourcesAsync();
                     }
                     catch (Exception ex) { _dialogService.ShowMessage($"네트워크 삭제 실패: {ex.Message}"); }
                 }
+            }
+        }
+
+        internal async Task DeleteSwarmDataResourceItemAsync(object? parameter)
+        {
+            if (parameter is not SwarmDataResourceSnapshot resource) return;
+            if (!_dialogService.ShowConfirm(
+                    $"Swarm {resource.Kind} '{resource.Name}'을 클러스터에서 영구 삭제하시겠습니까?",
+                    $"Remove Swarm {resource.Kind}"))
+            {
+                return;
+            }
+
+            if ((_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService) is not ISwarmDataResourceMutationService mutationService)
+            {
+                _dialogService.ShowError("활성 Swarm Manager 연결이 없습니다.", $"Remove Swarm {resource.Kind}");
+                return;
+            }
+
+            try
+            {
+                await mutationService.RemoveSwarmDataResourceAsync(resource.Kind, resource.Id);
+                await _mainVm.RefreshRuntimeResourcesAsync();
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError(
+                    $"Swarm {resource.Kind} 삭제 실패:\n{ex.GetBaseException().Message}",
+                    $"Remove Swarm {resource.Kind}");
             }
         }
 
@@ -768,7 +975,7 @@ namespace DockerDiagram.ViewModels
                     try
                     {
                         await service.DeleteImageAsync(img.Id, force: false);
-                        LocalImages.Remove(img);
+                        await _mainVm.RefreshRuntimeResourcesAsync();
                     }
                     catch (Exception ex)
                     {
@@ -777,7 +984,7 @@ namespace DockerDiagram.ViewModels
                             try
                             {
                                 await service.DeleteImageAsync(img.Id, force: true);
-                                LocalImages.Remove(img);
+                                await _mainVm.RefreshRuntimeResourcesAsync();
                             }
                             catch (Exception forceEx) { _dialogService.ShowMessage($"강제 삭제 실패: {forceEx.Message}"); }
                         }
@@ -797,7 +1004,7 @@ namespace DockerDiagram.ViewModels
             {
                 var service = (IImageService)(_mainVm.ActiveSheet?.DockerService ?? _defaultDockerService);
                 await service.TagImageAsync(sourceImage, repository, imageTag, force);
-                await SyncWithDockerEngineAsync();
+                await _mainVm.RefreshRuntimeResourcesAsync();
                 _dialogService.ShowInfo($"이미지 태그를 추가했습니다.\n{repository}:{imageTag}", "Tag Image");
             }
             catch (Exception ex)
@@ -927,7 +1134,7 @@ namespace DockerDiagram.ViewModels
                 PullProgressMessage = "다운로드 완료!";
                 _dialogService.ShowInfo($"[{targetImage}] 이미지 다운로드가 완료되었습니다.", "Pull 성공");
 
-                await SyncWithDockerEngineAsync();
+                await _mainVm.RefreshRuntimeResourcesAsync();
             }
             catch (Exception ex)
             {

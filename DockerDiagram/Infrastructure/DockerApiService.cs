@@ -707,7 +707,12 @@ namespace DockerDiagram.Infrastructure
         /// </summary>
         public async Task RemoveVolumeAsync(string name, bool force = false)
         {
-            await _client.Volumes.RemoveAsync(name, force);
+            if (string.IsNullOrWhiteSpace(name))
+                throw new ArgumentException("Volume name is required.", nameof(name));
+
+            await MakeRawDockerRequestAsync(
+                HttpMethod.Delete,
+                $"volumes/{Uri.EscapeDataString(name.Trim())}?force={force.ToString().ToLowerInvariant()}");
         }
 
         /// <summary>
@@ -991,6 +996,89 @@ namespace DockerDiagram.Infrastructure
                 _client.Dispose();
                 _systemDiskUsageCacheLock.Dispose();
                 _systemInfoCacheLock.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// 기존 inspect 결과를 기반으로 컨테이너 설정을 최대한 그대로 보존해 다시 만듭니다.
+        /// Docker가 mount 변경을 직접 지원하지 않아 컨테이너 교체가 필요한 경우에 사용합니다.
+        /// </summary>
+        public async Task<string> RecreateContainerFromInspectAsync(
+            string name,
+            ContainerInspectResponse source,
+            IList<string> binds,
+            bool startContainer,
+            IList<Mount>? mounts = null)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+            if (source.Config == null || source.HostConfig == null)
+                throw new InvalidOperationException("컨테이너 재생성에 필요한 inspect 설정이 없습니다.");
+
+            string safeContainerName = System.Text.RegularExpressions.Regex.Replace(
+                name.TrimStart('/'),
+                "[^a-zA-Z0-9_.-]",
+                "-");
+
+            var parameters = JsonConvert.DeserializeObject<CreateContainerParameters>(
+                                 JsonConvert.SerializeObject(source.Config))
+                             ?? throw new InvalidOperationException("컨테이너 설정을 복제하지 못했습니다.");
+            parameters.Name = safeContainerName;
+            parameters.HostConfig = JsonConvert.DeserializeObject<HostConfig>(
+                                        JsonConvert.SerializeObject(source.HostConfig))
+                                    ?? throw new InvalidOperationException("컨테이너 호스트 설정을 복제하지 못했습니다.");
+            parameters.HostConfig.Binds = binds.ToList();
+            if (mounts != null)
+                parameters.HostConfig.Mounts = mounts.ToList();
+
+            if (source.NetworkSettings?.Networks is { Count: > 0 } networks)
+            {
+                parameters.NetworkingConfig = new NetworkingConfig
+                {
+                    EndpointsConfig = networks.ToDictionary(
+                        pair => pair.Key,
+                        pair => new EndpointSettings
+                        {
+                            Aliases = pair.Value.Aliases?.ToList(),
+                            Links = pair.Value.Links?.ToList(),
+                            DriverOpts = pair.Value.DriverOpts == null
+                                ? null
+                                : new Dictionary<string, string>(pair.Value.DriverOpts),
+                            MacAddress = pair.Value.MacAddress,
+                            IPAMConfig = pair.Value.IPAMConfig == null
+                                ? null
+                                : new EndpointIPAMConfig
+                                {
+                                    IPv4Address = pair.Value.IPAMConfig.IPv4Address,
+                                    IPv6Address = pair.Value.IPAMConfig.IPv6Address,
+                                    LinkLocalIPs = pair.Value.IPAMConfig.LinkLocalIPs?.ToList()
+                                }
+                        })
+                };
+            }
+
+            CreateContainerResponse response = await _client.Containers.CreateContainerAsync(parameters);
+            if (!startContainer)
+                return response.ID;
+
+            try
+            {
+                await _client.Containers.StartContainerAsync(response.ID, new ContainerStartParameters());
+                return response.ID;
+            }
+            catch
+            {
+                try
+                {
+                    await _client.Containers.RemoveContainerAsync(
+                        response.ID,
+                        new ContainerRemoveParameters { Force = true });
+                }
+                catch
+                {
+                    // 시작 실패의 원래 예외를 유지합니다.
+                }
+
+                throw;
             }
         }
 

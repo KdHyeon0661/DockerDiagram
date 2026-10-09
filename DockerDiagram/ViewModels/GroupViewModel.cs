@@ -259,7 +259,9 @@ namespace DockerDiagram.ViewModels
         {
             if (!ContainedNodes.Contains(node))
             {
-                if (!isRestoring && !IsDraft && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
+                if (!isRestoring && !IsDraft && Type == GroupType.Network &&
+                    ResourceKind != RuntimeResourceKind.SwarmOverlayNetwork &&
+                    !string.IsNullOrEmpty(node.ContainerId))
                 {
                     if (ParentSheet?.Profile.Type == EndpointType.Local && !DockerServiceHelper.IsDockerRunning()) return;
 
@@ -269,10 +271,9 @@ namespace DockerDiagram.ViewModels
                     }
                 }
 
-                ContainedNodes.Add(node);
-                RaiseModified();
-
-                if (!isRestoring && !IsDraft && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
+                if (!isRestoring && !IsDraft && Type == GroupType.Network &&
+                    ResourceKind != RuntimeResourceKind.SwarmOverlayNetwork &&
+                    !string.IsNullOrEmpty(node.ContainerId))
                 {
                     try
                     {
@@ -294,6 +295,9 @@ namespace DockerDiagram.ViewModels
                         }
                     }
                 }
+
+                ContainedNodes.Add(node);
+                RaiseModified();
             }
         }
 
@@ -305,10 +309,9 @@ namespace DockerDiagram.ViewModels
         {
             if (ContainedNodes.Contains(node))
             {
-                ContainedNodes.Remove(node);
-                RaiseModified();
-
-                if (!isRestoring && !IsDraft && Type == GroupType.Network && !string.IsNullOrEmpty(node.ContainerId))
+                if (!isRestoring && !IsDraft && Type == GroupType.Network &&
+                    ResourceKind != RuntimeResourceKind.SwarmOverlayNetwork &&
+                    !string.IsNullOrEmpty(node.ContainerId))
                 {
                     if (ParentSheet?.Profile.Type == EndpointType.Local && !DockerServiceHelper.IsDockerRunning()) return;
 
@@ -332,6 +335,9 @@ namespace DockerDiagram.ViewModels
                         }
                     }
                 }
+
+                ContainedNodes.Remove(node);
+                RaiseModified();
             }
         }
 

@@ -1,18 +1,17 @@
-﻿using DockerDiagram.Contracts;
+using DockerDiagram.Contracts;
 using Docker.DotNet.Models;
 using DockerDiagram.ViewModels;
-using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Threading;
 
 namespace DockerDiagram.ApplicationServices
 {
     /// <summary>
     /// Docker 이벤트 스트림과 보조 주기 동기화의 수명 주기를 관리합니다.
+    /// 실행 중 들어온 갱신 요청은 한 번으로 합쳐 후속 실행하므로 이벤트 유실이 없습니다.
     /// </summary>
     public sealed class DockerSyncCoordinator : IDisposable
     {
@@ -22,7 +21,8 @@ namespace DockerDiagram.ApplicationServices
         private readonly IDialogService _dialogService;
         private readonly DispatcherTimer _autoSyncTimer;
         private readonly DispatcherTimer _eventSyncTimer;
-        private bool _isSyncing;
+        private readonly CoalescingAsyncRequestPump _syncPump;
+        private readonly SwarmRuntimeRecoveryService _swarmRecovery;
         private CancellationTokenSource? _eventsCts;
         private IDockerService? _eventsService;
         private Task? _eventsTask;
@@ -38,6 +38,8 @@ namespace DockerDiagram.ApplicationServices
             _explorer = explorer;
             _sheetManager = sheetManager;
             _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
+            _swarmRecovery = new SwarmRuntimeRecoveryService(explorer);
+            _syncPump = new CoalescingAsyncRequestPump(SyncOnceAsync);
 
             _autoSyncTimer = new DispatcherTimer
             {
@@ -53,58 +55,71 @@ namespace DockerDiagram.ApplicationServices
             _eventSyncTimer.Tick += EventSyncTimer_Tick;
 
             _sheetManager.PropertyChanged += SheetManager_PropertyChanged;
-            _ = _explorer.SyncWithDockerEngineAsync();
+            _ = _syncPump.RequestAsync();
             RestartEventMonitor();
         }
 
         public async Task OnDockerStartedAsync()
         {
             Debug.WriteLine("[DockerSync] Docker started signal received. Refreshing...");
-            await _explorer.SyncWithDockerEngineAsync();
+            await _syncPump.RequestAsync();
             await _sheetManager.RestoreLiveStateAsync();
+            await _syncPump.RequestAsync();
             RestartEventMonitor();
+        }
+
+        public Task RequestSyncAsync() => _syncPump.RequestAsync();
+
+        private async Task SyncOnceAsync()
+        {
+            if (_disposed) return;
+
+            SheetViewModel? sheet = _sheetManager.ActiveSheet;
+            IDockerService service = _getActiveService();
+            SwarmRuntimeRecoveryService.SwarmSyncCheckpoint? checkpoint = _swarmRecovery.Capture(sheet);
+
+            try
+            {
+                await _explorer.SyncCoreWithDockerEngineAsync(sheet, service);
+                await _swarmRecovery.ReconcileAsync(
+                    checkpoint,
+                    _sheetManager.ActiveSheet);
+            }
+            catch (Exception ex)
+            {
+                // 타이머/이벤트 기반 fire-and-forget 호출에서 예외가 UI dispatcher까지 전파되지 않게 합니다.
+                Debug.WriteLine($"[DockerSync] Refresh failed: {ex.GetBaseException().Message}");
+                if (ReferenceEquals(sheet, _sheetManager.ActiveSheet))
+                    _explorer.LastSyncTime = "Sync failed; retry scheduled";
+            }
         }
 
         private async void AutoSyncTimer_Tick(object? sender, EventArgs e)
         {
-            await SyncWithGuardAsync();
+            await _syncPump.RequestAsync();
             RestartEventMonitor();
         }
 
         private async void EventSyncTimer_Tick(object? sender, EventArgs e)
         {
             _eventSyncTimer.Stop();
-            await SyncWithGuardAsync();
-        }
-
-        private async Task SyncWithGuardAsync()
-        {
-            if (_disposed || _isSyncing) return;
-
-            try
-            {
-                _isSyncing = true;
-                await _explorer.SyncWithDockerEngineAsync();
-            }
-            finally
-            {
-                _isSyncing = false;
-            }
+            await _syncPump.RequestAsync();
         }
 
         private void SheetManager_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
-            if (e.PropertyName == nameof(SheetManagerViewModel.ActiveSheet))
-            {
-                RestartEventMonitor();
-            }
+            if (e.PropertyName != nameof(SheetManagerViewModel.ActiveSheet)) return;
+
+            _eventSyncTimer.Stop();
+            RestartEventMonitor();
+            _ = _syncPump.RequestAsync();
         }
 
         private void RestartEventMonitor()
         {
             if (_disposed) return;
 
-            var service = _getActiveService();
+            IDockerService service = _getActiveService();
             if (ReferenceEquals(service, _eventsService) &&
                 _eventsCts is { IsCancellationRequested: false } &&
                 _eventsTask is { IsCompleted: false })
@@ -116,7 +131,7 @@ namespace DockerDiagram.ApplicationServices
 
             _eventsService = service;
             _eventsCts = new CancellationTokenSource();
-            var token = _eventsCts.Token;
+            CancellationToken token = _eventsCts.Token;
             _eventsTask = Task.Run(() => MonitorEventsLoopAsync(service, token), token);
         }
 
@@ -129,6 +144,8 @@ namespace DockerDiagram.ApplicationServices
                 try
                 {
                     await service.MonitorDockerEventsAsync(progress, cancellationToken);
+                    if (!cancellationToken.IsCancellationRequested)
+                        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -147,7 +164,7 @@ namespace DockerDiagram.ApplicationServices
                     {
                         await _dialogService.InvokeOnUiThreadAsync(() =>
                         {
-                            if (!_disposed) _explorer.LastSyncTime = "Docker events reconnecting...";
+                            if (!_disposed) _explorer.LastSyncTime = "Docker events reconnecting; snapshot preserved";
                         });
                     }
                     catch (Exception) when (cancellationToken.IsCancellationRequested)
@@ -167,12 +184,8 @@ namespace DockerDiagram.ApplicationServices
             }
         }
 
-        private static bool IsExpectedStreamShutdownException(Exception exception)
-        {
-            return exception is OperationCanceledException or
-                   IOException or
-                   ObjectDisposedException;
-        }
+        private static bool IsExpectedStreamShutdownException(Exception exception) =>
+            exception is OperationCanceledException or IOException or ObjectDisposedException;
 
         private void OnDockerEventReceived(Message message, CancellationToken cancellationToken)
         {
@@ -183,26 +196,33 @@ namespace DockerDiagram.ApplicationServices
             {
                 if (_disposed || cancellationToken.IsCancellationRequested) return;
 
-                var action = string.IsNullOrWhiteSpace(message.Action) ? "changed" : message.Action;
-                var type = string.IsNullOrWhiteSpace(message.Type) ? "docker" : message.Type;
+                string action = string.IsNullOrWhiteSpace(message.Action) ? "changed" : message.Action;
+                string type = string.IsNullOrWhiteSpace(message.Type) ? "docker" : message.Type;
                 _explorer.LastSyncTime = $"Docker event: {type}/{action}";
 
+                // 마지막 관련 이벤트 이후 600ms가 지나면 한 번만 동기화합니다.
                 _eventSyncTimer.Stop();
                 _eventSyncTimer.Start();
             });
         }
 
-        private static bool IsDiagramRelevantDockerEvent(Message message)
+        public static bool IsDiagramRelevantDockerEvent(Message message)
         {
-            var type = message.Type ?? string.Empty;
-            var action = message.Action ?? string.Empty;
+            string type = message.Type ?? string.Empty;
+            string action = message.Action ?? string.Empty;
             if (action.StartsWith("exec_", StringComparison.OrdinalIgnoreCase))
                 return false;
 
             return type.Equals("container", StringComparison.OrdinalIgnoreCase) ||
                    type.Equals("volume", StringComparison.OrdinalIgnoreCase) ||
                    type.Equals("network", StringComparison.OrdinalIgnoreCase) ||
-                   type.Equals("image", StringComparison.OrdinalIgnoreCase);
+                   type.Equals("image", StringComparison.OrdinalIgnoreCase) ||
+                   type.Equals("service", StringComparison.OrdinalIgnoreCase) ||
+                   type.Equals("task", StringComparison.OrdinalIgnoreCase) ||
+                   type.Equals("node", StringComparison.OrdinalIgnoreCase) ||
+                   type.Equals("secret", StringComparison.OrdinalIgnoreCase) ||
+                   type.Equals("config", StringComparison.OrdinalIgnoreCase) ||
+                   type.Equals("swarm", StringComparison.OrdinalIgnoreCase);
         }
 
         private void StopEventMonitor()
@@ -224,9 +244,6 @@ namespace DockerDiagram.ApplicationServices
                 return;
             }
 
-            // 취소 직후 CTS를 폐기하거나 Task 참조를 버리지 않습니다.
-            // Events 스트림이 Named Pipe/HTTP 읽기에서 빠져나온 뒤 정리하고,
-            // 혹시 남은 fault도 관찰해 UnobservedTaskException을 방지합니다.
             _ = eventsTask.ContinueWith(
                 completedTask =>
                 {
@@ -254,6 +271,7 @@ namespace DockerDiagram.ApplicationServices
             _autoSyncTimer.Tick -= AutoSyncTimer_Tick;
             _eventSyncTimer.Stop();
             _eventSyncTimer.Tick -= EventSyncTimer_Tick;
+            _syncPump.Dispose();
             StopEventMonitor();
         }
     }

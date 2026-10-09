@@ -27,13 +27,13 @@ namespace DockerDiagram.Diagram
             if (sourceKind == RuntimeResourceKind.SwarmVisualGroup ||
                 targetKind == RuntimeResourceKind.SwarmVisualGroup)
             {
-                return Allow(RelationType.Dependency);
+                return Deny("Visual Group은 화면 정리용이며 Swarm ServiceSpec에 적용되지 않습니다. 리소스를 그룹 영역 안에 배치해 주세요.");
             }
 
             if (sourceKind == RuntimeResourceKind.SwarmService &&
                 targetKind == RuntimeResourceKind.SwarmService)
             {
-                return Allow(RelationType.Dependency);
+                return Deny("Swarm에는 Service 시작 순서를 보장하는 dependency 설정이 없습니다. 실제로 적용되지 않는 연결선은 만들지 않습니다.");
             }
 
             if (IsPair(sourceKind, targetKind, RuntimeResourceKind.SwarmService, RuntimeResourceKind.SwarmVolume))
@@ -58,7 +58,7 @@ namespace DockerDiagram.Diagram
 
             return Deny(
                 "이 Swarm 리소스 조합은 연결할 수 없습니다.\n" +
-                "허용: Service–Service, Service–Volume, External Traffic–Service, Service–Secret, Service–Config.");
+                "허용: Service–Volume, Published Port–Service, Service–Secret, Service–Config.");
         }
 
         private static SwarmConnectionDecision Allow(RelationType relationType, bool reverse = false) =>

@@ -219,6 +219,7 @@ namespace DockerDiagram.Infrastructure
 
         private async Task<string> MakeRawDockerApiRequestAsync(HttpMethod method, string path, object? body = null, CancellationToken cancellationToken = default)
         {
+            (string requestPath, string? rawQuery) = SplitRawDockerTarget(path);
             var requestMethod = typeof(DockerClient)
                 .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .FirstOrDefault(m =>
@@ -226,6 +227,11 @@ namespace DockerDiagram.Infrastructure
                     !m.IsGenericMethodDefinition &&
                     m.GetParameters().Length == 8)
                 ?? throw new NotSupportedException("Docker.DotNet raw request API를 찾을 수 없습니다.");
+            object? queryString = rawQuery == null
+                ? null
+                : RawDockerQueryStringProxy.Create(
+                    requestMethod.GetParameters()[3].ParameterType,
+                    rawQuery);
 
             var errorHandlerType = requestMethod.GetParameters()[0].ParameterType.GetGenericArguments()[0];
             var errorHandlers = Array.CreateInstance(errorHandlerType, 0);
@@ -234,8 +240,8 @@ namespace DockerDiagram.Infrastructure
             {
                 errorHandlers,
                 method,
-                path,
-                null,
+                requestPath,
+                queryString,
                 CreateRawRequestContent(body),
                 null,
                 TimeSpan.FromSeconds(CurrentProfile.Type == EndpointType.SshRemote ? 20 : 10),
@@ -255,6 +261,35 @@ namespace DockerDiagram.Infrastructure
                 ?.GetValue(response) as string;
 
             return responseBody ?? string.Empty;
+        }
+
+        private static (string Path, string? QueryString) SplitRawDockerTarget(string target)
+        {
+            int separator = target.IndexOf('?');
+            if (separator < 0)
+                return (target, null);
+
+            string path = target[..separator];
+            string query = target[(separator + 1)..];
+            return (path, query.Length == 0 ? null : query);
+        }
+
+        private class RawDockerQueryStringProxy : DispatchProxy
+        {
+            private string _value = string.Empty;
+
+            public static object Create(Type queryStringType, string value)
+            {
+                object proxy = Create(queryStringType, typeof(RawDockerQueryStringProxy));
+                ((RawDockerQueryStringProxy)proxy)._value = value;
+                return proxy;
+            }
+
+            protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+            {
+                if (targetMethod?.Name == "GetQueryString") return _value;
+                throw new NotSupportedException($"지원하지 않는 Docker query string 호출입니다: {targetMethod?.Name}");
+            }
         }
 
         private static object? CreateRawRequestContent(object? body)
@@ -561,6 +596,12 @@ namespace DockerDiagram.Infrastructure
 
         public async Task<List<DockerSwarmTask>> GetSwarmServiceTasksAsync(string serviceId)
         {
+            SwarmServiceTaskSnapshot snapshot = await GetSwarmServiceTaskSnapshotAsync(serviceId);
+            return snapshot.Tasks.ToList();
+        }
+
+        public async Task<SwarmServiceTaskSnapshot> GetSwarmServiceTaskSnapshotAsync(string serviceId)
+        {
             if (string.IsNullOrWhiteSpace(serviceId))
                 throw new ArgumentException("Swarm service ID가 비어 있습니다.", nameof(serviceId));
 
@@ -578,7 +619,7 @@ namespace DockerDiagram.Infrastructure
                 node => FirstNonEmpty(node.Hostname, node.Name, node.Id),
                 StringComparer.OrdinalIgnoreCase);
 
-            return tasks
+            List<DockerSwarmTask> mappedTasks = tasks
                 .OrderBy(task => task.Slot)
                 .ThenBy(task => task.ID, StringComparer.OrdinalIgnoreCase)
                 .Select(task =>
@@ -604,6 +645,8 @@ namespace DockerDiagram.Infrastructure
                     };
                 })
                 .ToList();
+
+            return new SwarmServiceTaskSnapshot(mappedTasks, swarmNodes);
         }
 
         public async Task<List<DockerSwarmNode>> GetSwarmNodesAsync()

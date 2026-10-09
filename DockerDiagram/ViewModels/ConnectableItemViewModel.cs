@@ -40,7 +40,6 @@ namespace DockerDiagram.ViewModels
         private SheetViewModel? _parentSheet;
         private RuntimeKind _runtimeKind = RuntimeKind.DockerEngine;
         private RuntimeResourceKind _resourceKind = RuntimeResourceKind.Unspecified;
-        private ElementOrigin _origin = ElementOrigin.Unknown;
         private RuntimeBindingState _bindingState = RuntimeBindingState.Bound;
 
         protected ConnectableItemViewModel(double x, double y, double width, double height)
@@ -71,12 +70,6 @@ namespace DockerDiagram.ViewModels
             set => SetRuntimeMetadata(ref _resourceKind, value, nameof(ResourceKind));
         }
 
-        public ElementOrigin Origin
-        {
-            get => _origin;
-            set => SetRuntimeMetadata(ref _origin, value, nameof(Origin));
-        }
-
         public RuntimeBindingState BindingState
         {
             get => _bindingState;
@@ -85,8 +78,11 @@ namespace DockerDiagram.ViewModels
 
         public bool IsDraft => BindingState == RuntimeBindingState.Draft;
         public bool HasRuntimeMetadata => ResourceKind != RuntimeResourceKind.Unspecified;
+        public bool ShowRuntimeBadge =>
+            HasRuntimeMetadata &&
+            ResourceKind != RuntimeResourceKind.SwarmVisualGroup;
         public string RuntimeBadgeText => HasRuntimeMetadata
-            ? $"{GetResourceKindLabel(ResourceKind)} · {BindingState} · {Origin}"
+            ? $"{GetResourceKindLabel(ResourceKind)} · {BindingState}"
             : string.Empty;
 
         public double X
@@ -190,6 +186,7 @@ namespace DockerDiagram.ViewModels
 
             OnPropertyChanged(nameof(IsDraft));
             OnPropertyChanged(nameof(HasRuntimeMetadata));
+            OnPropertyChanged(nameof(ShowRuntimeBadge));
             OnPropertyChanged(nameof(RuntimeBadgeText));
             RaiseModified();
             OnRuntimeMetadataChanged(propertyName);
@@ -211,5 +208,6 @@ namespace DockerDiagram.ViewModels
             RuntimeResourceKind.VisualGroup => "Group",
             _ => kind.ToString()
         };
+
     }
 }

@@ -101,11 +101,10 @@ namespace DockerDiagram.ViewModels
             Explorer = new ResourceExplorerViewModel(this, _defaultDockerService, _dialogService);
             Inspector = new InspectorViewModel(this, _dialogService);
             _diagramHistory = new DiagramHistoryService(
-                () => ActiveSheet?.DockerService ?? _defaultDockerService,
                 () => ActiveSheet,
+                () => RefreshRuntimeResourcesAsync(),
                 () => IsModified = true,
                 History,
-                Explorer,
                 _dialogService);
 
             // 2. 초기 탭 생성 및 자동 로드 지시
@@ -120,6 +119,8 @@ namespace DockerDiagram.ViewModels
         }
 
         public Task OnDockerStartedAsync() => _dockerSync.OnDockerStartedAsync();
+
+        internal Task RefreshRuntimeResourcesAsync() => _dockerSync.RequestSyncAsync();
 
         public async Task PlaceComposeProjectAsync(
             DockerComposeProject project,
@@ -353,17 +354,17 @@ namespace DockerDiagram.ViewModels
                         await deploymentService.RemoveAsync(historyApplication, sheet, options.DeployToDocker);
                         IsModified = true;
                         if (ReferenceEquals(ActiveSheet, sheet))
-                            await Explorer.SyncWithDockerEngineAsync();
+                            await RefreshRuntimeResourcesAsync();
                     },
                     redo: async () =>
                     {
                         historyApplication = await deploymentService.ApplyAsync(template, options, sheet, x, y);
                         IsModified = true;
                         if (ReferenceEquals(ActiveSheet, sheet))
-                            await Explorer.SyncWithDockerEngineAsync();
+                            await RefreshRuntimeResourcesAsync();
                     }));
 
-                await Explorer.SyncWithDockerEngineAsync();
+                await RefreshRuntimeResourcesAsync();
                 _dialogService.ShowInfo(
                     options.DeployToDocker
                         ? $"'{template.Name}' 스택을 생성하고 실행했습니다."

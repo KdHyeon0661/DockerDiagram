@@ -1,0 +1,195 @@
+<Window x:Class="DockerDiagram.Views.SwarmServiceCreateDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Create Swarm Service" Height="720" Width="780"
+        MinHeight="620" MinWidth="700" WindowStartupLocation="CenterOwner"
+        Background="#F6F7FB" ShowInTaskbar="False">
+    <Window.Resources>
+        <Style TargetType="TextBox">
+            <Setter Property="Margin" Value="0,4,0,10"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="BorderBrush" Value="#C7CBD6"/>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Margin" Value="0,4,0,10"/>
+            <Setter Property="Padding" Value="7,5"/>
+        </Style>
+        <Style TargetType="TextBlock" x:Key="FieldLabel">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#2B3140"/>
+        </Style>
+        <Style TargetType="TextBlock" x:Key="Hint">
+            <Setter Property="Foreground" Value="#667085"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,-6,0,10"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="0,0,0,14">
+            <TextBlock x:Name="DialogTitleTextBlock" Text="Create Swarm Service" FontSize="24" FontWeight="Bold" Foreground="#17213A"/>
+            <TextBlock x:Name="DialogDescriptionTextBlock" Text="Docker Engine에 실제 서비스를 생성하고 현재 Swarm 다이어그램에 연결합니다."
+                       Foreground="#667085" Margin="0,5,0,0"/>
+        </StackPanel>
+
+        <TabControl Grid.Row="1" Background="White" BorderBrush="#D7DAE2">
+            <TabItem Header="General">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="18">
+                    <StackPanel>
+                        <TextBlock Text="Service name *" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="ServiceNameTextBox" Text="web"/>
+
+                        <TextBlock Text="Image *" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="ImageTextBox" Text="nginx:latest"/>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="18"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Mode" Style="{StaticResource FieldLabel}"/>
+                                <ComboBox x:Name="ModeComboBox" SelectionChanged="ModeComboBox_SelectionChanged" SelectedIndex="0">
+                                    <ComboBoxItem Tag="replicated" Content="Replicated"/>
+                                    <ComboBoxItem Tag="global" Content="Global"/>
+                                </ComboBox>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Replicas" Style="{StaticResource FieldLabel}"/>
+                                <TextBox x:Name="ReplicasTextBox" Text="1"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="Command" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="CommandTextBox"/>
+                        <TextBlock Text="실행 파일 하나를 입력합니다. 예: /bin/sh" Style="{StaticResource Hint}"/>
+
+                        <TextBlock Text="Arguments (one per line)" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="ArgumentsTextBox" Height="72" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
+
+                        <TextBlock Text="Environment variables (one per line)" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="EnvironmentTextBox" Height="88" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Text="KEY=value 또는 KEY" Style="{StaticResource Hint}"/>
+
+                        <TextBlock Text="Labels (one per line)" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="LabelsTextBox" Height="72" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Text="key=value 형식. 값이 없는 key도 허용됩니다." Style="{StaticResource Hint}"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Connectivity">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="18">
+                    <StackPanel>
+                        <TextBlock Text="Published ports (one per line)" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="PortsTextBox" Height="110" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Text="[published:]target[/tcp|udp|sctp][@ingress|host]  예: 8080:80/tcp@ingress" Style="{StaticResource Hint}"/>
+
+                        <TextBlock Text="Overlay networks (one per line)" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="NetworksTextBox" Height="110" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Text="network|alias1,alias2  예: frontend|web,public" Style="{StaticResource Hint}"/>
+
+                        <TextBlock Text="Mounts (one per line)" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="MountsTextBox" Height="130" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Text="volume|source|target|ro 또는 bind|source|target|rw. tmpfs는 source를 비울 수 있습니다."
+                                   Style="{StaticResource Hint}"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Policies">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="18">
+                    <StackPanel>
+                        <TextBlock Text="Restart policy" FontSize="16" FontWeight="Bold" Foreground="#17213A" Margin="0,0,0,10"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Condition" Style="{StaticResource FieldLabel}"/>
+                                <ComboBox x:Name="RestartConditionComboBox" SelectedIndex="2">
+                                    <ComboBoxItem Tag="none" Content="None"/>
+                                    <ComboBoxItem Tag="on-failure" Content="On failure"/>
+                                    <ComboBoxItem Tag="any" Content="Any"/>
+                                </ComboBox>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2"><TextBlock Text="Delay (sec)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="RestartDelayTextBox" Text="5"/></StackPanel>
+                            <StackPanel Grid.Column="4"><TextBlock Text="Max attempts" Style="{StaticResource FieldLabel}"/><TextBox x:Name="RestartMaxAttemptsTextBox"/></StackPanel>
+                            <StackPanel Grid.Column="6"><TextBlock Text="Window (sec)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="RestartWindowTextBox"/></StackPanel>
+                        </Grid>
+
+                        <Separator Margin="0,8,0,14"/>
+                        <TextBlock Text="Update policy" FontSize="16" FontWeight="Bold" Foreground="#17213A" Margin="0,0,0,10"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="Parallelism" Style="{StaticResource FieldLabel}"/><TextBox x:Name="UpdateParallelismTextBox" Text="1"/></StackPanel>
+                            <StackPanel Grid.Column="2"><TextBlock Text="Delay (sec)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="UpdateDelayTextBox" Text="0"/></StackPanel>
+                            <StackPanel Grid.Column="4"><TextBlock Text="Monitor (sec)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="UpdateMonitorTextBox"/></StackPanel>
+                            <StackPanel Grid.Column="6"><TextBlock Text="Failure ratio" Style="{StaticResource FieldLabel}"/><TextBox x:Name="UpdateRatioTextBox"/></StackPanel>
+                        </Grid>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="Failure action" Style="{StaticResource FieldLabel}"/><ComboBox x:Name="UpdateActionComboBox" SelectedIndex="0"><ComboBoxItem Tag="pause" Content="Pause"/><ComboBoxItem Tag="continue" Content="Continue"/><ComboBoxItem Tag="rollback" Content="Rollback"/></ComboBox></StackPanel>
+                            <StackPanel Grid.Column="2"><TextBlock Text="Order" Style="{StaticResource FieldLabel}"/><ComboBox x:Name="UpdateOrderComboBox" SelectedIndex="0"><ComboBoxItem Tag="stop-first" Content="Stop first"/><ComboBoxItem Tag="start-first" Content="Start first"/></ComboBox></StackPanel>
+                        </Grid>
+
+                        <Separator Margin="0,8,0,14"/>
+                        <TextBlock Text="Rollback policy" FontSize="16" FontWeight="Bold" Foreground="#17213A" Margin="0,0,0,10"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="Parallelism" Style="{StaticResource FieldLabel}"/><TextBox x:Name="RollbackParallelismTextBox" Text="1"/></StackPanel>
+                            <StackPanel Grid.Column="2"><TextBlock Text="Delay (sec)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="RollbackDelayTextBox" Text="0"/></StackPanel>
+                            <StackPanel Grid.Column="4"><TextBlock Text="Monitor (sec)" Style="{StaticResource FieldLabel}"/><TextBox x:Name="RollbackMonitorTextBox"/></StackPanel>
+                            <StackPanel Grid.Column="6"><TextBlock Text="Failure ratio" Style="{StaticResource FieldLabel}"/><TextBox x:Name="RollbackRatioTextBox"/></StackPanel>
+                        </Grid>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="Failure action" Style="{StaticResource FieldLabel}"/><ComboBox x:Name="RollbackActionComboBox" SelectedIndex="0"><ComboBoxItem Tag="pause" Content="Pause"/><ComboBoxItem Tag="continue" Content="Continue"/></ComboBox></StackPanel>
+                            <StackPanel Grid.Column="2"><TextBlock Text="Order" Style="{StaticResource FieldLabel}"/><ComboBox x:Name="RollbackOrderComboBox" SelectedIndex="0"><ComboBoxItem Tag="stop-first" Content="Stop first"/><ComboBoxItem Tag="start-first" Content="Start first"/></ComboBox></StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem x:Name="PlacementResourcesTab" Header="Placement &amp; Resources">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="18">
+                    <StackPanel>
+                        <TextBlock Text="Placement constraints (one per line)" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="PlacementConstraintsTextBox" Height="100" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Text="Docker constraint 문법을 사용합니다. 예: node.role==worker 또는 node.labels.zone==seoul" Style="{StaticResource Hint}"/>
+
+                        <TextBlock Text="Existing Secrets (one per line)" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="SecretsTextBox" Height="100" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Text="name[|target|uid|gid|mode]  예: db_password|/run/secrets/db_password|0|0|0400" Style="{StaticResource Hint}"/>
+                        <TextBlock x:Name="AvailableSecretsTextBlock" Foreground="#667085" FontSize="11" TextWrapping="Wrap" Margin="0,-4,0,12"/>
+
+                        <TextBlock Text="Existing Configs (one per line)" Style="{StaticResource FieldLabel}"/>
+                        <TextBox x:Name="ConfigsTextBox" Height="100" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
+                        <TextBlock Text="name[|target|uid|gid|mode]  예: nginx_conf|/etc/nginx/nginx.conf|0|0|0444" Style="{StaticResource Hint}"/>
+                        <TextBlock x:Name="AvailableConfigsTextBlock" Foreground="#667085" FontSize="11" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <Grid Grid.Row="2" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="ValidationMessageTextBlock" Foreground="#C62828" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button Content="Cancel" Width="96" Height="34" Margin="0,0,8,0" IsCancel="True"/>
+                <Button x:Name="SubmitButton" Content="Create Service" Width="132" Height="34" Click="CreateButton_Click" IsDefault="True" Background="#2563EB" Foreground="White" BorderBrush="#1D4ED8"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

@@ -26,6 +26,7 @@ namespace DockerDiagram.ViewModels
 
         // --- 1. 상태 및 데이터 ---
         public ObservableCollection<ConnectionWorkspaceViewModel> Workspaces { get; } = new();
+        internal IDockerService DefaultDockerService => _defaultDockerService;
 
         private ConnectionWorkspaceViewModel? _activeWorkspace;
         private bool _isWorkspaceLayer = true;
@@ -118,6 +119,7 @@ namespace DockerDiagram.ViewModels
                 OnPropertyChanged(nameof(MapWidth));
                 OnPropertyChanged(nameof(MapHeight));
                 _mainVm.RefreshRuntimeUiProfile();
+                _mainVm.History?.Clear();
 
                 if (_activeSheet != null && ActiveWorkspace != null && ActiveWorkspace.Sheets.Contains(_activeSheet))
                 {
@@ -374,6 +376,7 @@ namespace DockerDiagram.ViewModels
 
         public void AddExistingSheet(SheetViewModel sheet, bool activate = true)
         {
+            ConfigureRuntimeRefresh(sheet);
             sheet.Profile.RuntimeKind = sheet.RuntimeKind;
             var workspace = FindWorkspaceByProfile(sheet.Profile);
             if (workspace == null)
@@ -402,6 +405,7 @@ namespace DockerDiagram.ViewModels
         private SheetViewModel AddSheetToWorkspace(ConnectionWorkspaceViewModel workspace, string title, bool activate)
         {
             var newSheet = new SheetViewModel(title, workspace.Profile, workspace.DockerService, _dialogService, workspace.RuntimeKind);
+            ConfigureRuntimeRefresh(newSheet);
             workspace.Sheets.Add(newSheet);
             workspace.ActiveSheet = newSheet;
 
@@ -413,6 +417,15 @@ namespace DockerDiagram.ViewModels
 
             OnPropertyChanged(nameof(Sheets));
             return newSheet;
+        }
+
+        private void ConfigureRuntimeRefresh(SheetViewModel sheet)
+        {
+            sheet.RuntimeResourcesChangedAsync = async () =>
+            {
+                if (ReferenceEquals(ActiveSheet, sheet) && _mainVm.Explorer != null)
+                    await _mainVm.RefreshRuntimeResourcesAsync();
+            };
         }
 
         public void DeleteSheet(SheetViewModel sheet)
@@ -458,8 +471,16 @@ namespace DockerDiagram.ViewModels
             ActiveSheet.Groups.CollectionChanged += Groups_CollectionChanged;
             ActiveSheet.Connectors.CollectionChanged += Connectors_CollectionChanged;
 
-            foreach (var node in ActiveSheet.Nodes) node.OnModified += Node_OnModified;
-            foreach (var group in ActiveSheet.Groups) group.OnModified += Node_OnModified;
+            foreach (var node in ActiveSheet.Nodes)
+            {
+                node.OnModified += Node_OnModified;
+                node.OnPositionChanged += Connectable_OnPositionChanged;
+            }
+            foreach (var group in ActiveSheet.Groups)
+            {
+                group.OnModified += Node_OnModified;
+                group.OnPositionChanged += Connectable_OnPositionChanged;
+            }
             foreach (var conn in ActiveSheet.Connectors) conn.OnModified += Connector_OnModified;
         }
 
@@ -470,8 +491,16 @@ namespace DockerDiagram.ViewModels
             sheet.Groups.CollectionChanged -= Groups_CollectionChanged;
             sheet.Connectors.CollectionChanged -= Connectors_CollectionChanged;
 
-            foreach (var node in sheet.Nodes) node.OnModified -= Node_OnModified;
-            foreach (var group in sheet.Groups) group.OnModified -= Node_OnModified;
+            foreach (var node in sheet.Nodes)
+            {
+                node.OnModified -= Node_OnModified;
+                node.OnPositionChanged -= Connectable_OnPositionChanged;
+            }
+            foreach (var group in sheet.Groups)
+            {
+                group.OnModified -= Node_OnModified;
+                group.OnPositionChanged -= Connectable_OnPositionChanged;
+            }
             foreach (var conn in sheet.Connectors) conn.OnModified -= Connector_OnModified;
         }
 
@@ -483,6 +512,7 @@ namespace DockerDiagram.ViewModels
                 foreach (NodeViewModel node in e.NewItems)
                 {
                     node.OnModified += Node_OnModified;
+                    node.OnPositionChanged += Connectable_OnPositionChanged;
                     if (ownerSheet != null)
                         node.ParentSheet = ownerSheet;
                 }
@@ -493,6 +523,7 @@ namespace DockerDiagram.ViewModels
                 foreach (NodeViewModel node in e.OldItems)
                 {
                     node.OnModified -= Node_OnModified;
+                    node.OnPositionChanged -= Connectable_OnPositionChanged;
                     if (ownerSheet != null && ReferenceEquals(node.ParentSheet, ownerSheet))
                         node.ParentSheet = null;
                 }
@@ -511,16 +542,44 @@ namespace DockerDiagram.ViewModels
 
         private void Groups_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
-            if (e.NewItems != null) foreach (GroupViewModel group in e.NewItems) group.OnModified += Node_OnModified;
-            if (e.OldItems != null) foreach (GroupViewModel group in e.OldItems) group.OnModified -= Node_OnModified;
+            if (e.NewItems != null)
+            {
+                foreach (GroupViewModel group in e.NewItems)
+                {
+                    group.OnModified += Node_OnModified;
+                    group.OnPositionChanged += Connectable_OnPositionChanged;
+                }
+            }
+            if (e.OldItems != null)
+            {
+                foreach (GroupViewModel group in e.OldItems)
+                {
+                    group.OnModified -= Node_OnModified;
+                    group.OnPositionChanged -= Connectable_OnPositionChanged;
+                }
+            }
             _mainVm.Explorer?.UpdateAvailableItems();
             MarkAsModified();
         }
 
         private void Connectors_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
-            if (e.NewItems != null) foreach (ConnectorViewModel conn in e.NewItems) conn.OnModified += Connector_OnModified;
-            if (e.OldItems != null) foreach (ConnectorViewModel conn in e.OldItems) conn.OnModified -= Connector_OnModified;
+            if (e.NewItems != null)
+            {
+                foreach (ConnectorViewModel conn in e.NewItems)
+                {
+                    conn.OnModified += Connector_OnModified;
+                    MarkSwarmTopologyDirty(conn);
+                }
+            }
+            if (e.OldItems != null)
+            {
+                foreach (ConnectorViewModel conn in e.OldItems)
+                {
+                    conn.OnModified -= Connector_OnModified;
+                    MarkSwarmTopologyDirty(conn);
+                }
+            }
             MarkAsModified();
         }
 
@@ -736,8 +795,57 @@ namespace DockerDiagram.ViewModels
             _ => runtimeKind.ToString()
         };
 
-        private void Node_OnModified(object? sender, EventArgs e) => MarkAsModified();
-        private void Connector_OnModified(object? sender, EventArgs e) => MarkAsModified();
+        private void Node_OnModified(object? sender, EventArgs e)
+        {
+            MarkAsModified();
+        }
+
+        private void Connectable_OnPositionChanged(object? sender, EventArgs e)
+        {
+            if (sender is NodeViewModel { ResourceKind: RuntimeResourceKind.SwarmService } service)
+            {
+                bool touchesOverlay = service.ParentSheet?.Groups.Any(group =>
+                    group.ResourceKind == RuntimeResourceKind.SwarmOverlayNetwork &&
+                    (group.ContainedNodes.Contains(service) ||
+                     (service.CenterX >= group.X && service.CenterX <= group.X + group.Width &&
+                      service.CenterY >= group.Y && service.CenterY <= group.Y + group.Height))) == true;
+                if (touchesOverlay)
+                    service.IsSwarmDiagramDirty = true;
+            }
+            else if (sender is GroupViewModel { ResourceKind: RuntimeResourceKind.SwarmOverlayNetwork } group)
+            {
+                foreach (NodeViewModel containedService in group.ContainedNodes.Where(node =>
+                             node.ResourceKind == RuntimeResourceKind.SwarmService))
+                {
+                    containedService.IsSwarmDiagramDirty = true;
+                }
+            }
+        }
+
+        private void Connector_OnModified(object? sender, EventArgs e)
+        {
+            if (sender is ConnectorViewModel connector)
+                MarkSwarmTopologyDirty(connector);
+            MarkAsModified();
+        }
+
+        private static void MarkSwarmTopologyDirty(ConnectorViewModel connector)
+        {
+            if (connector.RelationType is not (RelationType.VolumeMount or
+                RelationType.SwarmPublishedPort or
+                RelationType.SwarmSecretReference or
+                RelationType.SwarmConfigReference))
+            {
+                return;
+            }
+
+            foreach (NodeViewModel service in new[] { connector.Source, connector.Target }
+                         .OfType<NodeViewModel>()
+                         .Where(node => node.ResourceKind == RuntimeResourceKind.SwarmService))
+            {
+                service.IsSwarmDiagramDirty = true;
+            }
+        }
 
         public void Dispose()
         {

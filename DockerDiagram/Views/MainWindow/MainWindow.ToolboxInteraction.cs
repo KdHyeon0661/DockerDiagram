@@ -1,4 +1,4 @@
-﻿using DockerDiagram.Diagram;
+using DockerDiagram.Diagram;
 using DockerDiagram.ApplicationServices;
 using DockerDiagram.Infrastructure;
 using System.Runtime.Versioning;
@@ -172,14 +172,21 @@ namespace DockerDiagram
 
                 if (typeStr == "SwarmStack")
                 {
-                    vm.SheetManager.AddSwarmStackSheet();
+                    await SwarmStackController.CreateStackSheetAsync();
                     return;
                 }
 
                 if (TryGetSwarmDraftNodeKind(typeStr, out var swarmKind))
                 {
                     Point placement = GetViewportCenteredPlacement(160, 80);
-                    await vm.CreateSwarmDraftNodeAsync(swarmKind, placement.X, placement.Y);
+                    if (swarmKind == RuntimeResourceKind.SwarmService)
+                        await ShowSwarmServiceDialogAndCreateAsync(vm, placement.X, placement.Y);
+                    else if (swarmKind is RuntimeResourceKind.SwarmSecret or RuntimeResourceKind.SwarmConfig)
+                        await ShowSwarmDataResourceDialogAsync(vm, swarmKind, placement.X, placement.Y);
+                    else if (swarmKind == RuntimeResourceKind.SwarmVolume)
+                        await ShowSwarmVolumeDialogAndCreateDraftAsync(vm, placement.X, placement.Y);
+                    else
+                        await vm.CreateSwarmDraftNodeAsync(swarmKind, placement.X, placement.Y);
                     return;
                 }
 
@@ -288,7 +295,22 @@ namespace DockerDiagram
             if (e.Data.GetDataPresent("SwarmToolboxObject") &&
                 e.Data.GetData("SwarmToolboxObject") is RuntimeResourceKind swarmKind)
             {
-                await vm.CreateSwarmDraftNodeAsync(swarmKind, snapX, snapY);
+                if (swarmKind == RuntimeResourceKind.SwarmService)
+                    await ShowSwarmServiceDialogAndCreateAsync(vm, snapX, snapY);
+                else if (swarmKind is RuntimeResourceKind.SwarmSecret or RuntimeResourceKind.SwarmConfig)
+                    await ShowSwarmDataResourceDialogAsync(vm, swarmKind, snapX, snapY);
+                else if (swarmKind == RuntimeResourceKind.SwarmVolume)
+                    await ShowSwarmVolumeDialogAndCreateDraftAsync(vm, snapX, snapY);
+                else
+                    await vm.CreateSwarmDraftNodeAsync(swarmKind, snapX, snapY);
+                return;
+            }
+
+            if (e.Data.GetDataPresent("SwarmDataResourceObject") &&
+                e.Data.GetData("SwarmDataResourceObject") is SwarmDataResourceSnapshot dataResource)
+            {
+                await vm.PlaceExistingSwarmDataResourceNodeAsync(dataResource, snapX, snapY);
+                vm.Explorer.UpdateAvailableItems();
                 return;
             }
 
@@ -431,6 +453,11 @@ namespace DockerDiagram
                         DataObject data = new DataObject("DockerGroupObject", group);
                         DragDrop.DoDragDrop(border, data, DragDropEffects.Copy);
                     }
+                    else if (border?.DataContext is SwarmDataResourceSnapshot dataResource)
+                    {
+                        DataObject data = new DataObject("SwarmDataResourceObject", dataResource);
+                        DragDrop.DoDragDrop(border, data, DragDropEffects.Copy);
+                    }
 
                 }
             }
@@ -484,7 +511,7 @@ namespace DockerDiagram
             }
 
             if (DataContext is not MainViewModel vm ||
-                vm.ActiveSheet?.RuntimeKind != RuntimeKind.DockerEngine ||
+                vm.ActiveSheet?.RuntimeKind == RuntimeKind.Kubernetes ||
                 sender is not FrameworkElement element)
             {
                 return;
@@ -513,6 +540,14 @@ namespace DockerDiagram
                 vm.Inspector.ClearSelection();
                 e.Handled = true;
             }
+            else if (element.DataContext is SwarmDataResourceSnapshot dataResource &&
+                     vm.ActiveSheet?.RuntimeKind == RuntimeKind.DockerSwarm)
+            {
+                Point placement = GetViewportCenteredPlacement(160, 80);
+                await vm.PlaceExistingSwarmDataResourceNodeAsync(dataResource, placement.X, placement.Y);
+                vm.Explorer.UpdateAvailableItems();
+                e.Handled = true;
+            }
         }
 
         private static bool TryGetSwarmDraftNodeKind(string tag, out RuntimeResourceKind kind)
@@ -528,6 +563,20 @@ namespace DockerDiagram
             };
             return kind != RuntimeResourceKind.Unspecified;
         }
+
+        private async Task ShowSwarmVolumeDialogAndCreateDraftAsync(MainViewModel viewModel, double x, double y)
+        {
+            var dialog = new Views.VolumeDialog(
+                _dialogService,
+                initialOptions: null,
+                mode: Views.VolumeDialogMode.SwarmDefinition)
+            {
+                Owner = this
+            };
+            if (dialog.ShowDialog() == true)
+                await viewModel.CreateSwarmVolumeDraftNodeAsync(dialog.CreateOptions, x, y);
+        }
+
         private void ComposeProject_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             _toolStartPoint = e.GetPosition(null);

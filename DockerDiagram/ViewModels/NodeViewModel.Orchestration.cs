@@ -1,6 +1,7 @@
 using DockerDiagram.Contracts;
 using DockerDiagram.Common;
 using DockerDiagram.Diagram;
+using DockerDiagram.Models;
 using Newtonsoft.Json.Linq;
 using System;
 using System.IO;
@@ -59,15 +60,19 @@ namespace DockerDiagram.ViewModels
                 IsRunning = true;
                 IsPaused = false;
 
-                object raw = await swarmService.InspectSwarmServiceRawAsync(ContainerId);
-                SwarmServiceInspectJson = raw.ToString() ?? string.Empty;
-                var tasks = await swarmService.GetSwarmServiceTasksAsync(ContainerId);
-                var swarmNodes = await swarmService.GetSwarmNodesAsync();
+                Task<object> inspectTask = swarmService.InspectSwarmServiceRawAsync(ContainerId);
+                Task<SwarmServiceTaskSnapshot> taskSnapshotTask =
+                    swarmService.GetSwarmServiceTaskSnapshotAsync(ContainerId);
+                await Task.WhenAll(inspectTask, taskSnapshotTask);
+
+                SwarmServiceInspectJson = (await inspectTask).ToString() ?? string.Empty;
+                SwarmServiceTaskSnapshot taskSnapshot = await taskSnapshotTask;
+                IReadOnlyList<DockerSwarmTask> tasks = taskSnapshot.Tasks;
                 SwarmTasks.Clear();
                 foreach (var task in tasks)
                     SwarmTasks.Add(task);
                 SwarmTaskPlacements.Clear();
-                foreach (var placement in SwarmTaskTopology.Build(tasks, swarmNodes))
+                foreach (var placement in SwarmTaskTopology.Build(tasks, taskSnapshot.Nodes))
                     SwarmTaskPlacements.Add(placement);
                 OnPropertyChanged(nameof(CanScaleSwarmService));
                 OnPropertyChanged(nameof(SwarmReplicaSummary));
@@ -116,10 +121,14 @@ namespace DockerDiagram.ViewModels
 
             try
             {
+                SheetViewModel? ownerSheet = ParentSheet;
                 await swarmService.RemoveSwarmServiceAsync(ContainerId);
 
-                if (ParentSheet != null)
-                    await ParentSheet.RemoveNodeAsync(this);
+                if (ownerSheet != null)
+                {
+                    await ownerSheet.RemoveNodeAsync(this);
+                    await ownerSheet.NotifyRuntimeResourcesChangedAsync();
+                }
 
                 NotifyModified();
             }
