@@ -1,18 +1,20 @@
-using Microsoft.Win32;
 using System.IO;
 using System.Windows;
+using Microsoft.Win32;
 
 namespace DockerDiagram.Views
 {
     public partial class ImageImportWindow : Window
     {
+        private readonly DockerDiagram.Contracts.IDialogService _dialogService;
         public string TarPath => TarPathBox.Text.Trim();
         public string Repository => RepositoryBox.Text.Trim();
         public string ImageTag => ImageTagBox.Text.Trim();
         public string Message => ImportMessageBox.Text.Trim();
 
-        public ImageImportWindow()
+        public ImageImportWindow(DockerDiagram.Contracts.IDialogService dialogService)
         {
+            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
             InitializeComponent();
             ImageTagBox.Text = "latest";
             TarPathBox.Focus();
@@ -22,7 +24,7 @@ namespace DockerDiagram.Views
         {
             var dialog = new OpenFileDialog
             {
-                Title = "Select container filesystem tar",
+                Title = "컨테이너 파일 시스템 tar 선택",
                 Filter = "Tar files (*.tar)|*.tar|All files (*.*)|*.*"
             };
 
@@ -40,19 +42,19 @@ namespace DockerDiagram.Views
         {
             if (!File.Exists(TarPath))
             {
-                MessageBox.Show(this, "A valid tar file is required.", "Import Image", MessageBoxButton.OK, MessageBoxImage.Information);
+                _dialogService.ShowInfo("A valid tar file is required.", "Import Image");
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(Repository))
             {
-                MessageBox.Show(this, "Repository is required.", "Import Image", MessageBoxButton.OK, MessageBoxImage.Information);
+                _dialogService.ShowInfo("Repository is required.", "Import Image");
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(ImageTag))
             {
-                MessageBox.Show(this, "Tag is required.", "Import Image", MessageBoxButton.OK, MessageBoxImage.Information);
+                _dialogService.ShowInfo("Tag is required.", "Import Image");
                 return;
             }
 

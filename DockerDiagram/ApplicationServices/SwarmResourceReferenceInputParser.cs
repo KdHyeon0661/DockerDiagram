@@ -1,5 +1,5 @@
-using DockerDiagram.Models;
 using System.Text.RegularExpressions;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.ApplicationServices
 {

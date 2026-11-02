@@ -17,7 +17,7 @@ namespace DockerDiagram.ApplicationServices
         public static List<string> PortBindings(SwarmServiceSpecOptions spec) =>
             spec.PublishedPorts.Select(port =>
             {
-                string published = port.PublishedPort?.ToString() ?? "auto";
+                string published = port.PublishedPort?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "auto";
                 return $"{published}->{port.TargetPort}/{port.Protocol.ToString().ToLowerInvariant()} ({port.PublishMode.ToString().ToLowerInvariant()})";
             }).ToList();
 

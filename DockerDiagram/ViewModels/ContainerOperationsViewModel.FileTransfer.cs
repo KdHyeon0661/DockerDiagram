@@ -1,7 +1,9 @@
-using DockerDiagram.Common;
 using System;
 using System.IO;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using DockerDiagram.Common;
 
 namespace DockerDiagram.ViewModels
 {
@@ -64,7 +66,117 @@ namespace DockerDiagram.ViewModels
             IsTransferBusy = isBusy;
             TransferStatus = status;
             RaiseTransferCommandStates();
+            RaiseDetailTransferCommandStates();
         }
+
+        private bool CanDetailUpload() =>
+            IsConnectedContainer && !IsTransferBusy &&
+            !string.IsNullOrWhiteSpace(UploadContainerPath) &&
+            (File.Exists(UploadHostPath) || Directory.Exists(UploadHostPath));
+
+        private bool CanDetailDownload() =>
+            IsConnectedContainer && !IsTransferBusy &&
+            !string.IsNullOrWhiteSpace(DownloadContainerPath) &&
+            !string.IsNullOrWhiteSpace(DownloadHostFolder) &&
+            !File.Exists(DownloadHostFolder);
+
+        private void RaiseDetailTransferCommandStates()
+        {
+            DetailUploadCommand?.RaiseCanExecuteChanged();
+            DetailDownloadCommand?.RaiseCanExecuteChanged();
+            CancelTransferCommand?.RaiseCanExecuteChanged();
+        }
+
+        private void BrowseUploadFile()
+        {
+            string? path = _dialogService.ShowOpenFileDialog("All files (*.*)|*.*", "업로드할 파일 선택");
+            if (!string.IsNullOrWhiteSpace(path)) UploadHostPath = path;
+        }
+
+        private void BrowseUploadFolder()
+        {
+            string? path = _dialogService.ShowOpenFolderDialog("업로드할 폴더 선택", Directory.Exists(UploadHostPath) ? UploadHostPath : null);
+            if (!string.IsNullOrWhiteSpace(path)) UploadHostPath = path;
+        }
+
+        private void BrowseDownloadFolder()
+        {
+            string? path = _dialogService.ShowOpenFolderDialog("다운로드 대상 폴더 선택", Directory.Exists(DownloadHostFolder) ? DownloadHostFolder : null);
+            if (!string.IsNullOrWhiteSpace(path)) DownloadHostFolder = path;
+        }
+
+        private async Task DetailUploadAsync()
+        {
+            _transferCts?.Dispose();
+            _transferCts = new CancellationTokenSource();
+            SetTransferBusy(true, "컨테이너로 복사하는 중...");
+            try
+            {
+                await _containerService.CopyToContainerAsync(
+                    _node.ContainerId,
+                    UploadHostPath,
+                    UploadContainerPath,
+                    _transferCts.Token);
+                TransferStatus = "업로드가 완료되었습니다.";
+            }
+            catch (OperationCanceledException)
+            {
+                TransferStatus = "업로드를 취소했습니다.";
+            }
+            catch (Exception ex)
+            {
+                TransferStatus = $"업로드 실패: {ex.GetBaseException().Message}";
+                _dialogService.ShowError(TransferStatus, "파일 업로드");
+            }
+            finally
+            {
+                _transferCts?.Dispose();
+                _transferCts = null;
+                SetTransferBusy(false, TransferStatus);
+            }
+        }
+
+        private async Task DetailDownloadAsync()
+        {
+            if (Directory.Exists(DownloadHostFolder) && Directory.EnumerateFileSystemEntries(DownloadHostFolder).Any() &&
+                !_dialogService.ShowConfirm(
+                    "대상 폴더가 비어 있지 않습니다. 같은 이름의 파일은 덮어쓸 수 있습니다. 계속하시겠습니까?",
+                    "다운로드 대상 확인"))
+            {
+                return;
+            }
+
+            _transferCts?.Dispose();
+            _transferCts = new CancellationTokenSource();
+            SetTransferBusy(true, "컨테이너에서 복사하는 중...");
+            try
+            {
+                Directory.CreateDirectory(DownloadHostFolder);
+                await _containerService.CopyFromContainerAsync(
+                    _node.ContainerId,
+                    DownloadContainerPath,
+                    DownloadHostFolder,
+                    _transferCts.Token);
+                TransferStatus = "다운로드가 완료되었습니다.";
+            }
+            catch (OperationCanceledException)
+            {
+                TransferStatus = "다운로드를 취소했습니다.";
+            }
+            catch (Exception ex)
+            {
+                TransferStatus = $"다운로드 실패: {ex.GetBaseException().Message}";
+                _dialogService.ShowError(TransferStatus, "파일 다운로드");
+            }
+            finally
+            {
+                _transferCts?.Dispose();
+                _transferCts = null;
+                SetTransferBusy(false, TransferStatus);
+            }
+        }
+
+        private void CancelTransfer() => _transferCts?.Cancel();
 
         private async Task CopyToContainerAsync()
         {

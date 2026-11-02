@@ -1,11 +1,13 @@
-<Window x:Class="DockerDiagram.Views.ConnectionManagerWindow"
+﻿<Window x:Class="DockerDiagram.Views.ConnectionManagerWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Connection Manager"
+        Style="{StaticResource DialogWindowStyle}"
+        Title="연결 관리"
         Width="820"
         Height="500"
         WindowStartupLocation="CenterOwner"
-        Background="#F6F7F8">
+        Background="{StaticResource DialogWindowBackgroundBrush}">
+    <Window.Resources><ResourceDictionary><ResourceDictionary.MergedDictionaries><ResourceDictionary Source="Themes/DialogControlDefaults.xaml"/></ResourceDictionary.MergedDictionaries></ResourceDictionary></Window.Resources>
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -13,17 +15,17 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Text="Connection Manager" FontSize="18" FontWeight="SemiBold" Foreground="#333" Margin="0,0,0,12"/>
+        <TextBlock Text="연결 관리" Style="{StaticResource DialogTitleStyle}" Margin="0,0,0,12"/>
 
         <TabControl Grid.Row="1">
-            <TabItem Header="App Connections">
+            <TabItem Header="앱 연결">
                 <Grid Margin="0,10,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <Border Background="White" BorderBrush="#D8DDE3" BorderThickness="1">
+                    <Border Background="{StaticResource DialogSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1">
                         <DataGrid x:Name="ConnectionGrid"
                                   AutoGenerateColumns="False"
                                   CanUserAddRows="False"
@@ -35,24 +37,24 @@
                                   GridLinesVisibility="Horizontal"
                                   SelectionChanged="ConnectionGrid_SelectionChanged">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" Width="180"/>
-                                <DataGridTextColumn Header="Type" Binding="{Binding KindLabel}" Width="80"/>
-                                <DataGridTextColumn Header="Host" Binding="{Binding HostSummary}" Width="*"/>
-                                <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="110"/>
-                                <DataGridTextColumn Header="Sheets" Binding="{Binding Sheets.Count}" Width="70"/>
+                                <DataGridTextColumn Header="이름" Binding="{Binding DisplayName}" Width="180"/>
+                                <DataGridTextColumn Header="종류" Binding="{Binding KindLabel}" Width="80"/>
+                                <DataGridTextColumn Header="호스트" Binding="{Binding HostSummary}" Width="*"/>
+                                <DataGridTextColumn Header="상태" Binding="{Binding StatusText}" Width="110"/>
+                                <DataGridTextColumn Header="시트" Binding="{Binding Sheets.Count}" Width="70"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </Border>
 
                     <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,12,0,0">
                         <TextBox x:Name="txtConnectionName" Width="220" Padding="6" VerticalContentAlignment="Center"/>
-                        <Button Content="Rename" Width="88" Margin="8,0,0,0" Click="Rename_Click"/>
-                        <Button Content="Remove" Width="88" Margin="8,0,0,0" Foreground="#dc3545" Click="Remove_Click"/>
+                        <Button Content="이름 변경" Width="88" Margin="8,0,0,0" Click="Rename_Click"/>
+                        <Button Content="제거" Width="88" Margin="8,0,0,0" Style="{StaticResource DialogDangerButtonStyle}" Click="Remove_Click"/>
                     </StackPanel>
                 </Grid>
             </TabItem>
 
-            <TabItem Header="Docker Contexts">
+            <TabItem Header="Docker Context">
                 <Grid Margin="0,10,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
@@ -60,7 +62,7 @@
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
-                    <Border Background="White" BorderBrush="#D8DDE3" BorderThickness="1">
+                    <Border Background="{StaticResource DialogSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1">
                         <DataGrid x:Name="DockerContextGrid"
                                   AutoGenerateColumns="False"
                                   CanUserAddRows="False"
@@ -71,33 +73,33 @@
                                   BorderThickness="0"
                                   GridLinesVisibility="Horizontal">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Current" Binding="{Binding CurrentText}" Width="70"/>
-                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="170"/>
-                                <DataGridTextColumn Header="Docker Endpoint" Binding="{Binding DockerEndpoint}" Width="*"/>
-                                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="180"/>
-                                <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="120"/>
+                                <DataGridTextColumn Header="현재" Binding="{Binding CurrentText}" Width="70"/>
+                                <DataGridTextColumn Header="이름" Binding="{Binding Name}" Width="170"/>
+                                <DataGridTextColumn Header="Docker 엔드포인트" Binding="{Binding DockerEndpoint}" Width="*"/>
+                                <DataGridTextColumn Header="설명" Binding="{Binding Description}" Width="180"/>
+                                <DataGridTextColumn Header="상태" Binding="{Binding StatusText}" Width="120"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </Border>
 
                     <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,12,0,0">
-                        <Button Content="Refresh" Width="88" Click="RefreshContexts_Click"/>
-                        <Button Content="Use" Width="88" Margin="8,0,0,0" Click="UseContext_Click"/>
-                        <Button Content="Create" Width="88" Margin="8,0,0,0" Click="CreateContext_Click"/>
-                        <Button Content="Remove" Width="88" Margin="8,0,0,0" Foreground="#dc3545" Click="RemoveContext_Click"/>
-                        <Button Content="Open Workspace" Width="128" Margin="8,0,0,0" Background="#007ACC" Foreground="White" BorderThickness="0" Click="OpenContextWorkspace_Click"/>
+                        <Button Content="새로고침" Width="88" Click="RefreshContexts_Click"/>
+                        <Button Content="사용" Width="88" Margin="8,0,0,0" Click="UseContext_Click"/>
+                        <Button Content="생성" Width="88" Margin="8,0,0,0" Click="CreateContext_Click"/>
+                        <Button Content="제거" Width="88" Margin="8,0,0,0" Style="{StaticResource DialogDangerButtonStyle}" Click="RemoveContext_Click"/>
+                        <Button Content="작업 공간 열기" Width="128" Margin="8,0,0,0" Style="{StaticResource DialogPrimaryButtonStyle}" Click="OpenContextWorkspace_Click"/>
                     </StackPanel>
 
                     <TextBlock x:Name="DockerContextStatusText"
                                Grid.Row="2"
-                               Text="Docker CLI contexts are managed separately from app workspaces."
-                               Foreground="#777"
+                               Text="Docker CLI Context는 앱 작업 공간과 별도로 관리됩니다."
+                               Foreground="{StaticResource DialogMutedTextBrush}"
                                FontSize="12"
                                Margin="0,8,0,0"/>
                 </Grid>
             </TabItem>
         </TabControl>
 
-        <Button Grid.Row="2" Content="Close" Width="88" Height="30" HorizontalAlignment="Right" Margin="0,12,0,0" Click="Close_Click"/>
+        <Button Grid.Row="2" Content="닫기" Width="88" MinHeight="38" HorizontalAlignment="Right" Margin="0,12,0,0" Style="{StaticResource DialogSecondaryButtonStyle}" Click="Close_Click"/>
     </Grid>
 </Window>

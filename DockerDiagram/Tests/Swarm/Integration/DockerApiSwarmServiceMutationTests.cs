@@ -6,8 +6,11 @@ namespace DockerDiagram.Tests;
 
 public sealed class DockerApiSwarmServiceMutationTests
 {
+
+    private static readonly string[] CreateServiceRequiresManagerPostsSpecAndReadsCreatedVersionExpectedValues = new[] { "registry digest unresolved" };
+
     [Fact]
-    public async Task CreateService_RequiresManagerPostsSpecAndReadsCreatedVersion()
+    public async Task CreateServiceRequiresManagerPostsSpecAndReadsCreatedVersion()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(ManagerInfo()),
@@ -20,7 +23,7 @@ public sealed class DockerApiSwarmServiceMutationTests
 
         Assert.Equal("service-1", result.ServiceId);
         Assert.Equal(2ul, result.Version);
-        Assert.Equal(new[] { "registry digest unresolved" }, result.Warnings);
+        Assert.Equal(CreateServiceRequiresManagerPostsSpecAndReadsCreatedVersionExpectedValues, result.Warnings);
         Assert.Equal(
             new[]
             {
@@ -36,7 +39,7 @@ public sealed class DockerApiSwarmServiceMutationTests
     }
 
     [Fact]
-    public async Task UpdateService_UsesOptimisticVersionAndPreservesUnsupportedFields()
+    public async Task UpdateServiceUsesOptimisticVersionAndPreservesUnsupportedFields()
     {
         string current = """
             {
@@ -81,7 +84,7 @@ public sealed class DockerApiSwarmServiceMutationTests
     }
 
     [Fact]
-    public async Task UpdateService_ForwardsAutomaticHostUdpPublishedPort()
+    public async Task UpdateServiceForwardsAutomaticHostUdpPublishedPort()
     {
         string current = """
             {
@@ -131,7 +134,7 @@ public sealed class DockerApiSwarmServiceMutationTests
     }
 
     [Fact]
-    public async Task UpdateService_RejectsStaleVersionBeforePostingMutation()
+    public async Task UpdateServiceRejectsStaleVersionBeforePostingMutation()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(ManagerInfo()),
@@ -153,7 +156,7 @@ public sealed class DockerApiSwarmServiceMutationTests
     }
 
     [Fact]
-    public async Task CreateService_RejectsWorkerConnectionBeforeMutation()
+    public async Task CreateServiceRejectsWorkerConnectionBeforeMutation()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(WorkerInfo()));

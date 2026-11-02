@@ -3,13 +3,48 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
 
+    <Style x:Key="CreateToolCardStyle" TargetType="Border">
+        <Setter Property="Height" Value="40"/>
+        <Setter Property="Margin" Value="0,0,0,5"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="Background" Value="White"/>
+        <Setter Property="BorderBrush" Value="#D5DAE0"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="6"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="SnapsToDevicePixels" Value="True"/>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#F7FAFC"/>
+                <Setter Property="BorderBrush" Value="#8EADBF"/>
+            </Trigger>
+            <Trigger Property="IsMouseCaptureWithin" Value="True">
+                <Setter Property="Background" Value="#EAF2F7"/>
+                <Setter Property="BorderBrush" Value="#5E8CA8"/>
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="PopupPanelStyle" TargetType="Border">
+        <Setter Property="Background" Value="White"/>
+        <Setter Property="BorderBrush" Value="#C9D1D9"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="7"/>
+        <Setter Property="Padding" Value="4"/>
+        <Setter Property="Effect">
+            <Setter.Value>
+                <DropShadowEffect BlurRadius="14" ShadowDepth="3" Opacity="0.14"/>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="SearchTextBoxStyle" TargetType="TextBox">
         <Setter Property="VerticalContentAlignment" Value="Center"/>
         <Setter Property="Background" Value="White"/>
         <Setter Property="BorderBrush" Value="#D7DCE2"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="Height" Value="32"/>
-        <Setter Property="Padding" Value="8,0"/>
+        <Setter Property="MinHeight" Value="38"/>
+        <Setter Property="Padding" Value="8,5"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TextBox">
@@ -17,8 +52,9 @@
                         <Border Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="4"/>
-                        <ScrollViewer x:Name="PART_ContentHost" Margin="8,0" VerticalAlignment="Center"/>
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}"/>
+                        <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center"/>
                         <TextBlock x:Name="Placeholder"
                                Text="{TemplateBinding Tag}"
                                Foreground="#8A929D"
@@ -243,20 +279,32 @@
 
     <Style x:Key="MenuItemStyle" TargetType="Button">
         <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Foreground" Value="#343A43"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="HorizontalContentAlignment" Value="Left"/>
         <Setter Property="VerticalContentAlignment" Value="Center"/>
-        <Setter Property="Padding" Value="10,6"/>
+        <Setter Property="MinHeight" Value="38"/>
+        <Setter Property="Margin" Value="1"/>
+        <Setter Property="Padding" Value="10,7"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
-                    <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                    <Border x:Name="MenuBackground"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="4"
+                            Padding="{TemplateBinding Padding}">
                         <ContentPresenter />
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter Property="Background" Value="#E8E8E8"/>
+                            <Setter TargetName="MenuBackground" Property="Background" Value="#EEF3F7"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="MenuBackground" Property="Background" Value="#DDE8EF"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="MenuBackground" Property="Opacity" Value="0.45"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -268,13 +316,18 @@
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="HorizontalContentAlignment" Value="Left"/>
-        <Setter Property="Padding" Value="5,6,10,6"/>
+        <Setter Property="MinHeight" Value="38"/>
+        <Setter Property="Margin" Value="1"/>
+        <Setter Property="Padding" Value="5,7,10,7"/>
         <Setter Property="Cursor" Value="Hand"/>
-        <Setter Property="Foreground" Value="#333"/>
+        <Setter Property="Foreground" Value="#343A43"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ToggleButton">
-                    <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                    <Border x:Name="MenuBackground"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="4"
+                            Padding="{TemplateBinding Padding}">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="25"/>
@@ -291,7 +344,10 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter Property="Background" Value="#E8E8E8"/>
+                            <Setter TargetName="MenuBackground" Property="Background" Value="#EEF3F7"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="MenuBackground" Property="Background" Value="#DDE8EF"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -397,15 +453,84 @@
 
     <Style TargetType="Button" x:Key="NavButtonStyle">
         <Setter Property="Width" Value="30"/>
+        <Setter Property="Height" Value="30"/>
+        <Setter Property="Margin" Value="1,2"/>
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Cursor" Value="Hand"/>
-        <Style.Triggers>
-            <Trigger Property="IsEnabled" Value="False">
-                <Setter Property="Opacity" Value="0.3"/>
-                <Setter Property="Cursor" Value="Arrow"/>
-            </Trigger>
-        </Style.Triggers>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="NavBackground"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="4">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="NavBackground" Property="Background" Value="#E6EDF3"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="NavBackground" Property="Background" Value="#D3E0E9"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="NavBackground" Property="Opacity" Value="0.3"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="InspectorActionButtonStyle" TargetType="Button">
+        <Setter Property="MinHeight" Value="38"/>
+        <Setter Property="Padding" Value="12,6"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Background" Value="White"/>
+        <Setter Property="Foreground" Value="#343A43"/>
+        <Setter Property="BorderBrush" Value="#C9D0D7"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="ActionBackground"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="5"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="ActionBackground" Property="Opacity" Value="0.9"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="ActionBackground" Property="Opacity" Value="0.76"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="ActionBackground" Property="Opacity" Value="0.45"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="InspectorPrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource InspectorActionButtonStyle}">
+        <Setter Property="Background" Value="#287BAE"/>
+        <Setter Property="BorderBrush" Value="#287BAE"/>
+        <Setter Property="Foreground" Value="White"/>
+    </Style>
+
+    <Style x:Key="InspectorDangerButtonStyle" TargetType="Button" BasedOn="{StaticResource InspectorActionButtonStyle}">
+        <Setter Property="Background" Value="#C63D47"/>
+        <Setter Property="BorderBrush" Value="#C63D47"/>
+        <Setter Property="Foreground" Value="White"/>
     </Style>
 
     <Geometry x:Key="GearIcon">M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03-0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z</Geometry>
@@ -426,5 +551,9 @@
     <Geometry x:Key="KeyIcon">M7,14A3,3 0 1 1 7,8A3,3 0 0 1 7,14M7,12A1,1 0 1 0 7,10A1,1 0 0 0 7,12M10,10H22V13H20V15H17V13H14V12H10V10Z</Geometry>
     <Geometry x:Key="DocumentIcon">M14,2H6A2,2 0 0 0 4,4V20A2,2 0 0 0 6,22H18A2,2 0 0 0 20,20V8L14,2M13,3.5L18.5,9H13V3.5M8,13H16V15H8V13M8,17H16V19H8V17Z</Geometry>
     <Geometry x:Key="FolderIcon">M10,4H2A2,2 0 0 0 0,6V18A2,2 0 0 0 2,20H22A2,2 0 0 0 24,18V8A2,2 0 0 0 22,6H12L10,4Z</Geometry>
+    <Geometry x:Key="SaveIcon">M17,3H5C3.89,3 3,3.9 3,5V19C3,20.1 3.9,21 5,21H19C20.1,21 21,20.1 21,19V7L17,3M12,19C10.34,19 9,17.66 9,16S10.34,13 12,13 15,14.34 15,16 13.66,19 12,19M15,9H5V5H15V9Z</Geometry>
+    <Geometry x:Key="TrashIcon">M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19V4M6,19C6,20.1 6.9,21 8,21H16C17.1,21 18,20.1 18,19V7H6V19Z</Geometry>
+    <Geometry x:Key="ImageIcon">M21,19V5C21,3.9 20.1,3 19,3H5C3.89,3 3,3.9 3,5V19C3,20.1 3.9,21 5,21H19C20.1,21 21,20.1 21,19M8.5,13.5L11,16.5L14.5,12L19,18H5L8.5,13.5Z</Geometry>
+    <Geometry x:Key="LinkIcon">M3.9,12C3.9,10.29 5.29,8.9 7,8.9H10V7H7C4.24,7 2,9.24 2,12S4.24,17 7,17H10V15.1H7C5.29,15.1 3.9,13.71 3.9,12M8,13H16V11H8V13M17,7H14V8.9H17C18.71,8.9 20.1,10.29 20.1,12S18.71,15.1 17,15.1H14V17H17C19.76,17 22,14.76 22,12S19.76,7 17,7Z</Geometry>
 
 </ResourceDictionary>

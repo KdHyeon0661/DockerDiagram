@@ -12,7 +12,7 @@ public sealed class SwarmClusterStateTests
     [InlineData("locked", false, SwarmMembershipState.Locked)]
     [InlineData("error", false, SwarmMembershipState.Error)]
     [InlineData("unexpected", false, SwarmMembershipState.Unknown)]
-    public void Create_MapsDockerStateAndControlFlag(
+    public void CreateMapsDockerStateAndControlFlag(
         string localState,
         bool controlAvailable,
         SwarmMembershipState expected)
@@ -23,7 +23,7 @@ public sealed class SwarmClusterStateTests
     }
 
     [Fact]
-    public void Create_UsesErrorMembershipWhenDockerReturnsAnError()
+    public void CreateUsesErrorMembershipWhenDockerReturnsAnError()
     {
         SwarmClusterState state = SwarmClusterState.Create(null, false, errorMessage: "daemon unavailable");
 

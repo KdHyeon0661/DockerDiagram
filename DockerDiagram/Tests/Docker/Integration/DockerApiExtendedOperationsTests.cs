@@ -6,8 +6,15 @@ namespace DockerDiagram.Tests;
 
 public sealed class DockerApiExtendedOperationsTests
 {
+
+    private static readonly string[] EngineMetadataMapsRuntimeConfigurationWithoutRegistryFallbackExpectedValues1 = new[] { "MODE=production" };
+    private static readonly string[] EngineMetadataMapsRuntimeConfigurationWithoutRegistryFallbackExpectedValues2 = new[] { "8080/tcp" };
+    private static readonly string[] EngineMetadataMapsRuntimeConfigurationWithoutRegistryFallbackExpectedValues3 = new[] { "/data" };
+    private static readonly string[] EngineMetadataMapsRuntimeConfigurationWithoutRegistryFallbackExpectedValues4 = new[] { "dotnet" };
+    private static readonly string[] EngineMetadataMapsRuntimeConfigurationWithoutRegistryFallbackExpectedValues5 = new[] { "Api.dll" };
+
     [Fact]
-    public async Task CommitAndResourceUpdate_ForwardAllMutationOptions()
+    public async Task CommitAndResourceUpdateForwardSupportedMutationOptionsWithoutChangingSwap()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""{"Id":"sha256:committed"}""", 201),
@@ -36,11 +43,11 @@ public sealed class DockerApiExtendedOperationsTests
         JObject body = JObject.Parse(update.Body);
         Assert.Equal(1_500_000_000L, body.GetValue("NanoCpus", StringComparison.OrdinalIgnoreCase)!.Value<long>());
         Assert.Equal(256L * 1024 * 1024, body.Value<long>("Memory"));
-        Assert.Equal(256L * 1024 * 1024, body.Value<long>("MemorySwap"));
+        Assert.Null(body.GetValue("MemorySwap", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public async Task ExportContainerAndSaveImage_WriteEngineStreamsToFiles()
+    public async Task ExportContainerAndSaveImageWriteEngineStreamsToFiles()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Bytes("container-archive"u8.ToArray(), "application/x-tar"),
@@ -69,7 +76,7 @@ public sealed class DockerApiExtendedOperationsTests
     }
 
     [Fact]
-    public async Task PullAndPushImage_ForwardTagAndRegistryAuthentication()
+    public async Task PullAndPushImageForwardTagAndRegistryAuthentication()
     {
         const string progress = "{\"status\":\"done\"}\n";
         await using var server = new ScriptedDockerApiServer(
@@ -96,7 +103,7 @@ public sealed class DockerApiExtendedOperationsTests
     }
 
     [Fact]
-    public async Task EngineMetadata_MapsRuntimeConfigurationWithoutRegistryFallback()
+    public async Task EngineMetadataMapsRuntimeConfigurationWithoutRegistryFallback()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""
@@ -117,15 +124,15 @@ public sealed class DockerApiExtendedOperationsTests
             await service.GetImageMetadataAsync("example/api:2"));
 
         Assert.Equal("Docker Engine", metadata.Source);
-        Assert.Equal(new[] { "MODE=production" }, metadata.Environment);
-        Assert.Equal(new[] { "8080/tcp" }, metadata.ExposedPorts);
-        Assert.Equal(new[] { "/data" }, metadata.Volumes);
-        Assert.Equal(new[] { "dotnet" }, metadata.Entrypoint);
-        Assert.Equal(new[] { "Api.dll" }, metadata.Command);
+        Assert.Equal(EngineMetadataMapsRuntimeConfigurationWithoutRegistryFallbackExpectedValues1, metadata.Environment);
+        Assert.Equal(EngineMetadataMapsRuntimeConfigurationWithoutRegistryFallbackExpectedValues2, metadata.ExposedPorts);
+        Assert.Equal(EngineMetadataMapsRuntimeConfigurationWithoutRegistryFallbackExpectedValues3, metadata.Volumes);
+        Assert.Equal(EngineMetadataMapsRuntimeConfigurationWithoutRegistryFallbackExpectedValues4, metadata.Entrypoint);
+        Assert.Equal(EngineMetadataMapsRuntimeConfigurationWithoutRegistryFallbackExpectedValues5, metadata.Command);
     }
 
     [Fact]
-    public async Task LocalFileOperations_ValidateInputsBeforeContactingDocker()
+    public async Task LocalFileOperationsValidateInputsBeforeContactingDocker()
     {
         await using var server = new ScriptedDockerApiServer();
         using var service = CreateService(server);

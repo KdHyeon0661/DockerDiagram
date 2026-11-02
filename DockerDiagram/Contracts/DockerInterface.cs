@@ -36,28 +36,45 @@ namespace DockerDiagram.Contracts
         Task UnpauseContainerAsync(string id);
         Task RestartContainerAsync(string id);
         Task KillContainerAsync(string id, string signal = "SIGKILL");
-        Task RenameContainerAsync(string id, string newName);
+        Task RenameContainerAsync(string id, string newName, CancellationToken cancellationToken = default);
         Task RemoveContainerAsync(string id);
-        Task<string> CommitContainerAsync(string containerId, string repository, string tag, string comment, string author, bool pause);
-        Task ExportContainerAsync(string containerId, string tarFilePath);
+        Task<string> CommitContainerAsync(string containerId, string repository, string tag, string comment, string author, bool pause, CancellationToken cancellationToken = default);
+        Task ExportContainerAsync(string containerId, string tarFilePath, CancellationToken cancellationToken = default);
 
-        Task<string> CreateAndStartContainerAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, string command = "", bool tty = false, string networkName = "", Dictionary<string, string>? labels = null);
+        Task<string> CreateAndStartContainerAsync(string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes, string restartPolicy, long memoryMb, double cpuCount, string command = "", bool tty = false, string networkName = "", Dictionary<string, string>? labels = null, IProgress<ContainerCreationProgress>? progress = null);
+        Task<string> CreateAndStartContainerAsync(
+            string name,
+            string image,
+            string tag,
+            List<string> ports,
+            List<string> envs,
+            IReadOnlyList<ContainerMountSpec> mounts,
+            string restartPolicy,
+            long memoryMb,
+            double cpuCount,
+            string command = "",
+            bool tty = false,
+            string networkName = "",
+            Dictionary<string, string>? labels = null,
+            IProgress<ContainerCreationProgress>? progress = null);
         Task<string> RecreateContainerFromInspectAsync(
             string name,
             ContainerInspectResponse source,
             IList<string> binds,
             bool startContainer,
-            IList<Mount>? mounts = null) =>
+            IList<Mount>? mounts = null,
+            IList<string>? environment = null,
+            IDictionary<string, IList<PortBinding>>? portBindings = null,
+            IDictionary<string, EmptyStruct>? exposedPorts = null) =>
             throw new NotSupportedException("이 컨테이너 서비스는 inspect 기반 재생성을 지원하지 않습니다.");
         Task UpdateContainerResourcesAsync(string containerId, double cpuCount, long memoryMb);
 
-        Task CopyFromContainerAsync(string containerId, string containerPath, string hostPath);
-        Task CopyToContainerAsync(string containerId, string hostPath, string containerPath);
-        Task<bool> OpenTerminalAsync(string containerId);
-        Task ExecuteCommandAsync(string containerId, string command);
-        Task<ExecCommandResult> ExecuteCommandWithOutputAsync(string containerId, string command);
+        Task CopyFromContainerAsync(string containerId, string containerPath, string hostPath, CancellationToken cancellationToken = default);
+        Task CopyToContainerAsync(string containerId, string hostPath, string containerPath, CancellationToken cancellationToken = default);
+        Task<bool> OpenTerminalAsync(string containerId, CancellationToken cancellationToken = default);
+        Task<ExecCommandResult> ExecuteCommandWithOutputAsync(string containerId, string command, CancellationToken cancellationToken = default);
         Task<ContainerStats> GetContainerStatsAsync(string containerId);
-        Task<string> GetContainerLogsAsync(string containerId, int tailCount = 500);
+        Task<string> GetContainerLogsAsync(string containerId, int tailCount = 500, CancellationToken cancellationToken = default);
         Task<SystemInfoResponse> GetSystemInfoAsync();
         Task StreamContainerLogsAsync(string containerId, Action<string> onLogLineReceived, CancellationToken cancellationToken, int initialTailCount = 100);
     }
@@ -74,8 +91,8 @@ namespace DockerDiagram.Contracts
         Task RemoveVolumeAsync(string name, bool force = false);
         Task<List<string>> GetContainersUsingVolumeAsync(string volumeName);
         Task<List<VolumeUsageInfo>> GetVolumeUsageDetailsAsync(string volumeName);
-        Task BackupVolumeAsync(string volumeName, string hostTarFilePath);
-        Task RestoreVolumeAsync(string volumeName, string hostTarFilePath);
+        Task BackupVolumeAsync(string volumeName, string hostTarFilePath, CancellationToken cancellationToken = default);
+        Task RestoreVolumeAsync(string volumeName, string hostTarFilePath, CancellationToken cancellationToken = default);
     }
 
     /// <summary>
@@ -110,14 +127,14 @@ namespace DockerDiagram.Contracts
     {
         Task<List<DockerImage>> GetImagesAsync();
         Task<ImageInspectResponse> InspectImageAsync(string imageReference, CancellationToken cancellationToken = default);
-        Task PullImageAsync(string image, string tag, string? username = null, string? password = null, string? serverAddress = null);
+        Task PullImageAsync(string image, string tag, string? username = null, string? password = null, string? serverAddress = null, CancellationToken cancellationToken = default);
         Task DeleteImageAsync(string imageId, bool force = false);
-        Task ImportImageFromTarAsync(string tarFilePath, string repository, string tag, string message);
-        Task TagImageAsync(string sourceImage, string repository, string tag, bool force = true);
-        Task PushImageAsync(string repository, string tag, string? username = null, string? password = null, string? serverAddress = null);
-        Task SaveImageAsync(string image, string tarFilePath);
-        Task LoadImageFromTarAsync(string tarFilePath);
-        Task BuildImageAsync(string targetImageName, string buildContextPath, string dockerfilePath, IProgress<JSONMessage>? progress = null);
+        Task ImportImageFromTarAsync(string tarFilePath, string repository, string tag, string message, CancellationToken cancellationToken = default);
+        Task TagImageAsync(string sourceImage, string repository, string tag, bool force = true, CancellationToken cancellationToken = default);
+        Task PushImageAsync(string repository, string tag, string? username = null, string? password = null, string? serverAddress = null, CancellationToken cancellationToken = default);
+        Task SaveImageAsync(string image, string tarFilePath, CancellationToken cancellationToken = default);
+        Task LoadImageFromTarAsync(string tarFilePath, CancellationToken cancellationToken = default);
+        Task BuildImageAsync(string targetImageName, string buildContextPath, string dockerfilePath, IProgress<JSONMessage>? progress = null, CancellationToken cancellationToken = default);
         Task<List<ImageSearchResponse>> SearchImagesAsync(string term, int limit = 20);
         Task<ContainerImageMetadata?> GetImageMetadataAsync(
             string imageReference,
@@ -125,12 +142,12 @@ namespace DockerDiagram.Contracts
             string? password = null,
             string? serverAddress = null,
             CancellationToken cancellationToken = default);
-        Task PullImageWithProgressAsync(string image, string tag, IProgress<JSONMessage> progress, string? username = null, string? password = null, string? serverAddress = null);
+        Task PullImageWithProgressAsync(string image, string tag, IProgress<JSONMessage> progress, string? username = null, string? password = null, string? serverAddress = null, CancellationToken cancellationToken = default);
     }
 
     public interface ISwarmService
     {
-        Task<SwarmClusterState> GetSwarmStateAsync();
+        Task<SwarmClusterState> GetSwarmStateAsync(CancellationToken cancellationToken = default);
         Task<string> InitializeSwarmAsync(SwarmInitializeOptions options, CancellationToken cancellationToken = default);
         Task<SwarmJoinTokens> GetJoinTokensAsync(CancellationToken cancellationToken = default);
         Task JoinSwarmAsync(SwarmJoinOptions options, CancellationToken cancellationToken = default);

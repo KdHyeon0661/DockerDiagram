@@ -1,10 +1,10 @@
-﻿using DockerDiagram.Contracts;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 using YamlDotNet.Serialization;
@@ -15,7 +15,7 @@ namespace DockerDiagram.ApplicationServices
     /// <summary>
     /// 현재 시트의 Docker 구성을 Compose YAML로 내보냅니다.
     /// </summary>
-    public static class ComposeExportService
+    public static partial class ComposeExportService
     {
         /// <summary>
         /// 저장 위치를 선택하고 시트 데이터를 Compose YAML 파일로 저장합니다.
@@ -105,7 +105,11 @@ namespace DockerDiagram.ApplicationServices
                     ComposeYamlHelper.SetValue(service, "environment", new List<string>(node.EnvironmentVariables));
 
                 var connectedVolumes = GetConnectedVolumes(node, sheet);
-                if (!ComposeYamlHelper.HasKey(service, "volumes") && connectedVolumes.Count > 0)
+                // 마운트는 UI/런타임에서 편집할 수 있으므로 원본 YAML보다 현재 다이어그램 상태가 우선입니다.
+                // tmpfs도 volumes long syntax로 통합해 두 키에 같은 대상이 중복되지 않게 합니다.
+                RemoveComposeKey(service, "volumes");
+                RemoveComposeKey(service, "tmpfs");
+                if (connectedVolumes.Count > 0)
                     ComposeYamlHelper.SetValue(service, "volumes", connectedVolumes);
 
                 // 의존성(depends_on) 정보 세팅
@@ -139,37 +143,57 @@ namespace DockerDiagram.ApplicationServices
 
             // 3. Networks 생성. 원본 네트워크 설정(driver/options/ipam/labels 등)은 보존하고, 새 그룹만 추가합니다.
             var networkGroups = sheet.Groups.Where(g => g.Type == GroupType.Network).ToList();
-            if (networkGroups.Any())
+            var existingNetworks = ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(composeRoot, "networks"))
+                ?? [];
+            if (networkGroups.Count != 0)
             {
-                var networks = ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(composeRoot, "networks"))
-                    ?? new Dictionary<object, object>();
+                var networks = new Dictionary<object, object>();
 
                 foreach (var netGroup in networkGroups)
                 {
-                    var networkKey = FindExistingKey(networks, netGroup.Title) ?? netGroup.Title;
-                    networks[networkKey] = BuildNetworkDefinition(netGroup, containerNodes, ComposeYamlHelper.GetMapping(networks[networkKey]));
+                    var networkKey = FindExistingKey(existingNetworks, netGroup.Title) ?? netGroup.Title;
+                    existingNetworks.TryGetValue(networkKey, out object? existingNetworkDefinition);
+                    networks[networkKey] = BuildNetworkDefinition(
+                        netGroup,
+                        containerNodes,
+                        ComposeYamlHelper.GetMapping(existingNetworkDefinition));
                 }
 
                 composeRoot["networks"] = networks;
+            }
+            else
+            {
+                RemoveComposeKey(composeRoot, "networks");
             }
 
             // 4. Volumes 생성. 원본 볼륨 설정(driver/driver_opts/external/labels 등)은 보존합니다.
             var volumes = sheet.Nodes.Where(n => n.Type == NodeType.Volume).ToList();
             var namedVolumes = volumes.Where(vol =>
-                !(vol.Name.StartsWith("/") || vol.Name.StartsWith("./") || vol.Name.StartsWith("../") ||
-                  vol.Name.StartsWith("~/") || Regex.IsMatch(vol.Name, @"^[a-zA-Z]:[\\/]"))).ToList();
+                !(vol.Name.StartsWith('/') ||
+                  vol.Name.StartsWith("./", StringComparison.Ordinal) ||
+                  vol.Name.StartsWith("../", StringComparison.Ordinal) ||
+                  vol.Name.StartsWith("~/", StringComparison.Ordinal) ||
+                  MyRegex().IsMatch(vol.Name))).ToList();
 
-            if (namedVolumes.Any())
+            var existingVolumes = ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(composeRoot, "volumes"))
+                ?? [];
+            if (namedVolumes.Count != 0)
             {
-                var volumeMap = ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(composeRoot, "volumes"))
-                    ?? new Dictionary<object, object>();
+                var volumeMap = new Dictionary<object, object>();
 
                 foreach (var vol in namedVolumes)
                 {
-                    var volumeKey = FindExistingKey(volumeMap, vol.Name) ?? vol.Name;
-                    volumeMap[volumeKey] = BuildVolumeDefinition(vol, ComposeYamlHelper.GetMapping(volumeMap[volumeKey]));
+                    var volumeKey = FindExistingKey(existingVolumes, vol.Name) ?? vol.Name;
+                    existingVolumes.TryGetValue(volumeKey, out object? existingVolumeDefinition);
+                    volumeMap[volumeKey] = BuildVolumeDefinition(
+                        vol,
+                        ComposeYamlHelper.GetMapping(existingVolumeDefinition));
                 }
                 composeRoot["volumes"] = volumeMap;
+            }
+            else
+            {
+                RemoveComposeKey(composeRoot, "volumes");
             }
 
             // 5. YamlDotNet을 이용해 C# 객체를 YAML 문자열로 직렬화(Serialize)
@@ -189,7 +213,7 @@ namespace DockerDiagram.ApplicationServices
         {
             if (string.IsNullOrWhiteSpace(rawName)) return "service";
             string s = rawName.ToLowerInvariant();
-            s = Regex.Replace(s, "[^a-z0-9_]", "_");
+            s = InvalidServiceNameCharacterRegex().Replace(s, "_");
             s = s.Trim('_');
             return string.IsNullOrEmpty(s) ? "service" : s;
         }
@@ -198,7 +222,9 @@ namespace DockerDiagram.ApplicationServices
         /// 도커 컨테이너 이름 규칙에 맞게 사용할 수 없는 문자를 제거합니다.
         /// </summary>
         private static string SanitizeContainerName(string rawName) =>
-            string.IsNullOrWhiteSpace(rawName) ? "container" : Regex.Replace(rawName, "[^a-zA-Z0-9_.-]", "");
+            string.IsNullOrWhiteSpace(rawName)
+                ? "container"
+                : InvalidContainerNameCharacterRegex().Replace(rawName, "");
 
         /// <summary>
         /// 중복된 서비스 이름이 있을 경우 뒤에 숫자를 붙여 고유한 이름으로 만듭니다.
@@ -230,7 +256,7 @@ namespace DockerDiagram.ApplicationServices
             var netObj = ComposeYamlHelper.ParseMapping(netGroup.ComposeRawNetworkYaml)
                          ?? (existingDefinition != null
                              ? new Dictionary<object, object>(existingDefinition)
-                             : new Dictionary<object, object>());
+                             : []);
 
             if (netGroup.External)
             {
@@ -261,12 +287,12 @@ namespace DockerDiagram.ApplicationServices
             {
                 var ipam = ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(netObj, "ipam")) != null
                     ? new Dictionary<object, object>(ComposeYamlHelper.GetMapping(ComposeYamlHelper.GetValue(netObj, "ipam"))!)
-                    : new Dictionary<object, object>();
+                    : [];
 
                 var configList = ToMutableConfigList(ComposeYamlHelper.GetValue(ipam, "config"));
                 var firstConfig = configList.Count > 0 && ComposeYamlHelper.GetMapping(configList[0]) != null
                     ? new Dictionary<object, object>(ComposeYamlHelper.GetMapping(configList[0])!)
-                    : new Dictionary<object, object>();
+                    : [];
 
                 SetStringValue(firstConfig, "subnet", subnet);
                 SetStringValue(firstConfig, "gateway", netGroup.Gateway);
@@ -291,7 +317,7 @@ namespace DockerDiagram.ApplicationServices
             if (configValue is System.Collections.IEnumerable enumerable)
                 return enumerable.Cast<object>().ToList();
 
-            return new List<object>();
+            return [];
         }
 
         private static void SetBoolValue(Dictionary<object, object> map, string key, bool value)
@@ -319,7 +345,7 @@ namespace DockerDiagram.ApplicationServices
             var volObj = ComposeYamlHelper.ParseMapping(volumeNode.ComposeRawVolumeYaml)
                          ?? (existingDefinition != null
                              ? new Dictionary<object, object>(existingDefinition)
-                             : new Dictionary<object, object>());
+                             : []);
 
             if (volumeNode.VolumeExternal)
             {
@@ -358,12 +384,13 @@ namespace DockerDiagram.ApplicationServices
         /// <summary>
         /// 특정 컨테이너와 연결된 볼륨 목록을 찾고, .env 파일과 연동할 수 있는 환경변수 포맷의 문자열 리스트로 반환합니다.
         /// </summary>
-        private static List<string> GetConnectedVolumes(NodeViewModel container, SheetViewModel sheet)
+        private static List<object> GetConnectedVolumes(NodeViewModel container, SheetViewModel sheet)
         {
-            var list = new List<string>();
+            var list = new List<object>();
             var conns = sheet.Connectors
-                .Where(c => (c.Source == container && c.Target is NodeViewModel tNode1 && tNode1.Type == NodeType.Volume) ||
-                            (c.Target == container && c.Source is NodeViewModel sNode2 && sNode2.Type == NodeType.Volume))
+                .Where(c => c.RelationType == RelationType.VolumeMount &&
+                            ((c.Source == container && c.Target is NodeViewModel tNode1 && tNode1.Type is NodeType.Volume or NodeType.HostPath) ||
+                             (c.Target == container && c.Source is NodeViewModel sNode2 && sNode2.Type is NodeType.Volume or NodeType.HostPath)))
                 .ToList();
 
             foreach (var c in conns)
@@ -371,17 +398,99 @@ namespace DockerDiagram.ApplicationServices
                 var volNode = c.Source == container ? (NodeViewModel)c.Target : (NodeViewModel)c.Source;
                 string mountPath = !string.IsNullOrEmpty(c.MountPath) ? c.MountPath : "/data";
 
-                string hostPath = volNode.Name;
-
-                // 1. 특수문자를 언더바(_)로 치환하여 안전한 환경 변수명 생성
-                string safeEnvName = Regex.Replace(hostPath, @"[^a-zA-Z0-9_]", "_").ToUpperInvariant();
-
-                // 2. 도커 컴포즈 '기본값(Fallback)' 문법 적용 (${변수명:-기본경로}:컨테이너경로)
-                string volumeMapping = $"${{HOST_VOL_{safeEnvName}:-{hostPath}}}:{mountPath}";
-
-                list.Add(volumeMapping);
+                string source = volNode.Type == NodeType.HostPath
+                    ? volNode.HostPath
+                    : volNode.EffectiveVolumeName;
+                MountKind kind = volNode.Type == NodeType.HostPath ? MountKind.Bind : MountKind.Volume;
+                ContainerMountSpec? existingMount = container.MountSpecifications.FirstOrDefault(candidate =>
+                    candidate.Kind == kind &&
+                    (kind == MountKind.Bind
+                        ? ContainerMountParser.HostPathsEqual(candidate.Source, source)
+                        : string.Equals(candidate.Source, source, StringComparison.OrdinalIgnoreCase)) &&
+                    string.Equals(candidate.Target, mountPath, StringComparison.Ordinal));
+                ContainerMountSpec mount = existingMount?.Clone() ?? new ContainerMountSpec
+                    {
+                        Kind = kind,
+                        Source = source,
+                        Target = mountPath
+                    };
+                mount.Target = mountPath;
+                mount.ReadOnly = c.MountReadOnly;
+                ApplyConnectorMountOptions(mount, c.MountAdditionalOptions);
+                list.Add(BuildComposeMountDefinition(mount));
             }
+            foreach (ContainerMountSpec anonymous in container.MountSpecifications.Where(mount =>
+                         mount.Kind == MountKind.Volume && string.IsNullOrWhiteSpace(mount.Source)))
+            {
+                list.Add(BuildComposeMountDefinition(anonymous));
+            }
+            foreach (ContainerMountSpec tmpfs in container.MountSpecifications.Where(mount =>
+                         mount.Kind == MountKind.Tmpfs))
+                list.Add(BuildComposeMountDefinition(tmpfs));
+
             return list;
+        }
+
+        private static void ApplyConnectorMountOptions(ContainerMountSpec mount, string optionsText)
+        {
+            string[] options = optionsText
+                .Split(['·', ',', ';'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+            if (mount.Kind == MountKind.Volume)
+            {
+                mount.VolumeNoCopy = options.Any(option =>
+                    string.Equals(option, "nocopy", StringComparison.OrdinalIgnoreCase));
+                return;
+            }
+
+            if (mount.Kind != MountKind.Bind) return;
+
+            string[] validPropagationModes = ["private", "rprivate", "shared", "rshared", "slave", "rslave"];
+            mount.BindPropagation = options.FirstOrDefault(option =>
+                validPropagationModes.Contains(option, StringComparer.OrdinalIgnoreCase)) ?? "rprivate";
+        }
+
+        private static object BuildComposeMountDefinition(ContainerMountSpec mount)
+        {
+            bool requiresLongSyntax = mount.Kind == MountKind.Tmpfs ||
+                                      (mount.Kind == MountKind.Volume && mount.VolumeNoCopy) ||
+                                      (mount.Kind == MountKind.Bind &&
+                                       !string.Equals(mount.BindPropagation, "rprivate", StringComparison.OrdinalIgnoreCase));
+            if (!requiresLongSyntax)
+                return mount.ToLegacyString();
+
+            var result = new Dictionary<object, object>
+            {
+                ["type"] = mount.Kind.ToString().ToLowerInvariant(),
+                ["target"] = mount.Target
+            };
+            if (!string.IsNullOrWhiteSpace(mount.Source)) result["source"] = mount.Source;
+            if (mount.ReadOnly) result["read_only"] = true;
+
+            if (mount.Kind == MountKind.Bind)
+            {
+                result["bind"] = new Dictionary<object, object>
+                {
+                    ["propagation"] = mount.BindPropagation
+                };
+            }
+            else if (mount.Kind == MountKind.Volume)
+            {
+                result["volume"] = new Dictionary<object, object>
+                {
+                    ["nocopy"] = mount.VolumeNoCopy
+                };
+            }
+            else
+            {
+                var options = new Dictionary<object, object>
+                {
+                    ["mode"] = Convert.ToString(mount.TmpfsMode, 8)
+                };
+                if (mount.TmpfsSizeBytes > 0) options["size"] = mount.TmpfsSizeBytes;
+                result["tmpfs"] = options;
+            }
+            return result;
         }
 
         private static object BuildServiceNetworks(List<NetworkInfo> connectedNets)
@@ -445,5 +554,17 @@ namespace DockerDiagram.ApplicationServices
             }
             return null;
         }
+
+        [GeneratedRegex(@"^[a-zA-Z]:[\\/]")]
+        private static partial Regex MyRegex();
+
+        [GeneratedRegex("[^a-z0-9_]")]
+        private static partial Regex InvalidServiceNameCharacterRegex();
+
+        [GeneratedRegex("[^a-zA-Z0-9_.-]")]
+        private static partial Regex InvalidContainerNameCharacterRegex();
+
+        [GeneratedRegex("[^a-zA-Z0-9_]")]
+        private static partial Regex InvalidEnvironmentNameCharacterRegex();
     }
 }

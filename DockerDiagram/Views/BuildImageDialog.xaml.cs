@@ -4,12 +4,14 @@ namespace DockerDiagram.Views
 {
     public partial class BuildImageDialog : Window
     {
+        private readonly DockerDiagram.Contracts.IDialogService _dialogService;
         public string TagName => txtImageTag.Text.Trim();
         public string DockerfileContent => txtDockerfile.Text.Trim();
         public string DockerfilePath { get; private set; } = "";
 
-        public BuildImageDialog()
+        public BuildImageDialog(DockerDiagram.Contracts.IDialogService dialogService)
         {
+            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
             InitializeComponent();
             txtImageTag.Focus();
         }
@@ -33,7 +35,7 @@ namespace DockerDiagram.Views
         {
             if (string.IsNullOrWhiteSpace(TagName) || string.IsNullOrWhiteSpace(DockerfileContent))
             {
-                MessageBox.Show("이미지 이름과 Dockerfile 내용을 모두 입력해주세요.", "입력 오류", MessageBoxButton.OK, MessageBoxImage.Warning);
+                _dialogService.ShowInfo("이미지 이름과 Dockerfile 내용을 모두 입력해주세요.", "입력 오류");
                 return;
             }
             DialogResult = true;

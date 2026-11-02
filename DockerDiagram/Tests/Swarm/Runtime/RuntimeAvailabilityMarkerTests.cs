@@ -8,9 +8,9 @@ namespace DockerDiagram.Tests;
 public sealed class RuntimeAvailabilityMarkerTests
 {
     [Fact]
-    public async Task SwarmOverlayMembership_DoesNotCallContainerNetworkAttachOrDetach()
+    public async Task SwarmOverlayMembershipDoesNotCallContainerNetworkAttachOrDetach()
     {
-        IDockerService dockerService = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
+        using IDockerService dockerService = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
         IDialogService dialogService = DispatchProxy.Create<IDialogService, UnexpectedDialogServiceProxy>();
         var sheet = new SheetViewModel(
             "Swarm",
@@ -38,11 +38,11 @@ public sealed class RuntimeAvailabilityMarkerTests
     }
 
     [Fact]
-    public void SwarmVolumeDeclaration_IsNotReportedAsDisconnectedManagerVolume()
+    public void SwarmVolumeDeclarationIsNotReportedAsDisconnectedManagerVolume()
     {
-        IDockerService dockerService = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
+        using IDockerService dockerService = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
         IDialogService dialogService = DispatchProxy.Create<IDialogService, UnexpectedDialogServiceProxy>();
-        var node = new NodeViewModel(dockerService, dockerService, dialogService)
+        using var node = new NodeViewModel(dockerService, dockerService, dialogService)
         {
             Type = NodeType.Volume,
             RuntimeKind = RuntimeKind.DockerSwarm,
@@ -55,12 +55,12 @@ public sealed class RuntimeAvailabilityMarkerTests
     }
 
     [Fact]
-    public void MarkUnavailable_MarksEverySwarmResourceAndOverlayOffline()
+    public void MarkUnavailableMarksEverySwarmResourceAndOverlayOffline()
     {
-        IDockerService dockerService = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
+        using IDockerService dockerService = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
         IDialogService dialogService = DispatchProxy.Create<IDialogService, UnexpectedDialogServiceProxy>();
         var profile = new ConnectionProfile { RuntimeKind = RuntimeKind.DockerSwarm };
-        var sheet = new SheetViewModel(
+        using var sheet = new SheetViewModel(
             "Swarm",
             profile,
             dockerService,

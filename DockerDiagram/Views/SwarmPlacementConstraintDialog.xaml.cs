@@ -1,5 +1,5 @@
-using DockerDiagram.Models;
 using System.Windows;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.Views
 {
@@ -18,12 +18,14 @@ namespace DockerDiagram.Views
 
         public SwarmServicePlacementUpdateOptions? UpdateOptions { get; private set; }
 
+        private static readonly string[] separator = new[] { "\r\n", "\n" };
+
         private void ApplyButton_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 string[] constraints = ConstraintsTextBox.Text.Split(
-                    new[] { "\r\n", "\n" },
+                    separator,
                     StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 var options = new SwarmServicePlacementUpdateOptions
                 {

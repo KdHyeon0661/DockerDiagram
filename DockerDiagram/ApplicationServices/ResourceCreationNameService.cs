@@ -1,18 +1,18 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using DockerDiagram.Common;
 using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Threading.Tasks;
 
 namespace DockerDiagram.ApplicationServices
 {
     /// <summary>
     /// 새 Docker 리소스의 이름 충돌을 확인하고 사용자가 승인한 대체 이름을 계산합니다.
     /// </summary>
-    public sealed class ResourceCreationNameService
+    public sealed partial class ResourceCreationNameService
     {
         private readonly IDialogService _dialogService;
 
@@ -43,7 +43,7 @@ namespace DockerDiagram.ApplicationServices
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[NameConflict] Container name scan failed: {ex.Message}");
+                AppLog.Warning("컨테이너 이름 충돌 검사 실패", ex);
             }
 
             return ConfirmUniqueResourceName(requestedName, "컨테이너", usedNames);
@@ -88,7 +88,7 @@ namespace DockerDiagram.ApplicationServices
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[NameConflict] Volume name scan failed: {ex.Message}");
+                AppLog.Warning("볼륨 이름 충돌 검사 실패", ex);
             }
 
             bool displayConflict = usedDisplayNames.Contains(requestedDisplayName);
@@ -149,7 +149,7 @@ namespace DockerDiagram.ApplicationServices
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[NameConflict] Network name scan failed: {ex.Message}");
+                    AppLog.Warning("네트워크 이름 충돌 검사 실패", ex);
                 }
             }
 
@@ -162,7 +162,7 @@ namespace DockerDiagram.ApplicationServices
         private string? ConfirmUniqueResourceName(
             string requestedName,
             string resourceLabel,
-            ISet<string> usedNames)
+            HashSet<string> usedNames)
         {
             string normalizedName = requestedName.Trim();
             if (!usedNames.Contains(normalizedName)) return normalizedName;
@@ -175,7 +175,7 @@ namespace DockerDiagram.ApplicationServices
             return confirmed ? candidate : null;
         }
 
-        private static string FindAvailableResourceName(string requestedName, ISet<string> usedNames)
+        private static string FindAvailableResourceName(string requestedName, HashSet<string> usedNames)
         {
             string baseName = StripNumericSuffix(requestedName, out int suffix);
             string candidate;
@@ -191,7 +191,7 @@ namespace DockerDiagram.ApplicationServices
 
         private static string StripNumericSuffix(string name, out int nextSuffix)
         {
-            var match = System.Text.RegularExpressions.Regex.Match(name, @"^(.*)_(\d+)$");
+            var match = MyRegex().Match(name);
             if (match.Success &&
                 int.TryParse(match.Groups[2].Value, out int currentSuffix) &&
                 currentSuffix < int.MaxValue)
@@ -211,5 +211,8 @@ namespace DockerDiagram.ApplicationServices
                 ? name[..^creatingSuffix.Length]
                 : name;
         }
+
+        [System.Text.RegularExpressions.GeneratedRegex(@"^(.*)_(\d+)$")]
+        private static partial System.Text.RegularExpressions.Regex MyRegex();
     }
 }

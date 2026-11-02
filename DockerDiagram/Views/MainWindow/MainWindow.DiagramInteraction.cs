@@ -1,5 +1,4 @@
-using DockerDiagram.Diagram;
-using DockerDiagram.Contracts;
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Windows;
 using System.Windows.Controls;
@@ -7,7 +6,8 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using System.Diagnostics;
+using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
@@ -104,14 +104,14 @@ namespace DockerDiagram
                     {
                         // 그룹 스타일 (노란색 점선)
                         TempGroupRect.Stroke = Brushes.Orange;
-                        TempGroupRect.StrokeDashArray = new DoubleCollection { 4, 2 };
+                        TempGroupRect.StrokeDashArray = [4, 2];
                         TempGroupRect.Fill = new SolidColorBrush(Color.FromArgb(30, 255, 165, 0));
                     }
                     else if (_isNetworkDrawingMode)
                     {
                         // 네트워크 스타일 (보라색 점선)
                         TempGroupRect.Stroke = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#9B59B6"));
-                        TempGroupRect.StrokeDashArray = new DoubleCollection { 2, 2 };
+                        TempGroupRect.StrokeDashArray = [2, 2];
                         TempGroupRect.Fill = new SolidColorBrush(Color.FromArgb(30, 155, 89, 182));
                     }
                 }
@@ -125,12 +125,40 @@ namespace DockerDiagram
             // 2. [일반 모드] 배경 클릭 체크
             // Preview 이벤트는 노드를 클릭해도 실행되므로, 클릭한 대상이 '진짜 배경'인지 확인해야 합니다.
             var clickedElement = e.OriginalSource as DependencyObject;
+            ConnectableItemViewModel? clickFallbackItem =
+                clickedElement is FrameworkElement
+                {
+                    Tag: "GroupSelectionSurface",
+                    DataContext: GroupViewModel group
+                }
+                    ? group
+                    : null;
 
-            // 클릭한 것이 캔버스 배경(ZoomPanGrid)이나 ViewportCanvas, 또는 배경용 흰색 Rectangle인 경우
-            if (clickedElement == ZoomPanGrid || clickedElement == ViewportCanvas ||
-               (clickedElement is System.Windows.Shapes.Rectangle rect && rect.Fill == Brushes.White))
+            // 캔버스 배경뿐 아니라 그룹의 빈 본문도 영역 선택을 시작할 수 있는 표면입니다.
+            bool isSelectionSurface =
+                clickedElement == ZoomPanGrid ||
+                clickedElement == ViewportCanvas ||
+                clickedElement is System.Windows.Shapes.Rectangle rect && rect.Fill == Brushes.White ||
+                clickFallbackItem != null;
+            if (isSelectionSurface)
             {
-                (DataContext as MainViewModel)?.Inspector.ClearSelection();
+                if (DataContext is MainViewModel vm)
+                {
+                    _marqueePreserveSelection = IsAdditiveSelectionModifier();
+                    _marqueeClickFallbackItem = clickFallbackItem;
+                    if (!_marqueePreserveSelection)
+                        vm.Inspector.ClearSelection();
+
+                    _isMarqueeSelecting = true;
+                    _marqueeStartWorld = GetWorldPosition(e);
+                    Canvas.SetLeft(MultiSelectionRect, _marqueeStartWorld.X);
+                    Canvas.SetTop(MultiSelectionRect, _marqueeStartWorld.Y);
+                    MultiSelectionRect.Width = 0;
+                    MultiSelectionRect.Height = 0;
+                    MultiSelectionRect.Visibility = Visibility.Visible;
+                    ViewportCanvas.CaptureMouse();
+                    e.Handled = true;
+                }
             }
 
             // 주의: 일반 모드일 때는 e.Handled = true를 하지 않습니다.
@@ -164,6 +192,18 @@ namespace DockerDiagram
                 return;
             }
 
+            if (_isMarqueeSelecting && ViewportCanvas.IsMouseCaptured)
+            {
+                Point marqueeCurrent = GetWorldPosition(e);
+                double x = Math.Min(_marqueeStartWorld.X, marqueeCurrent.X);
+                double y = Math.Min(_marqueeStartWorld.Y, marqueeCurrent.Y);
+                MultiSelectionRect.Width = Math.Abs(marqueeCurrent.X - _marqueeStartWorld.X);
+                MultiSelectionRect.Height = Math.Abs(marqueeCurrent.Y - _marqueeStartWorld.Y);
+                Canvas.SetLeft(MultiSelectionRect, x);
+                Canvas.SetTop(MultiSelectionRect, y);
+                return;
+            }
+
             var vm = DataContext as MainViewModel;
             if (vm?.ActiveSheet == null) return;
 
@@ -186,8 +226,8 @@ namespace DockerDiagram
                 double rawTargetX = current.X - _groupClickOffset.X;
                 double rawTargetY = current.Y - _groupClickOffset.Y;
 
-                double snappedTargetX = Math.Round(rawTargetX / 10.0) * 10.0;
-                double snappedTargetY = Math.Round(rawTargetY / 10.0) * 10.0;
+                double snappedTargetX = DiagramMetrics.SnapToGrid(rawTargetX);
+                double snappedTargetY = DiagramMetrics.SnapToGrid(rawTargetY);
 
                 double dx = snappedTargetX - _movingGroup.X;
                 double dy = snappedTargetY - _movingGroup.Y;
@@ -196,6 +236,27 @@ namespace DockerDiagram
                 {
                     _movingGroup.MoveBy(dx, dy);
                 }
+                return;
+            }
+
+            if (_isSelectionMoving)
+            {
+                double dx = DiagramMetrics.SnapToGrid(current.X - _selectionMoveLastWorld.X);
+                double dy = DiagramMetrics.SnapToGrid(current.Y - _selectionMoveLastWorld.Y);
+                var updates = new List<CanvasPositionUpdate>(
+                    _selectionMoveGroups.Count + _selectionMoveNodes.Count);
+                foreach (GroupViewModel group in _selectionMoveGroups)
+                {
+                    Rect start = _selectionMoveBeforeGroups[group];
+                    updates.Add(new CanvasPositionUpdate(group, start.X + dx, start.Y + dy));
+                }
+
+                foreach (NodeViewModel node in _selectionMoveNodes)
+                {
+                    Rect start = _selectionMoveBeforeNodes[node];
+                    updates.Add(new CanvasPositionUpdate(node, start.X + dx, start.Y + dy));
+                }
+                vm.ActiveSheet.ApplyInteractivePositions(updates);
                 return;
             }
 
@@ -209,16 +270,16 @@ namespace DockerDiagram
                 {
                     if (_resizeDir.Contains("Right"))
                     {
-                        _resizingNode.Width = Math.Max(50, _resizeStartNodeRect.Width + diffX);
+                        _resizingNode.Width = Math.Max(NodeViewModel.StandardWidth, _resizeStartNodeRect.Width + diffX);
                     }
                     if (_resizeDir.Contains("Bottom"))
                     {
-                        _resizingNode.Height = Math.Max(50, _resizeStartNodeRect.Height + diffY);
+                        _resizingNode.Height = Math.Max(NodeViewModel.StandardHeight, _resizeStartNodeRect.Height + diffY);
                     }
                     if (_resizeDir.Contains("Left"))
                     {
                         double w = _resizeStartNodeRect.Width - diffX;
-                        if (w >= 50)
+                        if (w >= NodeViewModel.StandardWidth)
                         {
                             _resizingNode.X = _resizeStartNodeRect.X + diffX;
                             _resizingNode.Width = w;
@@ -227,7 +288,7 @@ namespace DockerDiagram
                     if (_resizeDir.Contains("Top"))
                     {
                         double h = _resizeStartNodeRect.Height - diffY;
-                        if (h >= 50)
+                        if (h >= NodeViewModel.StandardHeight)
                         {
                             _resizingNode.Y = _resizeStartNodeRect.Y + diffY;
                             _resizingNode.Height = h;
@@ -343,11 +404,11 @@ namespace DockerDiagram
                         targetBounds);
                     TempPolyline.Points = route.Count >= 2
                         ? route
-                        : new PointCollection { startPoint, endPoint };
+                        : [startPoint, endPoint];
                 }
                 catch
                 {
-                    TempPolyline.Points = new PointCollection { startPoint, endPoint };
+                    TempPolyline.Points = [startPoint, endPoint];
                 }
                 return;
             }
@@ -390,11 +451,11 @@ namespace DockerDiagram
                         targetBounds);
                     TempPolyline.Points = route.Count >= 2
                         ? route
-                        : new PointCollection { startPoint, endPoint };
+                        : [startPoint, endPoint];
                 }
                 catch
                 {
-                    TempPolyline.Points = new PointCollection { startPoint, endPoint };
+                    TempPolyline.Points = [startPoint, endPoint];
                 }
             }
         }
@@ -507,6 +568,77 @@ namespace DockerDiagram
                     _pendingSwarmDraftGroupKind = null;
                     Mouse.OverrideCursor = null;
 
+                    e.Handled = true;
+                    return;
+                }
+
+                if (_isMarqueeSelecting)
+                {
+                    if (ViewportCanvas.IsMouseCaptured)
+                        ViewportCanvas.ReleaseMouseCapture();
+
+                    Rect selectionBounds = new(
+                        Canvas.GetLeft(MultiSelectionRect),
+                        Canvas.GetTop(MultiSelectionRect),
+                        MultiSelectionRect.Width,
+                        MultiSelectionRect.Height);
+                    MultiSelectionRect.Visibility = Visibility.Collapsed;
+                    _isMarqueeSelecting = false;
+
+                    if (DataContext is MainViewModel selectionVm &&
+                        selectionVm.ActiveSheet is SheetViewModel selectionSheet &&
+                        selectionBounds.Width >= 4 &&
+                        selectionBounds.Height >= 4)
+                    {
+                        var selectedItems = new List<ConnectableItemViewModel>();
+                        selectedItems.AddRange(selectionSheet.Nodes.Where(node =>
+                            selectionBounds.Contains(new Point(node.CenterX, node.CenterY))));
+                        selectedItems.AddRange(selectionSheet.Groups.Where(group =>
+                            selectionBounds.Contains(new Point(group.CenterX, group.CenterY))));
+                        selectionVm.Inspector.AddCanvasItems(
+                            selectedItems,
+                            _marqueePreserveSelection);
+                    }
+                    else if (_marqueeClickFallbackItem != null &&
+                             DataContext is MainViewModel clickVm)
+                    {
+                        clickVm.Inspector.SelectCanvasItem(
+                            _marqueeClickFallbackItem,
+                            additive: _marqueePreserveSelection);
+                    }
+
+                    _marqueeClickFallbackItem = null;
+
+                    e.Handled = true;
+                    return;
+                }
+
+                if (_isSelectionMoving)
+                {
+                    if (DataContext is MainViewModel selectionVm &&
+                        selectionVm.ActiveSheet is SheetViewModel selectionSheet)
+                    {
+                        foreach (NodeViewModel node in _selectionMoveMembershipNodes)
+                            await RefreshNodeGroupMembershipAsync(selectionSheet, node);
+
+                        var afterNodes = _selectionMoveNodes.ToDictionary(
+                            node => node,
+                            node => new Rect(node.X, node.Y, node.Width, node.Height));
+                        var afterGroups = _selectionMoveGroups.ToDictionary(
+                            group => group,
+                            group => new Rect(group.X, group.Y, group.Width, group.Height));
+                        selectionVm.RecordSelectionMove(
+                            selectionSheet,
+                            _selectionMoveBeforeNodes,
+                            afterNodes,
+                            _selectionMoveBeforeGroups,
+                            afterGroups,
+                            _selectionMoveMembershipNodes,
+                            $"Move {selectionVm.Inspector.SelectionCount} selected items");
+                    }
+
+                    _selectionMoveCaptureElement?.ReleaseMouseCapture();
+                    ResetSelectionMoveState();
                     e.Handled = true;
                     return;
                 }
@@ -683,7 +815,11 @@ namespace DockerDiagram
         {
             var port = sender as FrameworkElement;
             _sourceItem = port?.DataContext as IConnectableItem;
-            if (port?.Tag is string dirStr) Enum.TryParse(dirStr, out _sourceDir);
+            if (port?.Tag is string dirStr &&
+                !Enum.TryParse(dirStr, ignoreCase: true, out _sourceDir))
+            {
+                _sourceDir = PortDirection.None;
+            }
 
             if (_sourceItem is NodeViewModel nv && nv.IsCreating)
             {
@@ -708,18 +844,34 @@ namespace DockerDiagram
         private void Node_Header_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (_isConnecting || _isResizing) return;
-            var b = sender as FrameworkElement;
-            if (b != null)
+            if (sender is FrameworkElement b &&
+                b.DataContext is NodeViewModel nodeVm &&
+                DataContext is MainViewModel mainVm)
             {
-                var nodeVm = b.DataContext as NodeViewModel;
+                bool additive = IsAdditiveSelectionModifier();
+                if (additive)
+                    mainVm.Inspector.ToggleCanvasItem(nodeVm);
+                else if (!mainVm.Inspector.IsCanvasItemSelected(nodeVm))
+                    mainVm.Inspector.SelectCanvasItem(nodeVm, additive: false);
+
+                if (!mainVm.Inspector.IsCanvasItemSelected(nodeVm))
+                {
+                    e.Handled = true;
+                    return;
+                }
+
+                if (mainVm.Inspector.SelectedCanvasItems.Count > 1)
+                {
+                    BeginSelectionMove(b, e, mainVm);
+                    e.Handled = true;
+                    return;
+                }
+
                 _isNodeDragging = true;
                 _draggedNodeElement = b;
                 Point mouseWorld = GetWorldPosition(e);
-                if (nodeVm != null)
-                {
-                    _nodeClickOffset = new Point(mouseWorld.X - nodeVm.X, mouseWorld.Y - nodeVm.Y);
-                    _nodeDragStartRect = new Rect(nodeVm.X, nodeVm.Y, nodeVm.Width, nodeVm.Height);
-                }
+                _nodeClickOffset = new Point(mouseWorld.X - nodeVm.X, mouseWorld.Y - nodeVm.Y);
+                _nodeDragStartRect = new Rect(nodeVm.X, nodeVm.Y, nodeVm.Width, nodeVm.Height);
                 b.CaptureMouse();
                 e.Handled = true;
             }
@@ -734,7 +886,19 @@ namespace DockerDiagram
             {
                 var vm = _draggedNodeElement.DataContext as NodeViewModel;
                 Point mouseWorld = GetWorldPosition(e);
-                if (vm != null) { vm.X = mouseWorld.X - _nodeClickOffset.X; vm.Y = mouseWorld.Y - _nodeClickOffset.Y; }
+                if (vm != null)
+                {
+                    double x = mouseWorld.X - _nodeClickOffset.X;
+                    double y = mouseWorld.Y - _nodeClickOffset.Y;
+                    if (vm.ParentSheet is SheetViewModel sheet)
+                    {
+                        sheet.ApplyInteractivePosition(vm, x, y);
+                    }
+                    else
+                    {
+                        vm.SetPosition(x, y);
+                    }
+                }
             }
         }
 
@@ -766,12 +930,81 @@ namespace DockerDiagram
 
             if (mainVm != null && nodeVm != null)
             {
-                if (mainVm.Inspector.SelectedElement == nodeVm)
-                    mainVm.Inspector.SelectedElement = null;
-                else
-                    mainVm.Inspector.SelectedElement = nodeVm;
+                mainVm.Inspector.SelectCanvasItem(
+                    nodeVm,
+                    additive: IsAdditiveSelectionModifier());
             }
             e.Handled = true;
+        }
+
+        private void BeginSelectionMove(
+            FrameworkElement captureElement,
+            MouseButtonEventArgs e,
+            MainViewModel mainVm)
+        {
+            if (mainVm.ActiveSheet is not SheetViewModel sheet)
+                return;
+
+            _selectionMoveGroups = mainVm.Inspector.SelectedCanvasItems
+                .OfType<GroupViewModel>()
+                .ToList();
+
+            var nodesMovedByGroups = new HashSet<NodeViewModel>(
+                ReferenceEqualityComparer.Instance);
+            foreach (GroupViewModel group in _selectionMoveGroups)
+                nodesMovedByGroups.UnionWith(group.GetNodesMovedWithGroup());
+
+            var directlySelectedNodes = mainVm.Inspector.SelectedCanvasItems
+                .OfType<NodeViewModel>()
+                .ToList();
+
+            _selectionMoveNodes = new HashSet<NodeViewModel>(
+                nodesMovedByGroups,
+                ReferenceEqualityComparer.Instance);
+            _selectionMoveNodes.UnionWith(directlySelectedNodes);
+            _selectionMoveMembershipNodes = new HashSet<NodeViewModel>(
+                directlySelectedNodes.Where(node => !nodesMovedByGroups.Contains(node)),
+                ReferenceEqualityComparer.Instance);
+
+            _selectionMoveBeforeNodes = _selectionMoveNodes.ToDictionary(
+                node => node,
+                node => new Rect(node.X, node.Y, node.Width, node.Height));
+            _selectionMoveBeforeGroups = _selectionMoveGroups.ToDictionary(
+                group => group,
+                group => new Rect(group.X, group.Y, group.Width, group.Height));
+            _selectionMoveLastWorld = GetWorldPosition(e);
+            _selectionMoveCaptureElement = captureElement;
+            _isSelectionMoving = true;
+            captureElement.CaptureMouse();
+        }
+
+        private static bool IsAdditiveSelectionModifier() =>
+            (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Shift)) != ModifierKeys.None;
+
+        private static async Task RefreshNodeGroupMembershipAsync(
+            SheetViewModel sheet,
+            NodeViewModel node)
+        {
+            IReadOnlyCollection<GroupViewModel> targetGroups =
+                sheet.FindGroupsAt(node.X, node.Y, node.Width, node.Height);
+            foreach (GroupViewModel group in sheet.Groups)
+            {
+                if (targetGroups.Contains(group))
+                    await group.AddNodeAsync(node);
+                else
+                    await group.RemoveNodeAsync(node);
+            }
+        }
+
+        private void ResetSelectionMoveState()
+        {
+            _isSelectionMoving = false;
+            _selectionMoveCaptureElement = null;
+            _selectionMoveBeforeNodes = [];
+            _selectionMoveBeforeGroups = [];
+            _selectionMoveNodes = [];
+            _selectionMoveMembershipNodes = [];
+            _selectionMoveGroups = [];
         }
 
         /// <summary>

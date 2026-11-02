@@ -1,10 +1,10 @@
-using DockerDiagram.Infrastructure;
-using DockerDiagram.Contracts;
 using System;
 using System.Windows;
-using Microsoft.Win32;
+using DockerDiagram.Contracts;
+using DockerDiagram.Infrastructure;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
+using Microsoft.Win32;
 
 namespace DockerDiagram.Views
 {

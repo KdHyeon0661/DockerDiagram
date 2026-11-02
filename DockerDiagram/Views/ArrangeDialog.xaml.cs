@@ -1,5 +1,5 @@
-﻿using DockerDiagram.Contracts;
-using System.Windows;
+﻿using System.Windows;
+using DockerDiagram.Contracts;
 
 namespace DockerDiagram.Views
 {

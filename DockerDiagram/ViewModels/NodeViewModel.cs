@@ -1,7 +1,3 @@
-using DockerDiagram.Contracts;
-using DockerDiagram.Common;
-using DockerDiagram.Models;
-using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -12,17 +8,22 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
+using DockerDiagram.Models;
+using Newtonsoft.Json.Linq;
 
 namespace DockerDiagram.ViewModels
 {
     /// <summary>
     /// 노드의 공통 배치·선택 상태를 관리하고 타입별 자식 ViewModel을 조정합니다.
     /// </summary>
-    public partial class NodeViewModel : ConnectableItemViewModel
+    public partial class NodeViewModel : ConnectableItemViewModel, IDisposable
     {
         #region Constants & Fields
-        private const int GRID_SIZE = 10;
-        private const double MIN_SIZE = 50;
+        public const double StandardWidth = 160;
+        public const double StandardHeight = 80;
 
         private readonly IContainerService _containerService;
         private readonly IVolumeService _volumeService;
@@ -31,20 +32,21 @@ namespace DockerDiagram.ViewModels
         private readonly ContainerOperationsViewModel _containerOperations;
         private readonly VolumeNodeViewModel _volume;
         private readonly ContainerNetworkViewModel _network;
+        private bool _disposed;
 
-        private bool _isCreating = false;
-        private bool _isDockerConnected = false;
-        private bool _isRunning;
-        private bool _isPaused;
+        private RuntimeLifecycleState _lifecycleState = RuntimeLifecycleState.Unknown;
+        private RuntimeConnectionState _connectionState = RuntimeConnectionState.Unknown;
 
         private string _name = string.Empty;
         private string _imageName = string.Empty;
+        private string _hostPath = string.Empty;
         private string _containerId = string.Empty;
         private string _portInfo = string.Empty;
         private string _detailStatus = "Unknown";
         private string _createdDate = "-";
         private string _startedAt = "-";
         private string _finishedAt = "-";
+        private string _stoppedRuntimeSummary = "Exit code - · 종료 시각 -";
         private string _uptime = "-";
         private string _ipAddress = "-";
         private string _ipAddresses = "-";
@@ -53,17 +55,15 @@ namespace DockerDiagram.ViewModels
         private string _driver = "-";
         private string _mountpoint = "-";
         private string _restartPolicy = "no";
-        private string _healthStatus = "No Check";
-        private string _healthColor = "#888888";
-        private string _containerLogs = "Loading logs...";
-        private string _statusColor = "#28a745";
-        private string _creationProgressMessage = string.Empty;
-        private double _creationProgressValue;
-        private bool _isCreationProgressIndeterminate = true;
-        private bool _isCreationFailed;
+        private string _healthStatus = "검사 없음";
+        private string _healthColor = StatusColors.NotChecked;
+        private string _containerLogs = "로그를 불러오는 중...";
+        private string _statusColor = StatusColors.Running;
+        private NodeOperationProgress _creationProgress = NodeOperationProgress.Idle;
         private string _lastCreationError = string.Empty;
         private string _composePlacementWarning = string.Empty;
         private Func<Task>? _retryFailedCreationAsync;
+        private bool _removeBeforeRetry = true;
         private ulong _targetSwarmReplicas;
         private string _swarmMode = string.Empty;
         private ulong _swarmDesiredReplicas;
@@ -77,31 +77,47 @@ namespace DockerDiagram.ViewModels
         private bool _swarmDiagramManagesNetworks;
         private bool _isSwarmDiagramDirty;
 
-        private int _networkDisplayMode = 0;
-        private List<string> _portBindings = new();
-        private List<string> _environmentVariables = new();
-        private string _hostFilePath = @"C:\temp\";
-        private string _containerFilePath = @"/app/data";
+        private int _networkDisplayMode;
+        private List<string> _portBindings = [];
+        private List<string> _environmentVariables = [];
+        private List<ContainerMountSpec> _mountSpecifications = [];
+        private string _hostFilePath = string.Empty;
+        private string _containerFilePath = string.Empty;
         private string _newEnvInput = "";
 
         #endregion
 
         #region Layout Behavior
         protected override double NormalizeX(double value) =>
-            Math.Round(value / GRID_SIZE) * GRID_SIZE;
+            DiagramMetrics.SnapToGrid(value);
 
         protected override double NormalizeY(double value) =>
-            Math.Round(value / GRID_SIZE) * GRID_SIZE;
+            DiagramMetrics.SnapToGrid(value);
 
         protected override double NormalizeWidth(double value) =>
-            Math.Max(MIN_SIZE, Math.Round(value / GRID_SIZE) * GRID_SIZE);
+            Math.Max(StandardWidth,
+                DiagramMetrics.SnapToGrid(value));
 
         protected override double NormalizeHeight(double value) =>
-            Math.Max(MIN_SIZE, Math.Round(value / GRID_SIZE) * GRID_SIZE);
+            Math.Max(StandardHeight,
+                DiagramMetrics.SnapToGrid(value));
 
         protected override void OnSelectionChanged(bool isSelected)
         {
-            if (isSelected)
+            if (!isSelected)
+            {
+                StopMonitoring();
+            }
+            else if (IsPrimarySelection)
+            {
+                StartMonitoring();
+                _ = RefreshDetailsAsync();
+            }
+        }
+
+        protected override void OnPrimarySelectionChanged(bool isPrimarySelection)
+        {
+            if (isPrimarySelection && IsSelected)
             {
                 StartMonitoring();
                 _ = RefreshDetailsAsync();
@@ -121,6 +137,13 @@ namespace DockerDiagram.ViewModels
 
             if (current != null)
                 current.Connectors.CollectionChanged += Connectors_CollectionChanged;
+            else
+            {
+                // 삭제된 선택 노드가 시트 밖에서도 DispatcherTimer/로그 스트림을 유지하지 않게 합니다.
+                IsSelected = false;
+                StopMonitoring();
+                StopLogStream();
+            }
 
             RefreshConnections();
         }
@@ -130,7 +153,17 @@ namespace DockerDiagram.ViewModels
         /// <summary>
         /// 이 노드의 역할을 정의합니다. (컨테이너, 볼륨, 또는 인터넷)
         /// </summary>
-        public NodeType Type { get; init; }
+        private NodeType _type = NodeType.Container;
+        public NodeType Type
+        {
+            get => _type;
+            init
+            {
+                _type = value;
+                Width = Math.Max(Width, StandardWidth);
+                Height = Math.Max(Height, StandardHeight);
+            }
+        }
 
         public override string Name
         {
@@ -140,6 +173,9 @@ namespace DockerDiagram.ViewModels
                 if (SetProperty(ref _name, value))
                 {
                     OnPropertyChanged(nameof(EffectiveVolumeName));
+                    OnPropertyChanged(nameof(IsAnonymousVolume));
+                    OnPropertyChanged(nameof(VolumeIdentityTitle));
+                    OnPropertyChanged(nameof(VolumeDisplayName));
                     OnPropertyChanged(nameof(KubernetesPodName));
                     OnPropertyChanged(nameof(KubernetesResourceName));
                     RaiseModified();
@@ -154,13 +190,46 @@ namespace DockerDiagram.ViewModels
                 if (SetProperty(ref _imageName, value ?? string.Empty)) RaiseModified();
             }
         }
+        public string HostPath
+        {
+            get => _hostPath;
+            set
+            {
+                if (SetProperty(ref _hostPath, value ?? string.Empty)) RaiseModified();
+            }
+        }
         public string PortInfo
         {
             get => _portInfo;
             set
             {
                 if (SetProperty(ref _portInfo, value ?? string.Empty))
+                {
                     OnPropertyChanged(nameof(PortSummary));
+                    OnPropertyChanged(nameof(CardResourceSummary));
+                }
+            }
+        }
+
+        public string CardResourceSummary => $"Port {PublishedPortCount} · Mount {MountCount}";
+
+        private int PublishedPortCount
+        {
+            get
+            {
+                int bindingCount = _portBindings
+                    .Where(binding => !string.IsNullOrWhiteSpace(binding))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
+                if (bindingCount > 0) return bindingCount;
+
+                return _portInfo
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(IsPublishedPortMapping)
+                    .Select(FormatPortMapping)
+                    .Where(mapping => !string.IsNullOrWhiteSpace(mapping))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
             }
         }
 
@@ -170,14 +239,27 @@ namespace DockerDiagram.ViewModels
             {
                 var mappings = _portInfo
                     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(IsPublishedPortMapping)
                     .Select(FormatPortMapping)
                     .Where(mapping => !string.IsNullOrWhiteSpace(mapping))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                if (mappings.Count == 0) return "No published ports";
+                if (mappings.Count == 0) return "공개된 포트 없음";
                 return mappings.Count == 1 ? mappings[0] : $"{mappings[0]}  +{mappings.Count - 1}";
             }
+        }
+
+        private static bool IsPublishedPortMapping(string mapping)
+        {
+            if (string.IsNullOrWhiteSpace(mapping)) return false;
+
+            // 목록 API의 "8080/tcp" 형식은 EXPOSE만 된 컨테이너 전용 포트입니다.
+            // 실제 게시 포트는 "호스트->컨테이너", "호스트:컨테이너" 또는
+            // 자동 할당을 요청한 단일 포트 형식으로 들어옵니다.
+            return mapping.Contains("->", StringComparison.Ordinal) ||
+                   mapping.Contains(':') ||
+                   !mapping.Contains('/');
         }
 
         private static string FormatPortMapping(string mapping)
@@ -300,8 +382,8 @@ namespace DockerDiagram.ViewModels
             }
         }
         public string KubernetesPodJsonText { get => _kubernetesPodJsonText; set => SetProperty(ref _kubernetesPodJsonText, value); }
-        public ObservableCollection<DockerSwarmTask> SwarmTasks { get; } = new();
-        public ObservableCollection<SwarmTaskPlacement> SwarmTaskPlacements { get; } = new();
+        public ObservableCollection<DockerSwarmTask> SwarmTasks { get; } = [];
+        public ObservableCollection<SwarmTaskPlacement> SwarmTaskPlacements { get; } = [];
         public string SwarmTaskSummary => SwarmTasks.Count == 0
             ? "No tasks"
             : $"{SwarmTasks.Count(task => task.CurrentState.Equals("running", StringComparison.OrdinalIgnoreCase))}/{SwarmTasks.Count} running";
@@ -345,6 +427,18 @@ namespace DockerDiagram.ViewModels
         }
 
         public string EffectiveVolumeName => _volume.EffectiveVolumeName;
+        public bool IsAnonymousVolume =>
+            Type == NodeType.Volume &&
+            (VolumeLabels.ContainsKey("com.docker.volume.anonymous") ||
+             (!VolumeLabels.ContainsKey("com.docker.compose.volume") &&
+              LooksLikeDockerAnonymousVolumeName(EffectiveVolumeName)));
+        public string VolumeIdentityTitle => IsAnonymousVolume ? "익명 볼륨" : "이름 있는 볼륨";
+        public string VolumeDisplayName => IsAnonymousVolume
+            ? DockerIdFormatter.Shorten(EffectiveVolumeName)
+            : EffectiveVolumeName;
+
+        private static bool LooksLikeDockerAnonymousVolumeName(string value) =>
+            value.Length == 64 && value.All(char.IsAsciiHexDigit);
 
         /// <summary>
         /// 도커 엔진에서 발급한 실제 컨테이너(또는 볼륨)의 고유 해시 ID입니다.
@@ -362,7 +456,9 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        public string ShortContainerId => (Type == NodeType.Container) ? ShortenId(ContainerId) : "";
+        public string ShortContainerId => Type == NodeType.Container
+            ? DockerIdFormatter.Shorten(ContainerId)
+            : string.Empty;
         #endregion
 
         #region Docker Status Properties
@@ -371,35 +467,11 @@ namespace DockerDiagram.ViewModels
         /// 이 상태일 때는 노드의 상태 표시줄이 노란색으로 변경되며 일부 제어가 제한됩니다.
         /// </summary>
         public bool IsCreating
-        {
-            get => _isCreating;
-            set
-            {
-                if (SetProperty(ref _isCreating, value))
-                {
-                    StatusColor = value ? "#FFC107" : "#28a745";
-                    OnPropertyChanged(nameof(IsDockerDisconnected));
-                    OnPropertyChanged(nameof(IsBusyCreating));
-                }
-            }
-        }
+            => LifecycleState == RuntimeLifecycleState.Creating;
 
         public bool IsBusyCreating => IsCreating && !IsCreationFailed;
 
-        public bool IsCreationFailed
-        {
-            get => _isCreationFailed;
-            private set
-            {
-                if (SetProperty(ref _isCreationFailed, value))
-                {
-                    OnPropertyChanged(nameof(IsBusyCreating));
-                    OnPropertyChanged(nameof(IsDockerDisconnected));
-                    OnPropertyChanged(nameof(CanRetryFailedCreation));
-                    RaiseFailureCommandStates();
-                }
-            }
-        }
+        public bool IsCreationFailed => LifecycleState == RuntimeLifecycleState.Failed;
 
         public string LastCreationError
         {
@@ -409,23 +481,10 @@ namespace DockerDiagram.ViewModels
 
         public bool CanRetryFailedCreation => IsCreationFailed && _retryFailedCreationAsync != null;
 
-        public bool IsDockerConnected
-        {
-            get => _isDockerConnected;
-            set
-            {
-                if (SetProperty(ref _isDockerConnected, value))
-                {
-                    OnPropertyChanged(nameof(IsDockerDisconnected));
-                    OnPropertyChanged(nameof(CanRefreshKubernetesPod));
-                    RaiseKubernetesCommandStates();
-                    RaiseCommandStates();
-                }
-            }
-        }
+        public bool IsDockerConnected => ConnectionState == RuntimeConnectionState.Connected;
 
         public bool IsDockerDisconnected =>
-            Type != NodeType.Internet &&
+            Type is NodeType.Container or NodeType.Volume &&
             ResourceKind is not RuntimeResourceKind.SwarmVolume and not RuntimeResourceKind.SwarmExternalTraffic &&
             !IsDraft && !IsCreating && !IsCreationFailed && !IsDockerConnected;
 
@@ -484,41 +543,55 @@ namespace DockerDiagram.ViewModels
         /// 상태가 변경될 때마다 활성화될 수 있는 버튼(Start, Stop, Terminal 등)의 상태를 자동으로 재평가합니다.
         /// </summary>
         public bool IsRunning
-        {
-            get => _isRunning;
-            set
-            {
-                if (SetProperty(ref _isRunning, value))
-                {
-                    RaiseCommandStates();
-                }
-            }
-        }
+            => LifecycleState is RuntimeLifecycleState.Running or RuntimeLifecycleState.Paused;
 
         /// <summary>
         /// 실제 도커 컨테이너가 현재 일시 정지(Paused) 상태인지 여부를 나타냅니다.
         /// </summary>
         public bool IsPaused
-        {
-            get => _isPaused;
-            set
-            {
-                if (SetProperty(ref _isPaused, value))
-                {
-                    RaiseCommandStates();
-                }
-            }
-        }
+            => LifecycleState == RuntimeLifecycleState.Paused;
 
         public string DetailStatus { get => _detailStatus; set => SetProperty(ref _detailStatus, value); }
+        public string PauseActionLabel => IsPaused ? "재개" : "일시정지";
         public string CreatedDate { get => _createdDate; set => SetProperty(ref _createdDate, value); }
         public string StartedAt { get => _startedAt; set => SetProperty(ref _startedAt, value); }
         public string FinishedAt { get => _finishedAt; set => SetProperty(ref _finishedAt, value); }
+        public string StoppedRuntimeSummary
+        {
+            get => _stoppedRuntimeSummary;
+            internal set => SetProperty(ref _stoppedRuntimeSummary, value);
+        }
         public string Uptime { get => _uptime; set => SetProperty(ref _uptime, value); }
+        private string _lastDetailsRefresh = "아직 갱신되지 않음";
+        public string LastDetailsRefresh { get => _lastDetailsRefresh; set => SetProperty(ref _lastDetailsRefresh, value); }
         public string IPAddress { get => _ipAddress; set => SetProperty(ref _ipAddress, value); }
         public string IpAddresses { get => _ipAddresses; set => SetProperty(ref _ipAddresses, value); }
         public string ConnectedNetworksString { get => _connectedNetworks; set => SetProperty(ref _connectedNetworks, value); }
-        public int MountCount { get => _mountCount; internal set => SetProperty(ref _mountCount, value); }
+        public int MountCount
+        {
+            get => _mountCount;
+            internal set
+            {
+                if (SetProperty(ref _mountCount, value))
+                    OnPropertyChanged(nameof(CardResourceSummary));
+            }
+        }
+        public IReadOnlyList<ContainerMountSpec> MountSpecifications => _mountSpecifications;
+        public int TmpfsMountCount => _mountSpecifications.Count(mount => mount.Kind == MountKind.Tmpfs);
+        public string MountSummary => _mountSpecifications.Count == 0
+            ? "마운트 없음"
+            : TmpfsMountCount == 0
+                ? $"마운트 {_mountSpecifications.Count}"
+                : $"마운트 {_mountSpecifications.Count} · tmpfs {TmpfsMountCount}";
+
+        internal void SetMountSpecifications(IEnumerable<ContainerMountSpec>? mounts)
+        {
+            _mountSpecifications = mounts?.Select(mount => mount.Clone()).ToList() ?? [];
+            MountCount = _mountSpecifications.Count;
+            OnPropertyChanged(nameof(MountSpecifications));
+            OnPropertyChanged(nameof(TmpfsMountCount));
+            OnPropertyChanged(nameof(MountSummary));
+        }
         public string Driver
         {
             get => _driver;
@@ -527,46 +600,158 @@ namespace DockerDiagram.ViewModels
                 if (SetProperty(ref _driver, value)) RaiseModified();
             }
         }
-        public string Mountpoint { get => _mountpoint; set => SetProperty(ref _mountpoint, value); }
+        public string Mountpoint
+        {
+            get => _mountpoint;
+            set => SetProperty(
+                ref _mountpoint,
+                string.IsNullOrWhiteSpace(value) ? "확인 불가" : value);
+        }
         public string RestartPolicy { get => _restartPolicy; set => SetProperty(ref _restartPolicy, value); }
         public string HealthStatus { get => _healthStatus; set => SetProperty(ref _healthStatus, value); }
         public string HealthColor { get => _healthColor; set => SetProperty(ref _healthColor, value); }
         public string ContainerLogs { get => _containerLogs; set => SetProperty(ref _containerLogs, value); }
         public string StatusColor { get => _statusColor; set => SetProperty(ref _statusColor, value); }
-        public string CreationProgressMessage { get => _creationProgressMessage; set => SetProperty(ref _creationProgressMessage, value); }
-        public double CreationProgressValue { get => _creationProgressValue; set => SetProperty(ref _creationProgressValue, Math.Clamp(value, 0, 100)); }
-        public bool IsCreationProgressIndeterminate { get => _isCreationProgressIndeterminate; set => SetProperty(ref _isCreationProgressIndeterminate, value); }
-        #endregion
-
-        public void SetCreationProgress(string message, double? percent = null)
+        public RuntimeLifecycleState LifecycleState
         {
-            CreationProgressMessage = message;
-            DetailStatus = message;
-            if (percent.HasValue)
+            get => _lifecycleState;
+            private set
             {
-                CreationProgressValue = percent.Value;
-                IsCreationProgressIndeterminate = false;
-            }
-            else
-            {
-                IsCreationProgressIndeterminate = true;
+                if (!SetProperty(ref _lifecycleState, value)) return;
+                OnPropertyChanged(nameof(IsCreating));
+                OnPropertyChanged(nameof(IsBusyCreating));
+                OnPropertyChanged(nameof(IsCreationFailed));
+                OnPropertyChanged(nameof(IsRunning));
+                OnPropertyChanged(nameof(IsPaused));
+                OnPropertyChanged(nameof(PauseActionLabel));
+                OnPropertyChanged(nameof(IsDockerDisconnected));
+                OnPropertyChanged(nameof(CanRetryFailedCreation));
+                RaiseFailureCommandStates();
+                RaiseCommandStates();
             }
         }
+        public RuntimeConnectionState ConnectionState
+        {
+            get => _connectionState;
+            private set
+            {
+                if (!SetProperty(ref _connectionState, value)) return;
+                OnPropertyChanged(nameof(IsDockerConnected));
+                OnPropertyChanged(nameof(IsDockerDisconnected));
+                OnPropertyChanged(nameof(CanRefreshKubernetesPod));
+                RaiseKubernetesCommandStates();
+                RaiseCommandStates();
+            }
+        }
+        public NodeOperationProgress CreationProgress
+        {
+            get => _creationProgress;
+            private set => SetProperty(ref _creationProgress, value);
+        }
+        #endregion
 
-        public void MarkCreationFailed(string errorMessage, Func<Task>? retryFailedCreationAsync = null)
+        public void SetLifecycleState(RuntimeLifecycleState state, string? detailStatus = null)
+        {
+            LifecycleState = state;
+            StatusColor = state switch
+            {
+                RuntimeLifecycleState.Creating or RuntimeLifecycleState.Paused => StatusColors.InProgress,
+                RuntimeLifecycleState.Running => StatusColors.Running,
+                RuntimeLifecycleState.Stopped or RuntimeLifecycleState.Failed => StatusColors.Failed,
+                _ => StatusColors.Unknown
+            };
+            if (!string.IsNullOrWhiteSpace(detailStatus))
+                DetailStatus = detailStatus;
+        }
+
+        public void EndCreating()
+        {
+            if (LifecycleState == RuntimeLifecycleState.Creating)
+                SetLifecycleState(RuntimeLifecycleState.Unknown);
+        }
+
+        /// <summary>
+        /// Docker가 보고한 컨테이너 상태를 연결/수명주기/표시 상태에 한 번에 반영합니다.
+        /// 호출부가 상태 관련 속성을 따로 덮어써 모순을 만들지 않도록 상태 해석을 한곳에 둡니다.
+        /// </summary>
+        public void ApplyObservedContainerState(bool connected, string? dockerState)
+        {
+            string normalizedState = dockerState?.Trim() ?? string.Empty;
+            if (!connected)
+            {
+                ApplyRuntimeState(
+                    RuntimeConnectionState.Disconnected,
+                    RuntimeLifecycleState.Unknown,
+                    string.IsNullOrWhiteSpace(normalizedState) ? "Not found" : normalizedState);
+                return;
+            }
+
+            RuntimeLifecycleState lifecycleState = normalizedState.ToLowerInvariant() switch
+            {
+                "paused" => RuntimeLifecycleState.Paused,
+                "running" or "restarting" => RuntimeLifecycleState.Running,
+                "created" or "exited" or "dead" or "removing" => RuntimeLifecycleState.Stopped,
+                _ => RuntimeLifecycleState.Unknown
+            };
+
+            ApplyRuntimeState(
+                RuntimeConnectionState.Connected,
+                lifecycleState,
+                string.IsNullOrWhiteSpace(normalizedState) ? "Unknown" : normalizedState);
+        }
+
+        public void SetDockerConnection(bool connected)
+        {
+            ConnectionState = connected
+                ? RuntimeConnectionState.Connected
+                : RuntimeConnectionState.Disconnected;
+        }
+
+        public void ApplyRuntimeState(
+            RuntimeConnectionState connectionState,
+            RuntimeLifecycleState lifecycleState,
+            string? detailStatus = null)
+        {
+            ConnectionState = connectionState;
+            SetLifecycleState(lifecycleState, detailStatus);
+        }
+
+        public void SetCreationProgress(
+            NodeOperationPhase phase,
+            string message,
+            double? percent = null,
+            string? detail = null,
+            string? error = null)
+        {
+            string normalizedMessage = message?.Trim() ?? string.Empty;
+            string normalizedDetail = string.IsNullOrWhiteSpace(detail)
+                ? normalizedMessage
+                : detail.Trim();
+            CreationProgress = new NodeOperationProgress(
+                phase,
+                normalizedMessage,
+                normalizedDetail,
+                percent.HasValue ? Math.Clamp(percent.Value, 0, 100) : null,
+                error?.Trim() ?? string.Empty);
+        }
+
+        public void MarkCreationFailed(
+            string errorMessage,
+            Func<Task>? retryFailedCreationAsync = null,
+            bool removeBeforeRetry = true)
         {
             _retryFailedCreationAsync = retryFailedCreationAsync;
-            IsCreating = false;
-            IsRunning = false;
-            IsDockerConnected = false;
-            IsCreationFailed = true;
-            StatusColor = "#DC3545";
+            _removeBeforeRetry = removeBeforeRetry;
+            SetLifecycleState(RuntimeLifecycleState.Failed, "Failed");
             LastCreationError = string.IsNullOrWhiteSpace(errorMessage)
                 ? "Creation failed."
                 : errorMessage.Trim();
-            CreationProgressValue = 0;
-            IsCreationProgressIndeterminate = false;
-            CreationProgressMessage = "Failed";
+            SetCreationProgress(
+                NodeOperationPhase.Failed,
+                "Failed",
+                0,
+                LastCreationError,
+                LastCreationError);
             DetailStatus = "Failed";
             RaiseFailureCommandStates();
         }
@@ -574,7 +759,9 @@ namespace DockerDiagram.ViewModels
         public void ClearCreationFailure()
         {
             _retryFailedCreationAsync = null;
-            IsCreationFailed = false;
+            _removeBeforeRetry = true;
+            if (LifecycleState == RuntimeLifecycleState.Failed)
+                SetLifecycleState(RuntimeLifecycleState.Unknown);
             LastCreationError = string.Empty;
             RaiseFailureCommandStates();
         }
@@ -597,11 +784,19 @@ namespace DockerDiagram.ViewModels
             get => _network.OptionsMap;
             set => _network.OptionsMap = value;
         }
-        public ObservableCollection<string> ConnectedNodes { get; } = new();
+        public ObservableCollection<string> ConnectedNodes { get; } = [];
         public ObservableCollection<string> UsedByContainers => _volume.UsedByContainers;
         public ObservableCollection<VolumeUsageInfo> VolumeUsageDetails => _volume.UsageDetails;
 
-        public List<string> PortBindings { get => _portBindings; set => SetProperty(ref _portBindings, value); }
+        public List<string> PortBindings
+        {
+            get => _portBindings;
+            set
+            {
+                if (SetProperty(ref _portBindings, value ?? []))
+                    OnPropertyChanged(nameof(CardResourceSummary));
+            }
+        }
         public List<string> EnvironmentVariables { get => _environmentVariables; set => SetProperty(ref _environmentVariables, value); }
 
         public string HostFilePath
@@ -653,6 +848,7 @@ namespace DockerDiagram.ViewModels
         public ICommand RestoreVolumeCommand => _volume.RestoreCommand;
         public ICommand RecreateVolumeCommand => _volume.RecreateCommand;
         public ICommand OpenVolumeDetailWindowCommand => _volume.OpenDetailCommand;
+        public ICommand CopyVolumeNameCommand => _volume.CopyNameCommand;
         public AsyncRelayCommand ExtractDockerfileCommand => _containerOperations.ExtractDockerfileCommand;
         public ICommand UpdateResourcesCommand => _containerOperations.UpdateResourcesCommand;
         public ICommand RenameContainerCommand => _containerOperations.RenameContainerCommand;
@@ -682,7 +878,7 @@ namespace DockerDiagram.ViewModels
         /// 공통 노드 상태와 타입별 기능 ViewModel을 초기화합니다.
         /// </summary>
         public NodeViewModel(IContainerService containerService, IVolumeService volumeService, IDialogService dialogService)
-            : base(0, 0, 160, 80)
+            : base(0, 0, StandardWidth, StandardHeight)
         {
             _containerService = containerService ?? throw new ArgumentNullException(nameof(containerService));
             _volumeService = volumeService ?? throw new ArgumentNullException(nameof(volumeService));
@@ -724,6 +920,9 @@ namespace DockerDiagram.ViewModels
                 {
                     case nameof(VolumeNodeViewModel.Labels):
                         OnPropertyChanged(nameof(VolumeLabels));
+                        OnPropertyChanged(nameof(IsAnonymousVolume));
+                        OnPropertyChanged(nameof(VolumeIdentityTitle));
+                        OnPropertyChanged(nameof(VolumeDisplayName));
                         break;
                     case nameof(VolumeNodeViewModel.DriverOptions):
                         OnPropertyChanged(nameof(VolumeDriverOptions));
@@ -743,6 +942,9 @@ namespace DockerDiagram.ViewModels
                     case nameof(VolumeNodeViewModel.DockerVolumeName):
                         OnPropertyChanged(nameof(DockerVolumeName));
                         OnPropertyChanged(nameof(EffectiveVolumeName));
+                        OnPropertyChanged(nameof(IsAnonymousVolume));
+                        OnPropertyChanged(nameof(VolumeIdentityTitle));
+                        OnPropertyChanged(nameof(VolumeDisplayName));
                         break;
                     case nameof(VolumeNodeViewModel.External):
                         OnPropertyChanged(nameof(VolumeExternal));
@@ -761,15 +963,13 @@ namespace DockerDiagram.ViewModels
         /// <summary>
         /// 노드 타입에 맞는 자식 ViewModel에서 최신 Docker 상태를 불러옵니다.
         /// </summary>
-        public async Task RefreshDetailsAsync()
+        public async Task RefreshDetailsAsync(bool refreshMonitoring = true)
         {
             if (string.IsNullOrWhiteSpace(Name)) return;
 
             if (IsDraft)
             {
-                IsDockerConnected = false;
-                IsRunning = false;
-                IsPaused = false;
+                ApplyRuntimeState(RuntimeConnectionState.Disconnected, RuntimeLifecycleState.Unknown);
                 DetailStatus = "Draft";
                 StatusColor = "#7652A8";
                 CommandManager.InvalidateRequerySuggested();
@@ -779,17 +979,18 @@ namespace DockerDiagram.ViewModels
 
             if (Type == NodeType.Internet)
             {
-                IsDockerConnected = true;
+                SetDockerConnection(true);
                 return;
             }
 
             if (IsSwarmService)
             {
-                IsDockerConnected = !string.IsNullOrWhiteSpace(ContainerId);
-                IsRunning = true;
-                IsPaused = false;
+                bool connected = !string.IsNullOrWhiteSpace(ContainerId);
+                ApplyRuntimeState(
+                    connected ? RuntimeConnectionState.Connected : RuntimeConnectionState.Disconnected,
+                    connected ? RuntimeLifecycleState.Running : RuntimeLifecycleState.Unknown);
                 DetailStatus = string.IsNullOrWhiteSpace(PortInfo) ? "service" : PortInfo;
-                StatusColor = "#28a745";
+                StatusColor = StatusColors.Running;
                 CommandManager.InvalidateRequerySuggested();
                 RefreshConnections();
                 return;
@@ -797,11 +998,17 @@ namespace DockerDiagram.ViewModels
 
             if (IsKubernetesResource)
             {
-                IsDockerConnected = !string.IsNullOrWhiteSpace(ContainerId);
-                IsRunning = DetailStatus.Contains("running", StringComparison.OrdinalIgnoreCase) ||
-                            DetailStatus.Contains("available", StringComparison.OrdinalIgnoreCase) ||
-                            DetailStatus.Contains("bound", StringComparison.OrdinalIgnoreCase);
-                IsPaused = false;
+                bool connected = !string.IsNullOrWhiteSpace(ContainerId);
+                bool running = DetailStatus.Contains("running", StringComparison.OrdinalIgnoreCase) ||
+                               DetailStatus.Contains("available", StringComparison.OrdinalIgnoreCase) ||
+                               DetailStatus.Contains("bound", StringComparison.OrdinalIgnoreCase);
+                ApplyRuntimeState(
+                    connected ? RuntimeConnectionState.Connected : RuntimeConnectionState.Disconnected,
+                    !connected
+                        ? RuntimeLifecycleState.Unknown
+                        : running
+                            ? RuntimeLifecycleState.Running
+                            : RuntimeLifecycleState.Stopped);
                 DetailStatus = string.IsNullOrWhiteSpace(PortInfo) ? DetailStatus : PortInfo;
                 CommandManager.InvalidateRequerySuggested();
                 RefreshConnections();
@@ -811,7 +1018,7 @@ namespace DockerDiagram.ViewModels
             try
             {
                 if (Type == NodeType.Container)
-                    await _containerOperations.RefreshDetailsAsync();
+                    await _containerOperations.RefreshDetailsAsync(refreshMonitoring);
                 else if (Type == NodeType.Volume)
                     await _volume.RefreshDetailsAsync();
 
@@ -820,11 +1027,12 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"Refresh Error: {ex.Message}");
+                AppLog.WarningThrottled(
+                    $"node-refresh-{ContainerId}",
+                    $"노드 '{Name}' 상세 정보 새로 고침 실패",
+                    ex);
                 DetailStatus = "Error";
-                IsDockerConnected = false;
-                IsRunning = false;
-                IsPaused = false;
+                ApplyRuntimeState(RuntimeConnectionState.Disconnected, RuntimeLifecycleState.Unknown);
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -835,7 +1043,7 @@ namespace DockerDiagram.ViewModels
             {
                 if (Type == NodeType.Internet)
                 {
-                    IsDockerConnected = true;
+                    SetDockerConnection(true);
                     return true;
                 }
 
@@ -846,7 +1054,10 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                IsDockerConnected = false;
+                if (Type == NodeType.Container)
+                    ApplyObservedContainerState(connected: false, dockerState: "Connection error");
+                else
+                    SetDockerConnection(false);
                 _dialogService.ShowError($"Reconnect 실패: {ex.Message}", "Reconnect");
             }
 
@@ -862,9 +1073,11 @@ namespace DockerDiagram.ViewModels
             }
 
             var retry = _retryFailedCreationAsync;
+            bool removeBeforeRetry = _removeBeforeRetry;
             try
             {
-                await RemoveSelfFromSheetAsync();
+                if (removeBeforeRetry)
+                    await RemoveSelfFromSheetAsync();
                 await retry();
             }
             catch (Exception ex)
@@ -899,7 +1112,7 @@ namespace DockerDiagram.ViewModels
                 return;
             }
 
-            IsCreationFailed = false;
+            ClearCreationFailure();
         }
 
         private void RaiseFailureCommandStates()
@@ -921,6 +1134,8 @@ namespace DockerDiagram.ViewModels
         /// 노드 선택이 해제되면 불필요한 백그라운드 통신을 줄이기 위해 리소스 모니터링 타이머를 정지합니다.
         /// </summary>
         public void StopMonitoring() => _monitoring.Stop();
+
+        internal bool IsMonitoring => _monitoring.IsMonitoring;
 
         public void NotifyRuntimeAvailabilityChanged()
         {
@@ -975,15 +1190,6 @@ namespace DockerDiagram.ViewModels
         #endregion
 
         #region Private Helper Methods (Internal Logic)
-        /// <summary>
-        /// Docker ID를 화면 표시 길이로 줄입니다.
-        /// </summary>
-        private static string ShortenId(string? id, int len = 12)
-        {
-            if (string.IsNullOrWhiteSpace(id)) return "";
-            return id.Length <= len ? id : id.Substring(0, len);
-        }
-
         private static string ExtractKubernetesResourceName(string name)
         {
             if (string.IsNullOrWhiteSpace(name)) return string.Empty;
@@ -1015,6 +1221,18 @@ namespace DockerDiagram.ViewModels
 
 
         public void StopLogStream() => _containerOperations.StopLogStream();
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            // ParentSheet 해제는 Connectors.CollectionChanged 구독과 선택 기반 모니터링을
+            // 함께 정리합니다. 시트 컬렉션이 Reset되기 전에 반드시 수행되어야 합니다.
+            ParentSheet = null;
+            _monitoring.Dispose();
+            _containerOperations.Dispose();
+            GC.SuppressFinalize(this);
+        }
         #endregion
     }
 }

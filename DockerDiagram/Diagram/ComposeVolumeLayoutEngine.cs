@@ -319,7 +319,7 @@ namespace DockerDiagram.Diagram
             var requiredDepthGapByRank = new Dictionary<int, double>();
             foreach (int rank in ranks)
             {
-                IReadOnlyList<string> rankVolumeIds = volumeIdsByRank[rank];
+                List<string> rankVolumeIds = volumeIdsByRank[rank];
                 if (rankVolumeIds.Count == 0)
                 {
                     requiredDepthGapByRank[rank] = 0;
@@ -608,7 +608,7 @@ namespace DockerDiagram.Diagram
                     currentLayout.BreadthEnd);
             }
 
-            IReadOnlyDictionary<string, int> componentByRegion = BuildRegionComponents(regions);
+            Dictionary<string, int> componentByRegion = BuildRegionComponents(regions);
             var shelfGroups = externalVolumeIds
                 .Select(volumeId =>
                 {
@@ -617,7 +617,7 @@ namespace DockerDiagram.Diagram
                         Array.Empty<string>();
                     string[] componentKeys = regionIds
                         .Where(componentByRegion.ContainsKey)
-                        .Select(id => componentByRegion[id].ToString())
+                        .Select(id => componentByRegion[id].ToString(System.Globalization.CultureInfo.InvariantCulture))
                         .Distinct(StringComparer.Ordinal)
                         .OrderBy(id => id, StringComparer.Ordinal)
                         .ToArray();
@@ -828,10 +828,10 @@ namespace DockerDiagram.Diagram
                 Array.Empty<string>());
         }
 
-        private static IReadOnlyDictionary<string, int> BuildRegionComponents(
-            IReadOnlyList<ComposeVolumeNetworkRegion> regions)
+        private static Dictionary<string, int> BuildRegionComponents(
+            ComposeVolumeNetworkRegion[] regions)
         {
-            int[] parent = Enumerable.Range(0, regions.Count).ToArray();
+            int[] parent = Enumerable.Range(0, regions.Length).ToArray();
             int Find(int index)
             {
                 while (parent[index] != index)
@@ -848,9 +848,9 @@ namespace DockerDiagram.Diagram
                 if (leftRoot != rightRoot) parent[rightRoot] = leftRoot;
             }
 
-            for (int left = 0; left < regions.Count; left++)
+            for (int left = 0; left < regions.Length; left++)
             {
-                for (int right = left + 1; right < regions.Count; right++)
+                for (int right = left + 1; right < regions.Length; right++)
                 {
                     if (RegionsOverlap(regions[left], regions[right]))
                         Union(left, right);
@@ -860,7 +860,7 @@ namespace DockerDiagram.Diagram
             var stableComponentByRoot = new Dictionary<int, int>();
             var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             int nextComponent = 0;
-            for (int index = 0; index < regions.Count; index++)
+            for (int index = 0; index < regions.Length; index++)
             {
                 int root = Find(index);
                 if (!stableComponentByRoot.TryGetValue(root, out int component))

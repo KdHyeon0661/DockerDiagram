@@ -43,7 +43,7 @@ namespace DockerDiagram.ApplicationServices
         private static void ReadReferences(
             JToken? token,
             SwarmDataResourceKind kind,
-            ICollection<SwarmServiceDataReference> destination)
+            List<SwarmServiceDataReference> destination)
         {
             if (token is not JArray items) return;
             string prefix = kind == SwarmDataResourceKind.Secret ? "Secret" : "Config";

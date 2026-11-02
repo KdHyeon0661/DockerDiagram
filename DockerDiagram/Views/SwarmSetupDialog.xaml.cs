@@ -1,17 +1,18 @@
-using DockerDiagram.Contracts;
-using DockerDiagram.Infrastructure;
-using DockerDiagram.Models;
-using DockerDiagram.ViewModels;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Infrastructure;
+using DockerDiagram.Models;
+using DockerDiagram.ViewModels;
 
 namespace DockerDiagram.Views
 {
-    public partial class SwarmSetupDialog : Window
+    public partial class SwarmSetupDialog : Window, IDisposable
     {
         private readonly ISwarmService _swarmService;
         private readonly IDialogService _dialogService;
@@ -26,10 +27,11 @@ namespace DockerDiagram.Views
         private bool _targetCanJoin;
         private bool _isDockerDesktopLocalDemo;
         private bool _initializationAddressReady;
-        private readonly CancellationTokenSource _lifetimeCts = new();
+        private readonly ApplicationLifetimeCoordinator _lifetime = new();
         private SwarmClusterState? _currentState;
         private SwarmJoinTokens? _joinTokens;
         private SwarmTargetConnectionSession? _targetConnection;
+        private bool _disposed;
 
         public SwarmSetupDialog(
             ISwarmService swarmService,
@@ -55,13 +57,29 @@ namespace DockerDiagram.Views
                     operatingSystem: null));
 
             // 진행 중인 요청의 연결이 중간에 해제되지 않게 합니다.
-            Closing += (_, e) => e.Cancel = _isLoading;
-            Closed += (_, _) =>
+            Closing += SwarmSetupDialog_Closing;
+            Closed += SwarmSetupDialog_Closed;
+            _lifetime.Register(() =>
             {
-                _lifetimeCts.Cancel();
-                ClearJoinSecrets();
-                ClearTargetConnection();
-            };
+                Closing -= SwarmSetupDialog_Closing;
+                Closed -= SwarmSetupDialog_Closed;
+            });
+            _lifetime.Register(ClearJoinSecrets);
+            _lifetime.Register(ClearTargetConnection);
+        }
+
+        private void SwarmSetupDialog_Closing(object? sender, System.ComponentModel.CancelEventArgs e) =>
+            e.Cancel = _isLoading;
+
+        private void SwarmSetupDialog_Closed(object? sender, EventArgs e) => Dispose();
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            _lifetime.Dispose();
+            GC.SuppressFinalize(this);
         }
 
         public bool WasInitialized { get; private set; }
@@ -88,11 +106,12 @@ namespace DockerDiagram.Views
                 {
                     try
                     {
-                        var bridgeNetwork = await networkService.InspectNetworkAsync("bridge");
+                        var bridgeNetwork = await networkService.InspectNetworkAsync(DockerNetworkSafety.Bridge);
                         daemonCandidates = SwarmAdvertiseAddressDiscovery.GetDaemonBridgeIpv4Candidates(bridgeNetwork);
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        AppLog.Warning("Docker Desktop bridge 주소 후보 조회 실패", ex);
                         daemonCandidates = Array.Empty<string>();
                     }
                 }
@@ -103,8 +122,9 @@ namespace DockerDiagram.Views
                     systemInfo.OperatingSystem,
                     daemonCandidates: daemonCandidates));
             }
-            catch
+            catch (Exception ex)
             {
+                AppLog.Warning("Swarm 초기화 기본값 계산 실패", ex);
                 ApplyInitializationDefaults(new SwarmInitializationDefaults(
                     Array.Empty<string>(),
                     string.Empty,
@@ -154,6 +174,7 @@ namespace DockerDiagram.Views
                 AdvertiseAddress = AdvertiseAddressBox.Text.Trim(),
                 ListenAddress = ListenAddressTextBox.Text.Trim(),
                 DataPathPort = dataPathPort,
+                // Unlock-key 관리 화면이 없으므로 Manager autolock은 의도적으로 활성화하지 않습니다.
                 AutoLockManagers = false
             };
 
@@ -170,7 +191,9 @@ namespace DockerDiagram.Views
                 return;
             }
 
-            string portSummary = dataPathPort == 0 ? "Docker 기본값" : dataPathPort.ToString();
+            string portSummary = dataPathPort == 0
+                ? "Docker 기본값"
+                : dataPathPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
             bool confirmed = _dialogService.ShowConfirm(
                 "이 Docker Engine을 새 Swarm의 Manager로 초기화합니다.\n\n" +
                 $"Advertise Address: {options.AdvertiseAddress}\n" +
@@ -187,10 +210,10 @@ namespace DockerDiagram.Views
 
             try
             {
-                using var initCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
-                initCts.CancelAfter(TimeSpan.FromSeconds(30));
+                using var initCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+                initCts.CancelAfter(SwarmOperationTiming.SetupTimeout);
                 string nodeId = await _swarmService.InitializeSwarmAsync(options, initCts.Token);
-                SwarmClusterState confirmedState = await WaitForManagerStateAsync(_lifetimeCts.Token);
+                SwarmClusterState confirmedState = await WaitForManagerStateAsync(_lifetime.Token);
 
                 WasInitialized = true;
                 _dialogService.ShowInfo(
@@ -201,7 +224,7 @@ namespace DockerDiagram.Views
                 _isLoading = false;
                 DialogResult = true;
             }
-            catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
             {
                 // 창이 닫히면서 취소된 경우 별도 오류창을 표시하지 않습니다.
             }
@@ -232,14 +255,14 @@ namespace DockerDiagram.Views
 
             try
             {
-                using var tokenCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
-                tokenCts.CancelAfter(TimeSpan.FromSeconds(15));
+                using var tokenCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+                tokenCts.CancelAfter(SwarmOperationTiming.SetupShortTimeout);
                 _joinTokens = await _swarmService.GetJoinTokensAsync(tokenCts.Token);
                 JoinManagerAddressTextBox.Text = GetDefaultManagerAddress(_currentState);
                 JoinInfoPanel.Visibility = Visibility.Visible;
                 UpdateJoinInfoPresentation();
             }
-            catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
             {
             }
             catch (Exception ex)
@@ -384,11 +407,11 @@ namespace DockerDiagram.Views
 
             try
             {
-                var freshState = await SwarmLeaveWorkflow.ReadStateAsync(connection.DockerService, _lifetimeCts.Token);
+                var freshState = await SwarmLeaveWorkflow.ReadStateAsync(connection.DockerService, _lifetime.Token);
                 if (freshState.Membership != SwarmMembershipState.Inactive)
                     throw new InvalidOperationException("대상 PC의 가입 상태가 변경되었습니다.");
-                using var tokenCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
-                tokenCts.CancelAfter(TimeSpan.FromSeconds(15));
+                using var tokenCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+                tokenCts.CancelAfter(SwarmOperationTiming.SetupShortTimeout);
                 SwarmJoinTokens tokens = await _swarmService.GetJoinTokensAsync(tokenCts.Token);
                 string token = tokens.GetToken(target.Role);
                 activeToken = token;
@@ -404,29 +427,29 @@ namespace DockerDiagram.Views
                 joinOptions.Validate();
 
                 LoadingText.Text = $"{target.Host}에 Swarm Join 요청 중...";
-                using var joinCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
-                joinCts.CancelAfter(TimeSpan.FromSeconds(30));
+                using var joinCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+                joinCts.CancelAfter(SwarmOperationTiming.SetupTimeout);
                 await connection.DockerService.JoinSwarmAsync(joinOptions, joinCts.Token);
 
                 LoadingText.Text = "대상 노드 역할 확인 중...";
                 SwarmClusterState joinedState = await WaitForTargetJoinedStateAsync(
                     connection.DockerService,
                     target.Role,
-                    _lifetimeCts.Token);
+                    _lifetime.Token);
 
                 LoadingText.Text = "Manager에서 새 노드 확인 중...";
                 DockerSwarmNode? managerNode = await WaitForManagerNodeAsync(
                     joinedState.NodeId,
                     target.AdvertiseAddress,
                     target.Role,
-                    _lifetimeCts.Token);
+                    _lifetime.Token);
 
                 if (managerNode != null)
                     CompleteTargetJoin(target, joinedState, managerNode);
                 else
                     PresentTargetRecovery(joinedState, "대상 역할은 확인했지만 현재 Manager의 노드 목록 반영은 확인 대기 중입니다.");
             }
-            catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
             {
             }
             catch (Exception ex)
@@ -456,7 +479,7 @@ namespace DockerDiagram.Views
 
             try
             {
-                SwarmClusterState state = await SwarmLeaveWorkflow.ReadStateAsync(_swarmService, _lifetimeCts.Token);
+                SwarmClusterState state = await SwarmLeaveWorkflow.ReadStateAsync(_swarmService, _lifetime.Token);
                 _currentState = state;
                 if (!state.IsManager)
                     ClearTargetConnection();
@@ -500,7 +523,7 @@ namespace DockerDiagram.Views
             SwarmClusterState latest = await SwarmLeaveWorkflow.ReadStateAsync(_swarmService, cancellationToken);
             for (int attempt = 0; attempt < 12 && !latest.IsManager; attempt++)
             {
-                await Task.Delay(250, cancellationToken);
+                await Task.Delay(SwarmOperationTiming.PollInterval, cancellationToken);
                 latest = await SwarmLeaveWorkflow.ReadStateAsync(_swarmService, cancellationToken);
             }
 
@@ -521,7 +544,7 @@ namespace DockerDiagram.Views
             SwarmClusterState latest = await SwarmLeaveWorkflow.ReadStateAsync(targetService, cancellationToken);
             for (int attempt = 0; attempt < 20 && !SwarmJoinVerification.HasExpectedRole(latest, role); attempt++)
             {
-                await Task.Delay(250, cancellationToken);
+                await Task.Delay(SwarmOperationTiming.PollInterval, cancellationToken);
                 latest = await SwarmLeaveWorkflow.ReadStateAsync(targetService, cancellationToken);
             }
 
@@ -541,9 +564,9 @@ namespace DockerDiagram.Views
             for (int attempt = 0; attempt < 20 && match == null; attempt++)
             {
                 IReadOnlyList<DockerSwarmNode> nodes = await _swarmService.GetSwarmNodesAsync()
-                    .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                    .WaitAsync(SwarmOperationTiming.ReadinessQueryTimeout, cancellationToken);
                 match = SwarmJoinVerification.FindJoinedNode(nodes, nodeId, advertiseAddress, role);
-                if (match == null) await Task.Delay(250, cancellationToken);
+                if (match == null) await Task.Delay(SwarmOperationTiming.PollInterval, cancellationToken);
             }
             return match;
         }
@@ -551,7 +574,14 @@ namespace DockerDiagram.Views
         private static async Task<SwarmClusterState?> TryReadTargetStateAsync(ISwarmService targetService)
         {
             try { return await SwarmLeaveWorkflow.ReadStateAsync(targetService); }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                AppLog.WarningThrottled(
+                    "swarm-target-state-probe",
+                    "Swarm 대상 노드 상태 확인 실패",
+                    ex.GetBaseException());
+                return null;
+            }
         }
 
         private void CompleteTargetJoin(
@@ -630,7 +660,9 @@ namespace DockerDiagram.Views
             if (string.IsNullOrWhiteSpace(address))
                 address = !string.IsNullOrWhiteSpace(state.NodeAddress)
                     ? state.NodeAddress
-                    : state.RemoteManagers.FirstOrDefault()?.Address ?? string.Empty;
+                    : state.RemoteManagers.Count > 0
+                        ? state.RemoteManagers[0].Address
+                        : string.Empty;
             return string.IsNullOrWhiteSpace(address)
                 ? string.Empty
                 : SwarmJoinCommandBuilder.NormalizeManagerAddress(address);

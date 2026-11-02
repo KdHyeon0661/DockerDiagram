@@ -8,7 +8,7 @@ namespace DockerDiagram.Tests
         [Theory]
         [InlineData(SwarmDataResourceKind.Secret)]
         [InlineData(SwarmDataResourceKind.Config)]
-        public void CreateOptions_Validate_AcceptsValidResource(SwarmDataResourceKind kind)
+        public void CreateOptionsValidateAcceptsValidResource(SwarmDataResourceKind kind)
         {
             var options = new SwarmDataResourceCreateOptions
             {
@@ -22,7 +22,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void CreateOptions_Validate_RejectsEmptyData()
+        public void CreateOptionsValidateRejectsEmptyData()
         {
             var options = new SwarmDataResourceCreateOptions
             {
@@ -35,7 +35,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void CreateOptions_Validate_RejectsPayloadOverDockerLimit()
+        public void CreateOptionsValidateRejectsPayloadOverDockerLimit()
         {
             var options = new SwarmDataResourceCreateOptions
             {
@@ -51,7 +51,7 @@ namespace DockerDiagram.Tests
         [InlineData("")]
         [InlineData("bad name")]
         [InlineData("name/with/slash")]
-        public void CreateOptions_Validate_RejectsInvalidName(string name)
+        public void CreateOptionsValidateRejectsInvalidName(string name)
         {
             var options = new SwarmDataResourceCreateOptions
             {
@@ -64,7 +64,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void ResourceReference_Validate_AcceptsIdAndTargetName()
+        public void ResourceReferenceValidateAcceptsIdAndTargetName()
         {
             var reference = new SwarmServiceResourceReferenceOptions("resource-id", "api-key", "api_key");
 
@@ -72,7 +72,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void ResourceReference_Validate_RejectsMissingId()
+        public void ResourceReferenceValidateRejectsMissingId()
         {
             var reference = new SwarmServiceResourceReferenceOptions(string.Empty, "api-key", "api_key");
 
@@ -80,7 +80,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void TopologyUpdate_Validate_RejectsDuplicateSecretTargets()
+        public void TopologyUpdateValidateRejectsDuplicateSecretTargets()
         {
             var referenceA = new SwarmServiceResourceReferenceOptions("one", "first", "shared");
             var referenceB = new SwarmServiceResourceReferenceOptions("two", "second", "shared");

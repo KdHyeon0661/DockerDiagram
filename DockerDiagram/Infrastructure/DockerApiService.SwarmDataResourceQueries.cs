@@ -1,7 +1,7 @@
+using System.Net.Http;
 using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 using Newtonsoft.Json.Linq;
-using System.Net.Http;
 
 namespace DockerDiagram.Infrastructure
 {

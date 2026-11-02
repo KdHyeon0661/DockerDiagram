@@ -4,6 +4,7 @@ namespace DockerDiagram.Models
     {
         public string ContainerId { get; set; } = string.Empty;
         public string ContainerName { get; set; } = string.Empty;
+        public string Source { get; set; } = string.Empty;
         public string Destination { get; set; } = string.Empty;
         public bool ReadWrite { get; set; } = true;
         public string Mode { get; set; } = string.Empty;

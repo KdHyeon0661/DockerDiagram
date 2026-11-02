@@ -5,13 +5,13 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmServiceContractTests
 {
     [Fact]
-    public void ReplicatedSpec_WithValidOptions_PassesValidation()
+    public void ReplicatedSpecWithValidOptionsPassesValidation()
     {
         CreateValidSpec().Validate();
     }
 
     [Fact]
-    public void GlobalSpec_RejectsReplicaCount()
+    public void GlobalSpecRejectsReplicaCount()
     {
         var spec = new SwarmServiceSpecOptions
         {
@@ -28,13 +28,13 @@ public sealed class SwarmServiceContractTests
     [InlineData("")]
     [InlineData("contains space")]
     [InlineData("-starts-with-dash")]
-    public void Spec_RejectsInvalidServiceName(string name)
+    public void SpecRejectsInvalidServiceName(string name)
     {
         Assert.Throws<ArgumentException>(() => CreateValidSpec(name).Validate());
     }
 
     [Fact]
-    public void Spec_RejectsDuplicatePublishedPort()
+    public void SpecRejectsDuplicatePublishedPort()
     {
         var spec = new SwarmServiceSpecOptions
         {
@@ -51,7 +51,7 @@ public sealed class SwarmServiceContractTests
     }
 
     [Fact]
-    public void UpdateOptions_RequireServiceIdAndVersion()
+    public void UpdateOptionsRequireServiceIdAndVersion()
     {
         var options = new SwarmServiceUpdateOptions { Spec = CreateValidSpec() };
 
@@ -59,7 +59,7 @@ public sealed class SwarmServiceContractTests
     }
 
     [Fact]
-    public void MutationResult_NormalizesIdAndUsesEmptyWarnings()
+    public void MutationResultNormalizesIdAndUsesEmptyWarnings()
     {
         SwarmServiceMutationResult result = SwarmServiceMutationResult.Create(" service-id ");
 

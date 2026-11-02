@@ -6,8 +6,11 @@ namespace DockerDiagram.Tests;
 
 public sealed class SwarmServiceSpecMapperTests
 {
+
+    private static readonly string[] ToNanosecondsUsesDockerDurationUnitsAndChecksOverflowExpectedValues = new[] { "web" };
+
     [Fact]
-    public void BuildForCreate_MapsReplicatedServiceSpec()
+    public void BuildForCreateMapsReplicatedServiceSpec()
     {
         SwarmServiceSpecOptions options = CreateSpec();
 
@@ -22,7 +25,7 @@ public sealed class SwarmServiceSpecMapperTests
     }
 
     [Fact]
-    public void BuildForCreate_MapsPortsMountsAndNetworks()
+    public void BuildForCreateMapsPortsMountsAndNetworks()
     {
         JObject result = SwarmServiceSpecMapper.BuildForCreate(CreateSpec());
 
@@ -44,7 +47,7 @@ public sealed class SwarmServiceSpecMapperTests
     }
 
     [Fact]
-    public void BuildForCreate_MapsGlobalModeWithoutReplicas()
+    public void BuildForCreateMapsGlobalModeWithoutReplicas()
     {
         var options = new SwarmServiceSpecOptions
         {
@@ -61,7 +64,7 @@ public sealed class SwarmServiceSpecMapperTests
     }
 
     [Fact]
-    public void BuildForCreate_MapsPlacementAndDataReferences()
+    public void BuildForCreateMapsPlacementAndDataReferences()
     {
         var options = new SwarmServiceCreateOptions
         {
@@ -86,7 +89,7 @@ public sealed class SwarmServiceSpecMapperTests
     }
 
     [Fact]
-    public void MergeForUpdate_PreservesUnsupportedCurrentFields()
+    public void MergeForUpdatePreservesUnsupportedCurrentFields()
     {
         JObject current = JObject.Parse("""
         {
@@ -117,7 +120,7 @@ public sealed class SwarmServiceSpecMapperTests
     }
 
     [Fact]
-    public void MergeForUpdate_RejectsNameOrModeChanges()
+    public void MergeForUpdateRejectsNameOrModeChanges()
     {
         JObject current = JObject.Parse("""
         { "Name": "existing", "Mode": { "Replicated": { "Replicas": 1 } } }
@@ -128,7 +131,7 @@ public sealed class SwarmServiceSpecMapperTests
     }
 
     [Fact]
-    public void ReadCurrentMode_RejectsJobModes()
+    public void ReadCurrentModeRejectsJobModes()
     {
         JObject current = JObject.Parse("""{ "Mode": { "ReplicatedJob": {} } }""");
 
@@ -136,7 +139,7 @@ public sealed class SwarmServiceSpecMapperTests
     }
 
     [Fact]
-    public void ToNanoseconds_UsesDockerDurationUnitsAndChecksOverflow()
+    public void ToNanosecondsUsesDockerDurationUnitsAndChecksOverflow()
     {
         Assert.Equal(1_250_000_000L, SwarmServiceSpecMapper.ToNanoseconds(TimeSpan.FromMilliseconds(1250)));
         Assert.Throws<OverflowException>(() => SwarmServiceSpecMapper.ToNanoseconds(TimeSpan.MaxValue));
@@ -168,7 +171,7 @@ public sealed class SwarmServiceSpecMapperTests
         },
         Networks = new[]
         {
-            new SwarmNetworkAttachmentOptions("frontend", new[] { "web" },
+            new SwarmNetworkAttachmentOptions("frontend", ToNanosecondsUsesDockerDurationUnitsAndChecksOverflowExpectedValues,
                 new Dictionary<string, string> { ["encrypted"] = "true" })
         },
         RestartPolicy = new SwarmRestartPolicyOptions

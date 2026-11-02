@@ -1,9 +1,9 @@
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.Contracts;
-using DockerDiagram.Models;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Contracts;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.Views
 {

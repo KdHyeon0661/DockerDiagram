@@ -1,8 +1,9 @@
-using DockerDiagram.Diagram;
+using System.Collections.ObjectModel;
+using DockerDiagram.Common;
 using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
-using System.Collections.ObjectModel;
 
 namespace DockerDiagram.ApplicationServices
 {
@@ -153,8 +154,12 @@ namespace DockerDiagram.ApplicationServices
                 DockerContainer service = match.Resource;
                 node.ContainerId = service.Id;
                 node.BindingState = RuntimeBindingState.Bound;
-                node.IsDockerConnected = true;
-                node.IsRunning = service.State.Equals("running", StringComparison.OrdinalIgnoreCase);
+                node.ApplyRuntimeState(
+                    RuntimeConnectionState.Connected,
+                    service.State.Equals("running", StringComparison.OrdinalIgnoreCase)
+                        ? RuntimeLifecycleState.Running
+                        : RuntimeLifecycleState.Stopped,
+                    service.Ports);
                 node.StatusColor = service.StateColor;
                 node.DetailStatus = service.Ports;
                 node.SwarmMode = service.SwarmMode;
@@ -231,18 +236,19 @@ namespace DockerDiagram.ApplicationServices
 
                 node.ContainerId = match.Resource.Id;
                 node.BindingState = RuntimeBindingState.Bound;
-                node.IsDockerConnected = true;
+                node.SetDockerConnection(true);
                 node.StatusColor = kind == SwarmDataResourceKind.Secret ? "#C08A00" : "#4D7C6F";
-                node.DetailStatus = $"Bound · {ShortId(match.Resource.Id)} · v{match.Resource.Version}";
+                node.DetailStatus = $"Bound · {DockerIdFormatter.Shorten(match.Resource.Id)} · v{match.Resource.Version}";
             }
         }
 
         private static void MarkMissing(NodeViewModel node, string detail)
         {
             node.BindingState = RuntimeBindingState.Missing;
-            node.IsDockerConnected = false;
-            node.IsRunning = false;
-            node.StatusColor = "#808080";
+            node.ApplyRuntimeState(
+                RuntimeConnectionState.Disconnected,
+                RuntimeLifecycleState.Unknown);
+            node.StatusColor = StatusColors.Unknown;
             node.DetailStatus = detail;
         }
 
@@ -262,8 +268,6 @@ namespace DockerDiagram.ApplicationServices
 
         private static bool Contains(IEnumerable<string> values, string expected) =>
             values.Contains(expected, StringComparer.OrdinalIgnoreCase);
-
-        private static string ShortId(string id) => id.Length <= 12 ? id : id[..12];
 
         private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> source)
         {
@@ -286,23 +290,21 @@ namespace DockerDiagram.ApplicationServices
             NodeViewModel Node,
             string ContainerId,
             RuntimeBindingState BindingState,
-            bool IsConnected,
-            bool IsRunning,
+            RuntimeConnectionState ConnectionState,
+            RuntimeLifecycleState LifecycleState,
             string StatusColor,
             string DetailStatus)
         {
             public static NodeRuntimeSnapshot Capture(NodeViewModel node) =>
-                new(node, node.ContainerId, node.BindingState, node.IsDockerConnected,
-                    node.IsRunning, node.StatusColor, node.DetailStatus);
+                new(node, node.ContainerId, node.BindingState, node.ConnectionState,
+                    node.LifecycleState, node.StatusColor, node.DetailStatus);
 
             public void Restore()
             {
                 Node.ContainerId = ContainerId;
                 Node.BindingState = BindingState;
-                Node.IsDockerConnected = IsConnected;
-                Node.IsRunning = IsRunning;
+                Node.ApplyRuntimeState(ConnectionState, LifecycleState, DetailStatus);
                 Node.StatusColor = StatusColor;
-                Node.DetailStatus = DetailStatus;
             }
         }
 

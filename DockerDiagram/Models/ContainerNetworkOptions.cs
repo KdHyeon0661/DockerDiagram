@@ -7,8 +7,8 @@ namespace DockerDiagram.Models
     {
         public string StaticIPv4 { get; set; } = "";
         public string StaticIPv6 { get; set; } = "";
-        public List<string> Aliases { get; set; } = new();
-        public Dictionary<string, string> DriverOptions { get; set; } = new();
+        public List<string> Aliases { get; set; } = [];
+        public Dictionary<string, string> DriverOptions { get; set; } = [];
 
         public bool HasAnyOption =>
             !string.IsNullOrWhiteSpace(StaticIPv4) ||

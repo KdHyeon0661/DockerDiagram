@@ -27,7 +27,7 @@ namespace DockerDiagram.ViewModels
         public bool ShowSwarmSidebar => SidebarKind == RuntimeSidebarKind.Swarm;
         public bool ShowUnsupportedSidebar => SidebarKind == RuntimeSidebarKind.Unsupported;
         public bool ShowSwarmCommands => RuntimeKind == RuntimeKind.DockerSwarm;
-        public bool ShowSwarmSetup => RuntimeKind is RuntimeKind.DockerEngine or RuntimeKind.DockerSwarm;
+        public bool ShowSwarmSetup => RuntimeKind == RuntimeKind.DockerSwarm;
         public bool ShowDockerHistoryOptions => RuntimeKind == RuntimeKind.DockerEngine;
         public bool ShowDestructiveDockerMaintenance => RuntimeKind == RuntimeKind.DockerEngine;
         public bool ShowTertiaryCanvasButton =>
@@ -35,7 +35,7 @@ namespace DockerDiagram.ViewModels
         public bool UseSwarmNodeButton => RuntimeKind == RuntimeKind.DockerSwarm;
         public string TertiaryCanvasButtonToolTip => UseSwarmNodeButton
             ? "Swarm 노드 관리"
-            : "Undo / Redo 옵션";
+            : "실행 취소 / 다시 실행 옵션";
     }
 
     /// <summary>
@@ -50,8 +50,8 @@ namespace DockerDiagram.ViewModels
                 runtimeKind,
                 "Standalone Docker",
                 RuntimeSidebarKind.Standalone,
-                "파일 / 시트 / Compose",
-                "이미지 / Docker",
+                "파일 / 시트",
+                "Docker 기능",
                 ShowComposeCommands: true,
                 ShowImageMenu: true,
                 IsAvailable: true),
@@ -60,10 +60,10 @@ namespace DockerDiagram.ViewModels
                 runtimeKind,
                 "Docker Swarm",
                 RuntimeSidebarKind.Swarm,
-                "파일 / 시트 / Stack",
-                "이미지 / Manager 호스트",
+                "파일 / 시트",
+                "Docker 기능",
                 ShowComposeCommands: false,
-                ShowImageMenu: true,
+                ShowImageMenu: false,
                 IsAvailable: true),
 
             RuntimeKind.Kubernetes => new RuntimeUiProfile(

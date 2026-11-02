@@ -1,18 +1,25 @@
-﻿using DockerDiagram.Diagram;
-using DockerDiagram.Contracts;
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.Common;
-using System;
+﻿using System;
+using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Input;
-using DockerDiagram.Models;
 using Docker.DotNet.Models;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
+    public sealed record InspectorSelectionSummary(
+        ConnectableItemViewModel Item,
+        string KindLabel,
+        string Detail);
+
     /// <summary>
     /// 화면 우측(또는 하단)에 표시되는 상세 속성창(Inspector)과 선택된 객체에 대한 액션(삭제, 해제 등)을 전담하는 Sub-ViewModel입니다.
     /// </summary>
@@ -26,6 +33,7 @@ namespace DockerDiagram.ViewModels
         public ICommand DeleteCommand { get; }
         public ICommand SetConnectorDirectionCommand { get; }
         public ICommand ReverseConnectorDirectionCommand { get; }
+        public ICommand FocusSelectionCommand { get; }
         public AsyncRelayCommand ReconnectCommand { get; }
 
         public InspectorViewModel(MainViewModel mainVm, IDialogService dialogService)
@@ -37,6 +45,7 @@ namespace DockerDiagram.ViewModels
             DeleteCommand = new AsyncRelayCommand(_ => DeleteSelectedAsync());
             SetConnectorDirectionCommand = new RelayCommand(SetConnectorDirection);
             ReverseConnectorDirectionCommand = new RelayCommand(_ => ReverseConnectorDirection());
+            FocusSelectionCommand = new RelayCommand(FocusSelection);
             ReconnectCommand = new AsyncRelayCommand(_ => ReconnectSelectedAsync(), _ => IsSelectedRuntimeDisconnected);
         }
 
@@ -113,49 +122,30 @@ namespace DockerDiagram.ViewModels
                 }));
         }
 
-        // 캔버스 위에서 현재 선택된 요소(노드, 선, 그룹 등)
+        // 상세정보를 표시하는 단일 선택과 캔버스의 다중 선택을 분리합니다.
         private object? _selectedElement;
+        private readonly List<ConnectableItemViewModel> _selectedCanvasItems = [];
+
         public object? SelectedElement
         {
             get => _selectedElement;
             set
             {
-                if (_selectedElement == value) return;
-
-                if (_selectedElement is INotifyPropertyChanged oldNotify)
-                    oldNotify.PropertyChanged -= SelectedElement_PropertyChanged;
-
-                _selectedElement = value;
-                if (_selectedElement is INotifyPropertyChanged newNotify)
-                    newNotify.PropertyChanged += SelectedElement_PropertyChanged;
-
-                OnPropertyChanged();
-                OnPropertyChanged(nameof(IsDetailPanelOpen));
-                RaiseSelectionStateChanged();
-
-                // 1. 활성 시트 내의 시각적 선택 상태(IsSelected) 동기화
-                if (_mainVm.ActiveSheet != null)
-                {
-                    foreach (var node in _mainVm.ActiveSheet.Nodes) node.IsSelected = (node == value);
-                    foreach (var conn in _mainVm.ActiveSheet.Connectors) conn.IsSelected = (conn == value);
-                    foreach (var group in _mainVm.ActiveSheet.Groups) group.IsSelected = (group == value);
-                }
-
-                // 2. 노드가 선택되었다면, 상세 정보(Inspect)를 비동기로 갱신.
-                if (_selectedElement is NodeViewModel nodeVm)
-                {
-                    if (nodeVm.IsDockerConnected && !nodeVm.IsKubernetesResource)
-                        _ = nodeVm.RefreshDetailsAsync();
-                }
-                else if (_selectedElement is GroupViewModel { Type: GroupType.Network, IsDockerConnected: true } networkVm)
-                {
-                    _ = networkVm.RefreshNetworkDetailsAsync();
-                }
+                if (value is ConnectableItemViewModel canvasItem)
+                    ApplySelection([canvasItem], canvasItem);
+                else
+                    ApplySelection([], value);
             }
         }
 
-        // 상세 정보 사이드 패널의 열림/닫힘 상태
-        public bool IsDetailPanelOpen => _selectedElement != null;
+        public IReadOnlyList<ConnectableItemViewModel> SelectedCanvasItems => _selectedCanvasItems;
+        public IReadOnlyList<InspectorSelectionSummary> SelectedItemSummaries { get; private set; } = [];
+        public int SelectionCount => _selectedCanvasItems.Count > 0
+            ? _selectedCanvasItems.Count
+            : _selectedElement == null ? 0 : 1;
+        public bool IsSingleSelection => _selectedElement != null;
+        public bool IsMultipleSelection => _selectedCanvasItems.Count > 1;
+        public bool IsDetailPanelOpen => IsSingleSelection || IsMultipleSelection;
         public NodeViewModel? SelectedOfflineSnapshotNode =>
             SelectedElement is NodeViewModel { IsOfflineSnapshot: true } node ? node : null;
         public ICommand? SelectedOfflineSnapshotDetailCommand =>
@@ -173,9 +163,211 @@ namespace DockerDiagram.ViewModels
         public bool IsSelectedRuntimeDisconnected => IsSelectedDockerDisconnected && !IsSelectedOfflineSnapshot;
         public bool IsSelectedDockerConnected => !IsSelectedDockerDisconnected;
         public bool CanDeleteSelected =>
+            !IsMultipleSelection &&
             SelectedElement is not GroupViewModel { Type: GroupType.Network, IsBuiltInDockerNetwork: true };
 
-        public void ClearSelection() => SelectedElement = null;
+        public bool IsCanvasItemSelected(ConnectableItemViewModel item) =>
+            _selectedCanvasItems.Any(selected => ReferenceEquals(selected, item));
+
+        public void SelectCanvasItem(ConnectableItemViewModel item, bool additive)
+        {
+            ArgumentNullException.ThrowIfNull(item);
+            if (additive)
+            {
+                ToggleCanvasItem(item);
+                return;
+            }
+
+            ApplySelection([item], item);
+        }
+
+        public void AddCanvasItems(
+            IEnumerable<ConnectableItemViewModel> items,
+            bool preserveCurrentSelection)
+        {
+            ArgumentNullException.ThrowIfNull(items);
+            var next = preserveCurrentSelection
+                ? new List<ConnectableItemViewModel>(_selectedCanvasItems)
+                : [];
+
+            foreach (ConnectableItemViewModel item in items)
+            {
+                if (!next.Any(selected => ReferenceEquals(selected, item)))
+                    next.Add(item);
+            }
+
+            ApplySelection(next, next.Count == 1 ? next[0] : null);
+        }
+
+        public void ToggleCanvasItem(ConnectableItemViewModel item)
+        {
+            ArgumentNullException.ThrowIfNull(item);
+            var next = new List<ConnectableItemViewModel>(_selectedCanvasItems);
+            int index = next.FindIndex(selected => ReferenceEquals(selected, item));
+            if (index >= 0)
+                next.RemoveAt(index);
+            else
+                next.Add(item);
+
+            ApplySelection(next, next.Count == 1 ? next[0] : null);
+        }
+
+        public void ClearSelection() => ApplySelection([], null);
+
+        private void FocusSelection(object? parameter)
+        {
+            if (parameter is ConnectableItemViewModel item)
+                ApplySelection([item], item);
+        }
+
+        private void ApplySelection(
+            IEnumerable<ConnectableItemViewModel> canvasItems,
+            object? primaryElement)
+        {
+            var normalized = new List<ConnectableItemViewModel>();
+            foreach (ConnectableItemViewModel item in canvasItems)
+            {
+                if (!normalized.Any(selected => ReferenceEquals(selected, item)))
+                    normalized.Add(item);
+            }
+
+            if (normalized.Count > 1)
+                primaryElement = null;
+            else if (normalized.Count == 1)
+                primaryElement = normalized[0];
+
+            if (!ReferenceEquals(_selectedElement, primaryElement))
+            {
+                if (_selectedElement is INotifyPropertyChanged oldNotify)
+                    oldNotify.PropertyChanged -= SelectedElement_PropertyChanged;
+
+                _selectedElement = primaryElement;
+
+                if (_selectedElement is INotifyPropertyChanged newNotify)
+                    newNotify.PropertyChanged += SelectedElement_PropertyChanged;
+            }
+
+            UnsubscribeSelectionSummaryChanges();
+            _selectedCanvasItems.Clear();
+            _selectedCanvasItems.AddRange(normalized);
+            SubscribeSelectionSummaryChanges();
+            RebuildSelectionSummaries();
+
+            SynchronizeVisualSelection();
+            OnPropertyChanged(nameof(SelectedElement));
+            OnPropertyChanged(nameof(SelectedCanvasItems));
+            OnPropertyChanged(nameof(SelectionCount));
+            OnPropertyChanged(nameof(IsSingleSelection));
+            OnPropertyChanged(nameof(IsMultipleSelection));
+            OnPropertyChanged(nameof(IsDetailPanelOpen));
+            RaiseSelectionStateChanged();
+            RefreshSelectedDetails();
+        }
+
+        private void SynchronizeVisualSelection()
+        {
+            if (_mainVm.ActiveSheet == null)
+                return;
+
+            foreach (NodeViewModel node in _mainVm.ActiveSheet.Nodes)
+            {
+                bool selected = _selectedCanvasItems.Any(item => ReferenceEquals(item, node));
+                node.IsSelected = selected;
+                node.IsPrimarySelection = ReferenceEquals(node, _selectedElement);
+            }
+
+            foreach (GroupViewModel group in _mainVm.ActiveSheet.Groups)
+            {
+                bool selected = _selectedCanvasItems.Any(item => ReferenceEquals(item, group));
+                group.IsSelected = selected;
+                group.IsPrimarySelection = ReferenceEquals(group, _selectedElement);
+            }
+
+            foreach (ConnectorViewModel connector in _mainVm.ActiveSheet.Connectors)
+                connector.IsSelected = ReferenceEquals(connector, _selectedElement);
+        }
+
+        private void RefreshSelectedDetails()
+        {
+            // NodeViewModel은 IsPrimarySelection 변경 시 자신에게 맞는 상세 조회를 한 번만 실행합니다.
+            // 여기서 다시 호출하면 컨테이너/볼륨 inspect가 중복되므로 네트워크 그룹만 직접 갱신합니다.
+            if (_selectedElement is GroupViewModel { Type: GroupType.Network, IsDockerConnected: true } networkVm)
+            {
+                _ = networkVm.RefreshNetworkDetailsAsync();
+            }
+        }
+
+        private void SubscribeSelectionSummaryChanges()
+        {
+            foreach (ConnectableItemViewModel item in _selectedCanvasItems)
+                item.PropertyChanged += SelectedCanvasItem_PropertyChanged;
+
+            foreach (GroupViewModel group in _selectedCanvasItems.OfType<GroupViewModel>())
+                group.ContainedNodes.CollectionChanged += SelectedGroupContainedNodes_CollectionChanged;
+        }
+
+        private void UnsubscribeSelectionSummaryChanges()
+        {
+            foreach (ConnectableItemViewModel item in _selectedCanvasItems)
+                item.PropertyChanged -= SelectedCanvasItem_PropertyChanged;
+
+            foreach (GroupViewModel group in _selectedCanvasItems.OfType<GroupViewModel>())
+                group.ContainedNodes.CollectionChanged -= SelectedGroupContainedNodes_CollectionChanged;
+        }
+
+        private void SelectedCanvasItem_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName is nameof(ConnectableItemViewModel.Name)
+                or nameof(ConnectableItemViewModel.ResourceKind)
+                or nameof(NodeViewModel.ImageName)
+                or nameof(NodeViewModel.Driver))
+            {
+                RebuildSelectionSummaries();
+            }
+        }
+
+        private void SelectedGroupContainedNodes_CollectionChanged(
+            object? sender,
+            NotifyCollectionChangedEventArgs e) => RebuildSelectionSummaries();
+
+        private void RebuildSelectionSummaries()
+        {
+            SelectedItemSummaries = _selectedCanvasItems
+                .Select(CreateSelectionSummary)
+                .ToList();
+            OnPropertyChanged(nameof(SelectedItemSummaries));
+        }
+
+        private static InspectorSelectionSummary CreateSelectionSummary(
+            ConnectableItemViewModel item)
+        {
+            string kindLabel = item switch
+            {
+                NodeViewModel { ResourceKind: RuntimeResourceKind.SwarmService } => "Swarm 서비스",
+                NodeViewModel { ResourceKind: RuntimeResourceKind.SwarmSecret } => "Swarm 시크릿",
+                NodeViewModel { ResourceKind: RuntimeResourceKind.SwarmConfig } => "Swarm 구성",
+                NodeViewModel { ResourceKind: RuntimeResourceKind.SwarmVolume } => "Swarm 볼륨",
+                NodeViewModel { Type: NodeType.Container } => "컨테이너",
+                NodeViewModel { Type: NodeType.Volume } => "볼륨",
+                NodeViewModel { Type: NodeType.HostPath } => "호스트 경로",
+                NodeViewModel { Type: NodeType.Internet } => "인터넷",
+                GroupViewModel { Type: GroupType.Network } => "네트워크",
+                GroupViewModel => "그룹",
+                _ => "항목"
+            };
+
+            string detail = item switch
+            {
+                NodeViewModel { Type: NodeType.Container } node => node.ImageName,
+                NodeViewModel { Type: NodeType.Volume } node => $"driver · {node.Driver}",
+                NodeViewModel { Type: NodeType.HostPath } node => node.HostPath,
+                GroupViewModel { Type: GroupType.Network } group => $"driver · {group.Driver}",
+                GroupViewModel group => $"포함된 노드 {group.ContainedNodes.Count}개",
+                _ => string.Empty
+            };
+
+            return new InspectorSelectionSummary(item, kindLabel, detail);
+        }
 
         private void SelectedElement_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
@@ -258,11 +450,11 @@ namespace DockerDiagram.ViewModels
                              conn.RelationType))
                 {
                     var result = _dialogService.ShowYesNoCancel(
-                        "실제 Docker 컨테이너에서도 볼륨 연결을 해제하시겠습니까?\n" +
+                        "실제 Docker 컨테이너에서도 마운트 연결을 해제하시겠습니까?\n" +
                         "[예(Yes)] : Docker에서 해제 (물리적 해제 - 재생성)\n" +
                         "[아니요(No)] : 시트에서만 제거 (논리적 삭제)\n" +
                         "[취소(Cancel)] : 작업 취소",
-                        "볼륨 연결 해제");
+                        "마운트 연결 해제");
 
                     if (result == DialogChoice.Cancel) return;
 
@@ -271,13 +463,13 @@ namespace DockerDiagram.ViewModels
                         NodeViewModel? containerNode = new[] { conn.Source, conn.Target }
                             .OfType<NodeViewModel>()
                             .FirstOrDefault(node => node.Type == NodeType.Container);
-                        NodeViewModel? volumeNode = new[] { conn.Source, conn.Target }
+                        NodeViewModel? storageNode = new[] { conn.Source, conn.Target }
                             .OfType<NodeViewModel>()
-                            .FirstOrDefault(node => node.Type == NodeType.Volume);
+                            .FirstOrDefault(node => node.Type is NodeType.Volume or NodeType.HostPath);
 
-                        if (containerNode != null && volumeNode != null)
+                        if (containerNode != null && storageNode != null)
                         {
-                            bool success = await UnmountVolumeFromContainerAsync(containerNode, volumeNode, containerService);
+                            bool success = await UnmountStorageFromContainerAsync(containerNode, storageNode, conn, containerService);
                             if (success) sheet.Connectors.Remove(conn);
                         }
                         else
@@ -344,6 +536,21 @@ namespace DockerDiagram.ViewModels
                     return;
                 }
 
+                if (node.Type == NodeType.HostPath)
+                {
+                    if (!_dialogService.ShowConfirm(
+                            $"호스트 경로 참조 '{node.HostPath}'을(를) 시트에서 제거하시겠습니까?\n실제 호스트 파일과 폴더는 삭제되지 않습니다.",
+                            "Host Path 참조 삭제"))
+                    {
+                        return;
+                    }
+
+                    await _mainVm.History.ExecuteAndRecordAsync(
+                        _mainVm.CreateNodeDeleteCommand(sheet, node, deleteDocker: false));
+                    SelectedElement = null;
+                    return;
+                }
+
                 var result = _dialogService.ShowYesNoCancel(
                     "선택한 항목을 삭제하시겠습니까?\n" +
                     "[예(Yes)] : Docker에서도 영구 삭제\n" +
@@ -355,18 +562,34 @@ namespace DockerDiagram.ViewModels
 
                 bool deleteDocker = result == DialogChoice.Yes;
                 bool forceVolumeDelete = false;
+                bool deleteExternalVolume = false;
 
-                if (deleteDocker && node.Type == NodeType.Volume && !node.VolumeExternal)
+                if (deleteDocker && node.Type == NodeType.Volume)
                 {
+                    if (node.VolumeExternal && !_dialogService.ShowConfirm(
+                            $"'{node.EffectiveVolumeName}'은(는) 기존 또는 외부 볼륨으로 표시되어 있습니다.\n" +
+                            "계속하면 다른 컨테이너나 Compose 프로젝트가 사용하는 데이터도 영구 삭제될 수 있습니다.\n\n" +
+                            "Docker에서 이 볼륨을 정말 삭제하시겠습니까?",
+                            "외부 볼륨 영구 삭제"))
+                    {
+                        return;
+                    }
+
                     var decision = await _mainVm.ConfirmVolumeDockerDeleteAsync(volumeService, node.EffectiveVolumeName, allowForceAttempt: true);
                     if (!decision.ShouldDelete) return;
                     forceVolumeDelete = decision.Force;
+                    deleteExternalVolume = node.VolumeExternal;
                 }
 
                 try
                 {
                     await _mainVm.History.ExecuteAndRecordAsync(
-                        _mainVm.CreateNodeDeleteCommand(sheet, node, deleteDocker, forceVolumeDelete));
+                        _mainVm.CreateNodeDeleteCommand(
+                            sheet,
+                            node,
+                            deleteDocker,
+                            forceVolumeDelete,
+                            deleteExternalVolume));
                 }
                 catch (Exception ex)
                 {
@@ -535,10 +758,18 @@ namespace DockerDiagram.ViewModels
             DiagramDeletionSupport.RemoveGroupFromDiagram(sheet, group, relatedConnectors);
         }
 
-        private async Task<bool> UnmountVolumeFromContainerAsync(NodeViewModel containerNode, NodeViewModel volumeNode, IContainerService containerService)
+        private async Task<bool> UnmountStorageFromContainerAsync(
+            NodeViewModel containerNode,
+            NodeViewModel storageNode,
+            ConnectorViewModel connector,
+            IContainerService containerService)
         {
             string containerId = containerNode.ContainerId;
-            string volumeNameToRemove = volumeNode.EffectiveVolumeName;
+            MountKind mountKind = storageNode.Type == NodeType.HostPath ? MountKind.Bind : MountKind.Volume;
+            string sourceToRemove = storageNode.Type == NodeType.HostPath
+                ? storageNode.HostPath
+                : storageNode.EffectiveVolumeName;
+            string targetToRemove = connector.MountPath ?? string.Empty;
             bool keepBackup = false;
             bool originalRemoved = false;
             bool wasRunning = false;
@@ -550,14 +781,18 @@ namespace DockerDiagram.ViewModels
             try
             {
                 inspect = await containerService.InspectContainerAsync(containerId);
+                if (inspect.HostConfig?.AutoRemove == true)
+                    throw new InvalidOperationException(
+                        "--rm(AutoRemove) 컨테이너는 중지 시 즉시 삭제되므로 안전한 마운트 해제를 지원하지 않습니다.");
                 wasRunning = inspect.State?.Running == true;
                 MountPoint? targetMount = inspect.Mounts?.FirstOrDefault(mount =>
-                    string.Equals(mount.Name, volumeNameToRemove, StringComparison.OrdinalIgnoreCase));
+                    ContainerMountMapper.ParseKind(mount.Type) == mountKind &&
+                    string.Equals(mount.Destination, targetToRemove, StringComparison.Ordinal));
                 if (targetMount == null)
                 {
                     _dialogService.ShowError(
-                        $"컨테이너에서 볼륨 '{volumeNameToRemove}' 마운트를 찾을 수 없습니다.",
-                        "볼륨 연결 해제");
+                        $"컨테이너에서 '{sourceToRemove} → {targetToRemove}' 마운트를 찾을 수 없습니다.",
+                        "마운트 연결 해제");
                     return false;
                 }
 
@@ -567,14 +802,18 @@ namespace DockerDiagram.ViewModels
 
                 string mountPath = targetMount.Destination;
 
-                await containerService.CopyFromContainerAsync(containerId, mountPath, tempHostPath);
+                await containerService.CopyFromContainerAsync(
+                    containerId,
+                    mountPath,
+                    tempHostPath,
+                    _mainVm.LifetimeToken);
 
                 var newVolumes = inspect.HostConfig?.Binds?
-                    .Where(bind => !bind.StartsWith(volumeNameToRemove + ":", StringComparison.OrdinalIgnoreCase))
-                    .ToList() ?? new System.Collections.Generic.List<string>();
+                    .Where(bind => !IsMatchingLegacyMount(bind, mountKind, sourceToRemove, targetToRemove))
+                    .ToList() ?? [];
                 var newMounts = inspect.HostConfig?.Mounts?
-                    .Where(mount => !(string.Equals(mount.Type, "volume", StringComparison.OrdinalIgnoreCase) &&
-                                      string.Equals(mount.Source, volumeNameToRemove, StringComparison.OrdinalIgnoreCase)))
+                    .Where(mount => !(ContainerMountMapper.ParseKind(mount.Type) == mountKind &&
+                                      string.Equals(mount.Target, targetToRemove, StringComparison.Ordinal)))
                     .ToList();
 
                 await containerService.RemoveContainerAsync(containerId);
@@ -584,70 +823,75 @@ namespace DockerDiagram.ViewModels
                     inspect.Name,
                     inspect,
                     newVolumes,
-                    startContainer: true,
+                    startContainer: wasRunning,
                     mounts: newMounts);
 
                 string folderName = Path.GetFileName(mountPath.TrimEnd('/'));
                 string actualSourcePath = Path.Combine(tempHostPath, folderName);
 
                 if (Directory.Exists(actualSourcePath))
-                    await containerService.CopyToContainerAsync(replacementId, actualSourcePath, mountPath);
+                    await containerService.CopyToContainerAsync(
+                        replacementId,
+                        actualSourcePath,
+                        mountPath,
+                        _mainVm.LifetimeToken);
                 else
-                    await containerService.CopyToContainerAsync(replacementId, tempHostPath, mountPath);
-
-                if (!wasRunning)
-                    await containerService.StopContainerAsync(replacementId);
+                    await containerService.CopyToContainerAsync(
+                        replacementId,
+                        tempHostPath,
+                        mountPath,
+                        _mainVm.LifetimeToken);
 
                 containerNode.ContainerId = replacementId;
                 await containerNode.RefreshDetailsAsync();
 
-                _dialogService.ShowMessage("볼륨 연결 해제 및 컨테이너 재생성이 완료되었습니다.");
+                _dialogService.ShowMessage("마운트 연결 해제 및 컨테이너 재생성이 완료되었습니다.");
                 return true;
             }
             catch (Exception ex)
             {
-                keepBackup = true;
-                string recoveryMessage = string.Empty;
-                if (originalRemoved && inspect != null)
-                {
-                    try
-                    {
-                        if (!string.IsNullOrWhiteSpace(replacementId))
-                        {
-                            try { await containerService.RemoveContainerAsync(replacementId); } catch { }
-                        }
-
-                        string restoredId = await containerService.RecreateContainerFromInspectAsync(
-                            inspect.Name,
-                            inspect,
-                            inspect.HostConfig?.Binds?.ToList() ?? new System.Collections.Generic.List<string>(),
-                            wasRunning);
-                        containerNode.ContainerId = restoredId;
-                        await containerNode.RefreshDetailsAsync();
-                        keepBackup = false;
-                        recoveryMessage = "\n원본 컨테이너 설정은 복구했습니다.";
-                    }
-                    catch (Exception recoveryEx)
-                    {
-                        recoveryMessage = $"\n원본 컨테이너 자동 복구도 실패했습니다: {recoveryEx.GetBaseException().Message}";
-                    }
-                }
-                else if (wasRunning)
-                {
-                    try { await containerService.StartContainerAsync(containerId); } catch { }
-                }
+                ContainerRecoveryResult recovery = await ContainerReplacementRecovery.RecoverAsync(
+                    containerNode,
+                    containerService,
+                    containerId,
+                    inspect,
+                    originalRemoved,
+                    wasRunning,
+                    replacementId);
+                keepBackup = recovery.KeepBackup;
 
                 string backupMessage = keepBackup ? $"\n\n백업: {tempHostPath}" : string.Empty;
-                _dialogService.ShowMessage($"해제 중 오류 발생: {ex.GetBaseException().Message}{recoveryMessage}{backupMessage}");
+                _dialogService.ShowMessage(
+                    $"해제 중 오류 발생: {ex.GetBaseException().Message}{recovery.UserMessage}{backupMessage}");
                 return false;
             }
             finally
             {
                 _dialogService.SetBusyCursor(false);
-                if (!keepBackup && Directory.Exists(tempHostPath))
-                {
-                    try { Directory.Delete(tempHostPath, true); } catch { }
-                }
+                if (!keepBackup)
+                    ContainerReplacementRecovery.DeleteTemporaryDirectory(tempHostPath);
+            }
+        }
+
+        private static bool IsMatchingLegacyMount(
+            string value,
+            MountKind kind,
+            string source,
+            string target)
+        {
+            try
+            {
+                ContainerMountSpec parsed = ContainerMountParser.ParseLegacy(value);
+                StringComparison sourceComparison = source.Length >= 2 && source[1] == ':'
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal;
+                return parsed.Kind == kind &&
+                       string.Equals(parsed.Source, source, sourceComparison) &&
+                       string.Equals(parsed.Target, target, StringComparison.Ordinal);
+            }
+            catch (FormatException)
+            {
+                return false;
             }
         }
     }

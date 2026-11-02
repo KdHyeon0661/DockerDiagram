@@ -4,8 +4,11 @@ namespace DockerDiagram.Views
 {
     public partial class DockerContextCreateDialog : Window
     {
-        public DockerContextCreateDialog()
+        private readonly DockerDiagram.Contracts.IDialogService _dialogService;
+
+        public DockerContextCreateDialog(DockerDiagram.Contracts.IDialogService dialogService)
         {
+            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
             InitializeComponent();
         }
 
@@ -16,13 +19,13 @@ namespace DockerDiagram.Views
         {
             if (string.IsNullOrWhiteSpace(ContextName))
             {
-                MessageBox.Show(this, "Context name is required.", "Create Docker Context", MessageBoxButton.OK, MessageBoxImage.Information);
+                _dialogService.ShowInfo("Context 이름을 입력해 주세요.", "Docker Context 생성");
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(DockerEndpoint))
             {
-                MessageBox.Show(this, "Docker host endpoint is required.", "Create Docker Context", MessageBoxButton.OK, MessageBoxImage.Information);
+                _dialogService.ShowInfo("Docker 호스트 엔드포인트를 입력해 주세요.", "Docker Context 생성");
                 return;
             }
 

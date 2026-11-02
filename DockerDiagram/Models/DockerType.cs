@@ -89,6 +89,9 @@ namespace DockerDiagram.Models
     /// </summary>
     public class DockerVolume : DockerNodeBase // DockerResource 대신 DockerNodeBase 상속!
     {
+        private string _driver = "local";
+        public string Driver { get => _driver; set => SetProperty(ref _driver, value); }
+
         public override NodeType Type => NodeType.Volume; // override로 구현
     }
 
@@ -120,6 +123,12 @@ namespace DockerDiagram.Models
 
         private string _scope = "local";
         public string Scope { get => _scope; set => SetProperty(ref _scope, value); }
+
+        /// <summary>
+        /// Docker가 Swarm routing mesh용으로 관리하는 ingress 네트워크인지 나타냅니다.
+        /// 이름 비교만으로 판별하면 사용자 네트워크를 오인할 수 있으므로 API 값을 보존합니다.
+        /// </summary>
+        public bool Ingress { get; set; }
 
         public override GroupType Type => GroupType.Network; // override로 구현
     }
@@ -178,9 +187,9 @@ namespace DockerDiagram.Models
         public string Image { get; init; } = string.Empty;
         public string Error { get; init; } = string.Empty;
         public string ContainerId { get; init; } = string.Empty;
-        public string StatusColor { get; init; } = "#808080";
-        public string ShortId => Id.Length > 12 ? Id[..12] : Id;
-        public string ShortContainerId => ContainerId.Length > 12 ? ContainerId[..12] : ContainerId;
+        public string StatusColor { get; init; } = StatusColors.Unknown;
+        public string ShortId => DockerIdFormatter.Shorten(Id);
+        public string ShortContainerId => DockerIdFormatter.Shorten(ContainerId);
     }
 
     public sealed record SwarmServiceTaskSnapshot(

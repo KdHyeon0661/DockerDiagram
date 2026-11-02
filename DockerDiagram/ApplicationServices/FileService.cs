@@ -1,12 +1,15 @@
-using DockerDiagram.Infrastructure;
-using DockerDiagram.Contracts;
 using System;
-using System.IO;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Text.Json;
-using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Infrastructure;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
@@ -27,12 +30,33 @@ namespace DockerDiagram.ApplicationServices
         }
     }
 
+    public readonly record struct DiagramRecoverySaveResult(
+        DiagramSaveResult SaveResult,
+        string? RecoveryPath);
+
+    public sealed record DiagramRecoveryCandidate(
+        string RecoveryPath,
+        DateTime CapturedAtUtc,
+        string OriginalFilePath);
+
     /// <summary>
     /// 다이어그램(Sheet)의 상태를 파일(.vdm)로 저장하거나 반대로 불러오는(Load) 정적 서비스 클래스입니다.
     /// SSH 원격 접속 프로필과 같이 저장된 시트의 경우, 불러올 때 자동으로 터널링을 복구합니다.
     /// </summary>
     public static class FileService
     {
+        private static readonly ConcurrentDictionary<string, object> SaveLocks =
+            new(StringComparer.OrdinalIgnoreCase);
+        private static readonly string RecoveryDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "DockerDiagram",
+            "Recovery");
+        private static readonly string UntitledRecoveryId = Guid.NewGuid().ToString("N");
+        private static readonly JsonSerializerOptions IndentedJsonOptions = new()
+        {
+            WriteIndented = true
+        };
+
         public static string MakeSafeFileName(string value, string fallbackName)
         {
             foreach (var invalidChar in Path.GetInvalidFileNameChars())
@@ -91,6 +115,218 @@ namespace DockerDiagram.ApplicationServices
             return result;
         }
 
+        public static async Task<DiagramSaveResult> QuickSaveWithResultAsync(
+            MainViewModel mainVm,
+            string path,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return DiagramSaveResult.Failed("저장 경로가 비어 있습니다.");
+
+            try
+            {
+                long savedVersion = mainVm.SheetManager.ModificationVersion;
+                DiagramFile snapshot = CreateSaveSnapshot(mainVm);
+                DiagramSaveResult result = await Task.Run(
+                    () => PersistSnapshot(path, snapshot),
+                    cancellationToken);
+
+                if (result.Success)
+                {
+                    mainVm.SheetManager.MarkSavedIfCurrent(savedVersion);
+                    SaveLastFilePath(path);
+                }
+
+                return result;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return DiagramSaveResult.Failed("저장이 취소되었습니다.");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("비동기 다이어그램 저장 실패", ex);
+                return DiagramSaveResult.Failed(ex.Message);
+            }
+        }
+
+        public static async Task<DiagramRecoverySaveResult> SaveRecoverySnapshotAsync(
+            MainViewModel mainVm,
+            string? existingRecoveryPath,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                DiagramFile snapshot = CreateSaveSnapshot(mainVm);
+                string originalFilePath = string.IsNullOrWhiteSpace(mainVm.CurrentFilePath)
+                    ? string.Empty
+                    : Path.GetFullPath(mainVm.CurrentFilePath);
+                snapshot.Recovery = new DiagramRecoveryMetadata
+                {
+                    CapturedAtUtc = DateTime.UtcNow,
+                    OriginalFilePath = originalFilePath
+                };
+
+                string recoveryPath = IsManagedRecoveryPath(existingRecoveryPath)
+                    ? Path.GetFullPath(existingRecoveryPath!)
+                    : CreateRecoveryPath(originalFilePath);
+
+                Directory.CreateDirectory(RecoveryDirectory);
+                DiagramSaveResult result = await Task.Run(
+                    () =>
+                    {
+                        DiagramSaveResult saveResult = PersistSnapshot(recoveryPath, snapshot);
+                        if (cancellationToken.IsCancellationRequested && saveResult.Success)
+                        {
+                            DeleteRecoveryFile(recoveryPath);
+                            return DiagramSaveResult.Failed("복구 저장이 취소되었습니다.");
+                        }
+
+                        return saveResult;
+                    },
+                    cancellationToken);
+                return new DiagramRecoverySaveResult(
+                    result,
+                    result.Success ? recoveryPath : existingRecoveryPath);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return new DiagramRecoverySaveResult(
+                    DiagramSaveResult.Failed("복구 저장이 취소되었습니다."),
+                    existingRecoveryPath);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("프로젝트 복구 스냅샷 저장 실패", ex);
+                return new DiagramRecoverySaveResult(
+                    DiagramSaveResult.Failed(ex.Message),
+                    existingRecoveryPath);
+            }
+        }
+
+        public static IReadOnlyList<DiagramRecoveryCandidate> GetRecoveryCandidates()
+        {
+            string[] recoveryFiles;
+            try
+            {
+                if (!Directory.Exists(RecoveryDirectory))
+                    return [];
+
+                recoveryFiles = Directory.GetFiles(
+                    RecoveryDirectory,
+                    "*.recovery.vdm",
+                    SearchOption.TopDirectoryOnly);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warning("프로젝트 복구 폴더를 확인하지 못했습니다.", ex);
+                return [];
+            }
+
+            var candidates = new List<DiagramRecoveryCandidate>();
+            foreach (string recoveryPath in recoveryFiles)
+            {
+                try
+                {
+                    DiagramFile fileData = DeserializeAndValidateDiagram(
+                        File.ReadAllText(recoveryPath));
+                    DiagramRecoveryMetadata? metadata = fileData.Recovery;
+                    if (metadata == null)
+                        continue;
+
+                    string originalPath = metadata.OriginalFilePath ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(originalPath) &&
+                        File.Exists(originalPath) &&
+                        File.GetLastWriteTimeUtc(originalPath) >= metadata.CapturedAtUtc)
+                    {
+                        DeleteRecoveryFile(recoveryPath);
+                        continue;
+                    }
+
+                    candidates.Add(new DiagramRecoveryCandidate(
+                        recoveryPath,
+                        metadata.CapturedAtUtc,
+                        originalPath));
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warning($"복구 파일 검사 실패: {recoveryPath}", ex);
+                }
+            }
+
+            return candidates
+                .OrderByDescending(candidate => candidate.CapturedAtUtc)
+                .ToList();
+        }
+
+        public static void DeleteRecoveryFile(string? recoveryPath)
+        {
+            if (!IsManagedRecoveryPath(recoveryPath))
+                return;
+
+            string fullPath = Path.GetFullPath(recoveryPath!);
+            object saveLock = SaveLocks.GetOrAdd(fullPath, _ => new object());
+            lock (saveLock)
+            {
+                try
+                {
+                    if (File.Exists(fullPath))
+                        File.Delete(fullPath);
+
+                    string backupPath = fullPath + ".bak";
+                    if (File.Exists(backupPath))
+                        File.Delete(backupPath);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warning($"복구 파일 삭제 실패: {fullPath}", ex);
+                }
+            }
+        }
+
+        public static void ClearLastFilePath()
+        {
+            try
+            {
+                Properties.Settings.Default.LastFilePath = string.Empty;
+                Properties.Settings.Default.Save();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warning("최근 프로젝트 경로 초기화 실패", ex);
+            }
+        }
+
+        private static string CreateRecoveryPath(string? originalFilePath)
+        {
+            string fileName;
+            if (string.IsNullOrWhiteSpace(originalFilePath))
+            {
+                fileName = $"untitled-{UntitledRecoveryId}.recovery.vdm";
+            }
+            else
+            {
+                string normalizedPath = Path.GetFullPath(originalFilePath).ToUpperInvariant();
+                byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalizedPath));
+                fileName = $"file-{Convert.ToHexString(hash)[..24]}.recovery.vdm";
+            }
+
+            return Path.Combine(RecoveryDirectory, fileName);
+        }
+
+        private static bool IsManagedRecoveryPath(string? recoveryPath)
+        {
+            if (string.IsNullOrWhiteSpace(recoveryPath))
+                return false;
+
+            string fullPath = Path.GetFullPath(recoveryPath);
+            string fullRecoveryDirectory = Path.GetFullPath(RecoveryDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+                Path.DirectorySeparatorChar;
+            return fullPath.StartsWith(fullRecoveryDirectory, StringComparison.OrdinalIgnoreCase) &&
+                   fullPath.EndsWith(".recovery.vdm", StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <summary>
         /// 실제 데이터 매핑 및 JSON 직렬화를 수행하여 지정된 경로에 파일을 쓰는 내부(Internal) 메서드입니다.
         /// </summary>
@@ -98,6 +334,22 @@ namespace DockerDiagram.ApplicationServices
         {
             try
             {
+                long savedVersion = mainVm.SheetManager.ModificationVersion;
+                DiagramFile fileData = CreateSaveSnapshot(mainVm);
+                DiagramSaveResult result = PersistSnapshot(filePath, fileData);
+                if (result.Success)
+                    mainVm.SheetManager.MarkSavedIfCurrent(savedVersion);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("다이어그램 저장 실패", ex);
+                return DiagramSaveResult.Failed(ex.Message);
+            }
+        }
+
+        private static DiagramFile CreateSaveSnapshot(MainViewModel mainVm)
+        {
                 var fileData = new DiagramFile(); // 파일의 최상위 루트 껍데기 생성
 
                 var allSheets = mainVm.AllSheets.ToList();
@@ -107,11 +359,10 @@ namespace DockerDiagram.ApplicationServices
                 // 모든 시트(탭)를 순회하며 데이터 긁어모으기
                 foreach (var sheetVm in allSheets)
                 {
-                    sheetVm.Profile.RuntimeKind = sheetVm.RuntimeKind;
                     var sheetData = new SheetData
                     {
                         Title = sheetVm.Title,
-                        Profile = sheetVm.Profile, // 시트의 도커 연결 프로필(로컬/원격) 정보 저장
+                        Profile = CloneConnectionProfile(sheetVm.Profile, sheetVm.RuntimeKind),
                         RuntimeKind = sheetVm.RuntimeKind,
                         MapWidth = sheetVm.MapWidth,
                         MapHeight = sheetVm.MapHeight,
@@ -119,7 +370,7 @@ namespace DockerDiagram.ApplicationServices
                         HasViewportCenter = sheetVm.HasViewportCenter,
                         ViewportCenterX = sheetVm.ViewportCenterX,
                         ViewportCenterY = sheetVm.ViewportCenterY,
-                        ComposeRawYaml = sheetVm.ComposeRawYaml
+                        ComposeRawYaml = UserDataProtection.Protect(sheetVm.ComposeRawYaml)
                     };
 
                     // 시트 안의 모든 노드 정보 수집
@@ -131,6 +382,8 @@ namespace DockerDiagram.ApplicationServices
                             DockerId = nodeVm.ContainerId,
                             Name = nodeVm.Name,
                             ImageName = nodeVm.ImageName,
+                            Driver = nodeVm.Driver,
+                            HostPath = nodeVm.HostPath,
                             PortInfo = nodeVm.PortInfo,
                             Type = nodeVm.Type,
                             RuntimeKind = nodeVm.RuntimeKind,
@@ -140,8 +393,9 @@ namespace DockerDiagram.ApplicationServices
                             Y = nodeVm.Y,
                             Width = nodeVm.Width,
                             Height = nodeVm.Height,
-                            PortBindings = nodeVm.PortBindings ?? new List<string>(),
-                            EnvironmentVariables = nodeVm.EnvironmentVariables ?? new List<string>(),
+                            PortBindings = nodeVm.PortBindings?.ToList() ?? [],
+                            EnvironmentVariables = UserDataProtection.ProtectAll(nodeVm.EnvironmentVariables),
+                            MountSpecifications = nodeVm.MountSpecifications.Select(mount => mount.Clone()).ToList(),
                             NetworkStaticIps = new Dictionary<string, string>(nodeVm.NetworkIpMap),
                             NetworkOptions = nodeVm.NetworkOptionsMap.ToDictionary(kv => kv.Key, kv => kv.Value.Clone()),
                             DockerVolumeName = nodeVm.DockerVolumeName,
@@ -155,8 +409,8 @@ namespace DockerDiagram.ApplicationServices
                             ComposeContainerNumber = nodeVm.ComposeContainerNumber,
                             ComposeLayoutInstanceId = nodeVm.ComposeLayoutInstanceId,
                             ComposePlacementWarning = nodeVm.ComposePlacementWarning,
-                            ComposeRawServiceYaml = nodeVm.ComposeRawServiceYaml,
-                            ComposeRawVolumeYaml = nodeVm.ComposeRawVolumeYaml,
+                            ComposeRawServiceYaml = UserDataProtection.Protect(nodeVm.ComposeRawServiceYaml),
+                            ComposeRawVolumeYaml = UserDataProtection.Protect(nodeVm.ComposeRawVolumeYaml),
                             IsSwarmService = nodeVm.IsSwarmService,
                             SwarmMode = nodeVm.SwarmMode,
                             SwarmDesiredReplicas = nodeVm.SwarmDesiredReplicas,
@@ -177,9 +431,9 @@ namespace DockerDiagram.ApplicationServices
                             KubernetesDesiredReplicas = nodeVm.KubernetesDesiredReplicas,
                             KubernetesReadyReplicas = nodeVm.KubernetesReadyReplicas,
                             KubernetesPodIp = nodeVm.KubernetesPodIp,
-                            KubernetesPodDescribeText = nodeVm.KubernetesPodDescribeText,
-                            KubernetesPodYamlText = nodeVm.KubernetesPodYamlText,
-                            KubernetesPodJsonText = nodeVm.KubernetesPodJsonText
+                            KubernetesPodDescribeText = UserDataProtection.Protect(nodeVm.KubernetesPodDescribeText),
+                            KubernetesPodYamlText = UserDataProtection.Protect(nodeVm.KubernetesPodYamlText),
+                            KubernetesPodJsonText = UserDataProtection.Protect(nodeVm.KubernetesPodJsonText)
                         });
                     }
 
@@ -197,6 +451,9 @@ namespace DockerDiagram.ApplicationServices
                             SourceDataLabel = connVm.SourceDataLabel,
                             TargetDataLabel = connVm.TargetDataLabel,
                             MountPath = connVm.MountPath,
+                            MountKind = connVm.MountKind,
+                            MountReadOnly = connVm.MountReadOnly,
+                            MountOptions = connVm.MountOptions,
                             IpAddress = connVm.IpAddress,
                             PublishedPort = connVm.PublishedPort,
                             TargetPort = connVm.TargetPort,
@@ -212,6 +469,12 @@ namespace DockerDiagram.ApplicationServices
                     // 시트 안의 모든 그룹 정보 수집
                     foreach (var group in sheetVm.Groups)
                     {
+                        if (group.Type == GroupType.Network &&
+                            DockerNetworkSafety.IsProtected(group.DockerNetworkName))
+                        {
+                            continue;
+                        }
+
                         if (string.IsNullOrEmpty(group.Id)) group.Id = Guid.NewGuid().ToString();
 
                         var gData = new GroupData
@@ -237,7 +500,7 @@ namespace DockerDiagram.ApplicationServices
                             ComposeNetworkName = group.ComposeNetworkName,
                             ComposeProjectIdentity = group.ComposeProjectIdentity,
                             ComposeLayoutInstanceId = group.ComposeLayoutInstanceId,
-                            ComposeRawNetworkYaml = group.ComposeRawNetworkYaml,
+                            ComposeRawNetworkYaml = UserDataProtection.Protect(group.ComposeRawNetworkYaml),
                             Labels = new Dictionary<string, string>(group.Labels),
                             DriverOptions = new Dictionary<string, string>(group.DriverOptions),
                             AuxAddresses = new Dictionary<string, string>(group.AuxAddresses)
@@ -249,22 +512,43 @@ namespace DockerDiagram.ApplicationServices
                     fileData.Sheets.Add(sheetData);
                 }
 
-                // 같은 폴더의 임시 파일에 먼저 쓴 뒤 JSON 검증을 통과한 경우에만 원본과 교체합니다.
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                string jsonString = JsonSerializer.Serialize(fileData, options);
-                DiagramSaveResult result = WriteValidatedFileAtomically(filePath, jsonString);
-                if (!result.Success)
-                    return result;
+                return fileData;
+        }
 
-                mainVm.IsModified = false; // "수정됨(*)" 상태 해제
-                return DiagramSaveResult.Succeeded();
-            }
-            catch (Exception ex)
+        private static DiagramSaveResult PersistSnapshot(string filePath, DiagramFile fileData)
+        {
+            string jsonString = JsonSerializer.Serialize(fileData, IndentedJsonOptions);
+            string fullPath = Path.GetFullPath(filePath);
+            object saveLock = SaveLocks.GetOrAdd(fullPath, _ => new object());
+            lock (saveLock)
             {
-                Debug.WriteLine($"[DockerDiscovery] Save Error: {ex}");
-                return DiagramSaveResult.Failed(ex.Message);
+                return WriteValidatedFileAtomically(fullPath, jsonString);
             }
         }
+
+        private static ConnectionProfile CloneConnectionProfile(
+            ConnectionProfile source,
+            RuntimeKind runtimeKind) =>
+            new()
+            {
+                ProfileId = source.ProfileId,
+                Name = source.Name,
+                Type = source.Type,
+                RuntimeKind = runtimeKind,
+                HostIp = source.HostIp,
+                SshUsername = source.SshUsername,
+                SshPort = source.SshPort,
+                LocalTunnelPort = source.LocalTunnelPort,
+                SshKeyFilePath = source.SshKeyFilePath,
+                RemoteDockerSocketPath = source.RemoteDockerSocketPath,
+                DockerContextName = source.DockerContextName,
+                DockerEndpoint = source.DockerEndpoint,
+                DockerTlsEnabled = source.DockerTlsEnabled,
+                DockerTlsSkipVerify = source.DockerTlsSkipVerify,
+                DockerTlsCaPath = source.DockerTlsCaPath,
+                DockerTlsCertPath = source.DockerTlsCertPath,
+                DockerTlsKeyPath = source.DockerTlsKeyPath
+            };
 
         internal static DiagramSaveResult WriteValidatedFileAtomically(string filePath, string json)
         {
@@ -296,13 +580,11 @@ namespace DockerDiagram.ApplicationServices
                 }
 
                 string writtenJson = File.ReadAllText(temporaryPath);
-                DiagramFile? validatedData = JsonSerializer.Deserialize<DiagramFile>(writtenJson);
-                if (validatedData?.Sheets == null)
-                    throw new InvalidDataException("저장된 파일을 다시 검증하지 못했습니다.");
+                _ = DeserializeAndValidateDiagram(writtenJson);
 
+                string backupPath = fullPath + ".bak";
                 if (File.Exists(fullPath))
                 {
-                    string backupPath = fullPath + ".bak";
                     File.Replace(temporaryPath, fullPath, backupPath, ignoreMetadataErrors: true);
                 }
                 else
@@ -311,11 +593,21 @@ namespace DockerDiagram.ApplicationServices
                 }
 
                 temporaryPath = null;
+                try
+                {
+                    if (File.Exists(backupPath))
+                        File.Delete(backupPath);
+                }
+                catch (Exception cleanupException)
+                {
+                    AppLog.Warning($"저장 백업 파일 정리 실패: {backupPath}", cleanupException);
+                }
+
                 return DiagramSaveResult.Succeeded();
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[DockerDiscovery] Atomic save failed: {ex}");
+                AppLog.Error("원자적 다이어그램 파일 저장 실패", ex);
                 return DiagramSaveResult.Failed(ex.Message);
             }
             finally
@@ -329,7 +621,9 @@ namespace DockerDiagram.ApplicationServices
                     }
                     catch (Exception cleanupException)
                     {
-                        Debug.WriteLine($"[DockerDiscovery] Failed to remove temporary save file '{temporaryPath}'. {cleanupException}");
+                        AppLog.Warning(
+                            $"임시 저장 파일 정리 실패: {temporaryPath}",
+                            cleanupException);
                     }
                 }
             }
@@ -378,9 +672,7 @@ namespace DockerDiagram.ApplicationServices
                 if (!File.Exists(filePath)) return false;
 
                 string json = await File.ReadAllTextAsync(filePath);
-                var fileData = JsonSerializer.Deserialize<DiagramFile>(json);
-
-                if (fileData == null) return false;
+                DiagramFile fileData = DeserializeAndValidateDiagram(json);
 
                 foreach (var sheetData in fileData.Sheets)
                 {
@@ -423,41 +715,52 @@ namespace DockerDiagram.ApplicationServices
                                 loadedProfile,
                                 createdService,
                                 tunnelStarted);
-                            dialogService.ShowMessage($"'{loadedProfile.Name}' 시트의 SSH 터널 복구에 실패했습니다.\n임시로 로컬 모드로 전환됩니다.\n({ex.Message})");
-                            loadedProfile.Type = EndpointType.Local;
-                            targetDockerService = mainVm.SheetManager.DefaultDockerService;
+                            throw new InvalidOperationException(
+                                $"'{loadedProfile.Name}' 원격 연결을 복구하지 못했습니다. " +
+                                "잘못된 로컬 Docker에 연결하지 않도록 프로젝트 불러오기를 중단합니다.\n" +
+                                $"원인: {ex.GetBaseException().Message}",
+                                ex);
                         }
                     }
                     else if (sharedDockerService == null && loadedProfile.Type == EndpointType.SshRemote)
                     {
-                        dialogService.ShowMessage($"'{loadedProfile.Name}' 시트의 SSH 호스트 정보가 없어 로컬 모드로 전환됩니다.");
-                        loadedProfile.Type = EndpointType.Local;
-                        targetDockerService = mainVm.SheetManager.DefaultDockerService;
+                        throw new InvalidDataException(
+                            $"'{loadedProfile.Name}' 원격 연결에 필요한 SSH 호스트 정보가 없습니다.");
                     }
                     else if (sharedDockerService == null && loadedProfile.Type == EndpointType.DockerContext)
                     {
+                        IDockerService? createdService = null;
                         try
                         {
-                            targetDockerService = mainVm.DockerServiceFactory.Create(loadedProfile);
+                            createdService = mainVm.DockerServiceFactory.Create(loadedProfile);
+                            targetDockerService = createdService;
                             stagedConnections.Add(new StagedConnection(loadedProfile, targetDockerService, HasSshTunnel: false));
                         }
                         catch (Exception ex)
                         {
-                            dialogService.ShowMessage($"'{loadedProfile.Name}' Docker context 복구에 실패했습니다.\n임시로 로컬 모드로 전환됩니다.\n({ex.Message})");
-                            loadedProfile.Type = EndpointType.Local;
-                            targetDockerService = mainVm.SheetManager.DefaultDockerService;
+                            CleanupPendingConnection(
+                                mainVm.DockerServiceFactory,
+                                loadedProfile,
+                                createdService,
+                                releaseSshTunnel: false);
+                            throw new InvalidOperationException(
+                                $"'{loadedProfile.Name}' Docker context를 복구하지 못했습니다. " +
+                                "잘못된 로컬 Docker에 연결하지 않도록 프로젝트 불러오기를 중단합니다.\n" +
+                                $"원인: {ex.GetBaseException().Message}",
+                                ex);
                         }
                     }
 
                     // 복원된 프로필과 워크스페이스 단위 Docker 서비스로 시트 생성
                     var sheetVm = new SheetViewModel(sheetData.Title, loadedProfile, targetDockerService, dialogService, sheetData.RuntimeKind);
+                    stagedSheets.Add(sheetVm);
                     sheetVm.MapWidth = sheetData.MapWidth;
                     sheetVm.MapHeight = sheetData.MapHeight;
                     sheetVm.Scale = sheetData.Scale;
                     sheetVm.HasViewportCenter = sheetData.HasViewportCenter;
                     sheetVm.ViewportCenterX = sheetData.ViewportCenterX;
                     sheetVm.ViewportCenterY = sheetData.ViewportCenterY;
-                    sheetVm.ComposeRawYaml = sheetData.ComposeRawYaml ?? string.Empty;
+                    sheetVm.ComposeRawYaml = UserDataProtection.Unprotect(sheetData.ComposeRawYaml);
 
                     var itemMap = new Dictionary<string, IConnectableItem>(); // 노드와 선을 엮기 위한 임시 딕셔너리
 
@@ -470,68 +773,93 @@ namespace DockerDiagram.ApplicationServices
                     // ==========================================
                     foreach (var nodeData in sheetData.Nodes)
                     {
-                        var nodeVm = new NodeViewModel(currentContainerSvc, currentVolumeSvc, dialogService)
-                        {
-                            Id = nodeData.Id,
-                            ContainerId = nodeData.DockerId,
-                            Name = nodeData.Name,
-                            ImageName = nodeData.ImageName,
-                            PortInfo = nodeData.PortInfo ?? string.Empty,
-                            Type = nodeData.Type,
-                            RuntimeKind = nodeData.ResourceKind == RuntimeResourceKind.Unspecified
-                                ? sheetData.RuntimeKind
-                                : nodeData.RuntimeKind,
-                            ResourceKind = nodeData.ResourceKind,
-                            BindingState = nodeData.BindingState,
-                            X = nodeData.X,
-                            Y = nodeData.Y,
-                            Width = nodeData.Width,
-                            Height = nodeData.Height,
-                            PortBindings = nodeData.PortBindings ?? new List<string>(),
-                            EnvironmentVariables = nodeData.EnvironmentVariables ?? new List<string>(),
-                            NetworkIpMap = nodeData.NetworkStaticIps ?? new Dictionary<string, string>(),
-                            NetworkOptionsMap = nodeData.NetworkOptions?.ToDictionary(kv => kv.Key, kv => kv.Value.Clone()) ?? new Dictionary<string, ContainerNetworkOptions>(),
-                            DockerVolumeName = nodeData.DockerVolumeName ?? string.Empty,
-                            VolumeExternal = nodeData.VolumeExternal,
-                            VolumeLabels = nodeData.VolumeLabels ?? new Dictionary<string, string>(),
-                            VolumeDriverOptions = nodeData.VolumeDriverOptions ?? new Dictionary<string, string>(),
-                            RestartPolicy = nodeData.RestartPolicy ?? "no",
-                            ComposeProjectName = nodeData.ComposeProjectName ?? string.Empty,
-                            ComposeProjectIdentity = nodeData.ComposeProjectIdentity ?? string.Empty,
-                            ComposeServiceName = nodeData.ComposeServiceName ?? string.Empty,
-                            ComposeContainerNumber = nodeData.ComposeContainerNumber,
-                            ComposeLayoutInstanceId = nodeData.ComposeLayoutInstanceId ?? string.Empty,
-                            ComposePlacementWarning = nodeData.ComposePlacementWarning ?? string.Empty,
-                            ComposeRawServiceYaml = nodeData.ComposeRawServiceYaml ?? string.Empty,
-                            ComposeRawVolumeYaml = nodeData.ComposeRawVolumeYaml ?? string.Empty,
-                            IsSwarmService = nodeData.IsSwarmService,
-                            SwarmMode = nodeData.SwarmMode ?? string.Empty,
-                            SwarmDesiredReplicas = nodeData.SwarmDesiredReplicas,
-                            SwarmRunningReplicas = nodeData.SwarmRunningReplicas,
-                            SwarmDiagramManagesPublishedPorts = nodeData.SwarmDiagramManagesPublishedPorts,
-                            SwarmDiagramManagesMounts = nodeData.SwarmDiagramManagesMounts,
-                            SwarmDiagramManagesNetworks = nodeData.SwarmDiagramManagesNetworks,
-                            IsSwarmDiagramDirty = nodeData.IsSwarmDiagramDirty,
-                            IsAutoGeneratedSwarmTopologyNode = nodeData.IsAutoGeneratedSwarmTopologyNode,
-                            TargetSwarmReplicas = nodeData.SwarmDesiredReplicas,
-                            IsKubernetesPod = nodeData.IsKubernetesPod,
-                            KubernetesKind = nodeData.KubernetesKind ?? string.Empty,
-                            KubernetesApiResource = nodeData.KubernetesApiResource ?? string.Empty,
-                            KubernetesApiVersion = nodeData.KubernetesApiVersion ?? string.Empty,
-                            KubernetesNamespace = nodeData.KubernetesNamespace ?? string.Empty,
-                            KubernetesNodeName = nodeData.KubernetesNodeName ?? string.Empty,
-                            KubernetesReady = nodeData.KubernetesReady ?? string.Empty,
-                            KubernetesRestarts = nodeData.KubernetesRestarts,
-                            KubernetesDesiredReplicas = nodeData.KubernetesDesiredReplicas,
-                            KubernetesReadyReplicas = nodeData.KubernetesReadyReplicas,
-                            TargetKubernetesReplicas = nodeData.KubernetesDesiredReplicas,
-                            KubernetesPodIp = nodeData.KubernetesPodIp ?? string.Empty,
-                            KubernetesPodDescribeText = nodeData.KubernetesPodDescribeText ?? string.Empty,
-                            KubernetesPodYamlText = nodeData.KubernetesPodYamlText ?? string.Empty,
-                            KubernetesPodJsonText = nodeData.KubernetesPodJsonText ?? string.Empty,
-                            StatusColor = nodeData.IsSwarmService || nodeData.IsKubernetesPod ? "#28a745" : "#808080" // 초기 색상은 회색(Unkown)으로 고정, 이후 실시간 갱신됨
-                        };
+                        string legacyStorageSource = !string.IsNullOrWhiteSpace(nodeData.HostPath)
+                            ? nodeData.HostPath
+                            : !string.IsNullOrWhiteSpace(nodeData.DockerVolumeName)
+                                ? nodeData.DockerVolumeName
+                                : nodeData.Name;
+                        bool migrateLegacyBind = nodeData.Type == NodeType.Volume &&
+                                                 ContainerMountParser.LooksLikeBindSource(legacyStorageSource);
+                        NodeType loadedNodeType = migrateLegacyBind ? NodeType.HostPath : nodeData.Type;
+                        RuntimeResourceKind loadedResourceKind = migrateLegacyBind
+                            ? RuntimeResourceKind.HostPathReference
+                            : nodeData.ResourceKind;
 
+                        var nodeVm = DiagramNodeFactory.CreateForRestore(
+                            currentContainerSvc,
+                            currentVolumeSvc,
+                            dialogService,
+                            loadedNodeType);
+                        NodeViewModel node = nodeVm;
+                            node.Id = nodeData.Id;
+                            node.ContainerId = nodeData.DockerId;
+                            node.Name = nodeData.Name;
+                            node.ImageName = nodeData.ImageName;
+                            node.Driver = loadedNodeType == NodeType.Volume
+                                ? string.IsNullOrWhiteSpace(nodeData.Driver)
+                                    ? nodeData.ImageName ?? string.Empty
+                                    : nodeData.Driver
+                                : nodeData.Driver ?? string.Empty;
+                            node.HostPath = migrateLegacyBind ? legacyStorageSource : nodeData.HostPath ?? string.Empty;
+                            node.PortInfo = nodeData.PortInfo ?? string.Empty;
+                            node.RuntimeKind = loadedResourceKind == RuntimeResourceKind.Unspecified
+                                ? sheetData.RuntimeKind
+                                : nodeData.RuntimeKind;
+                            node.ResourceKind = loadedResourceKind;
+                            node.BindingState = nodeData.BindingState;
+                            node.X = nodeData.X;
+                            node.Y = nodeData.Y;
+                            node.Width = nodeData.Width;
+                            node.Height = nodeData.Height;
+                            node.PortBindings = nodeData.PortBindings ?? [];
+                            node.EnvironmentVariables = UserDataProtection.UnprotectAll(nodeData.EnvironmentVariables);
+                            node.NetworkIpMap = nodeData.NetworkStaticIps ?? [];
+                            node.NetworkOptionsMap = nodeData.NetworkOptions?.ToDictionary(kv => kv.Key, kv => kv.Value.Clone()) ?? [];
+                            node.DockerVolumeName = nodeData.DockerVolumeName ?? string.Empty;
+                            node.VolumeExternal = nodeData.VolumeExternal;
+                            node.VolumeLabels = nodeData.VolumeLabels ?? [];
+                            node.VolumeDriverOptions = nodeData.VolumeDriverOptions ?? [];
+                            node.RestartPolicy = nodeData.RestartPolicy ?? "no";
+                            node.ComposeProjectName = nodeData.ComposeProjectName ?? string.Empty;
+                            node.ComposeProjectIdentity = nodeData.ComposeProjectIdentity ?? string.Empty;
+                            node.ComposeServiceName = nodeData.ComposeServiceName ?? string.Empty;
+                            node.ComposeContainerNumber = nodeData.ComposeContainerNumber;
+                            node.ComposeLayoutInstanceId = nodeData.ComposeLayoutInstanceId ?? string.Empty;
+                            node.ComposePlacementWarning = nodeData.ComposePlacementWarning ?? string.Empty;
+                            node.ComposeRawServiceYaml = UserDataProtection.Unprotect(nodeData.ComposeRawServiceYaml);
+                            node.ComposeRawVolumeYaml = UserDataProtection.Unprotect(nodeData.ComposeRawVolumeYaml);
+                            node.IsSwarmService = nodeData.IsSwarmService;
+                            node.SwarmMode = nodeData.SwarmMode ?? string.Empty;
+                            node.SwarmDesiredReplicas = nodeData.SwarmDesiredReplicas;
+                            node.SwarmRunningReplicas = nodeData.SwarmRunningReplicas;
+                            node.SwarmDiagramManagesPublishedPorts = nodeData.SwarmDiagramManagesPublishedPorts;
+                            node.SwarmDiagramManagesMounts = nodeData.SwarmDiagramManagesMounts;
+                            node.SwarmDiagramManagesNetworks = nodeData.SwarmDiagramManagesNetworks;
+                            node.IsSwarmDiagramDirty = nodeData.IsSwarmDiagramDirty;
+                            node.IsAutoGeneratedSwarmTopologyNode = nodeData.IsAutoGeneratedSwarmTopologyNode;
+                            node.TargetSwarmReplicas = nodeData.SwarmDesiredReplicas;
+                            node.IsKubernetesPod = nodeData.IsKubernetesPod;
+                            node.KubernetesKind = nodeData.KubernetesKind ?? string.Empty;
+                            node.KubernetesApiResource = nodeData.KubernetesApiResource ?? string.Empty;
+                            node.KubernetesApiVersion = nodeData.KubernetesApiVersion ?? string.Empty;
+                            node.KubernetesNamespace = nodeData.KubernetesNamespace ?? string.Empty;
+                            node.KubernetesNodeName = nodeData.KubernetesNodeName ?? string.Empty;
+                            node.KubernetesReady = nodeData.KubernetesReady ?? string.Empty;
+                            node.KubernetesRestarts = nodeData.KubernetesRestarts;
+                            node.KubernetesDesiredReplicas = nodeData.KubernetesDesiredReplicas;
+                            node.KubernetesReadyReplicas = nodeData.KubernetesReadyReplicas;
+                            node.TargetKubernetesReplicas = nodeData.KubernetesDesiredReplicas;
+                            node.KubernetesPodIp = nodeData.KubernetesPodIp ?? string.Empty;
+                            node.KubernetesPodDescribeText = UserDataProtection.Unprotect(nodeData.KubernetesPodDescribeText);
+                            node.KubernetesPodYamlText = UserDataProtection.Unprotect(nodeData.KubernetesPodYamlText);
+                            node.KubernetesPodJsonText = UserDataProtection.Unprotect(nodeData.KubernetesPodJsonText);
+                            node.StatusColor = nodeData.IsSwarmService || nodeData.IsKubernetesPod
+                                ? StatusColors.Running
+                                : StatusColors.Unknown; // 초기 색상은 회색(Unknown)으로 고정, 이후 실시간 갱신됨
+
+                        nodeVm.SetMountSpecifications(nodeData.MountSpecifications);
+
+                        nodeVm.ParentSheet = sheetVm;
                         sheetVm.Nodes.Add(nodeVm);
                         itemMap[nodeVm.Id] = nodeVm; // 나중에 선을 연결하기 위해 ID로 기억
                     }
@@ -541,6 +869,15 @@ namespace DockerDiagram.ApplicationServices
                     // ==========================================
                     foreach (var groupData in sheetData.Groups)
                     {
+                        string dockerNetworkName = string.IsNullOrWhiteSpace(groupData.ComposeNetworkName)
+                            ? groupData.Title
+                            : groupData.ComposeNetworkName;
+                        if (groupData.Type == GroupType.Network &&
+                            DockerNetworkSafety.IsProtected(dockerNetworkName))
+                        {
+                            continue;
+                        }
+
                         var groupVm = new GroupViewModel(
                             groupData.X,
                             groupData.Y,
@@ -570,10 +907,10 @@ namespace DockerDiagram.ApplicationServices
                             ComposeNetworkName = groupData.ComposeNetworkName ?? string.Empty,
                             ComposeProjectIdentity = groupData.ComposeProjectIdentity ?? string.Empty,
                             ComposeLayoutInstanceId = groupData.ComposeLayoutInstanceId ?? string.Empty,
-                            ComposeRawNetworkYaml = groupData.ComposeRawNetworkYaml ?? string.Empty,
-                            Labels = groupData.Labels ?? new Dictionary<string, string>(),
-                            DriverOptions = groupData.DriverOptions ?? new Dictionary<string, string>(),
-                            AuxAddresses = groupData.AuxAddresses ?? new Dictionary<string, string>()
+                            ComposeRawNetworkYaml = UserDataProtection.Unprotect(groupData.ComposeRawNetworkYaml),
+                            Labels = groupData.Labels ?? [],
+                            DriverOptions = groupData.DriverOptions ?? [],
+                            AuxAddresses = groupData.AuxAddresses ?? []
                         };
 
                         // 그룹 안에 저장되어 있던 노드들을 다시 묶어줌
@@ -604,6 +941,9 @@ namespace DockerDiagram.ApplicationServices
                                 SourceDataLabel = connData.SourceDataLabel,
                                 TargetDataLabel = connData.TargetDataLabel,
                                 MountPath = connData.MountPath,
+                                MountKind = connData.MountKind,
+                                MountReadOnly = connData.MountReadOnly,
+                                MountOptions = connData.MountOptions ?? string.Empty,
                                 IpAddress = connData.IpAddress,
                                 PublishedPort = connData.PublishedPort ?? string.Empty,
                                 TargetPort = connData.TargetPort ?? string.Empty,
@@ -628,6 +968,47 @@ namespace DockerDiagram.ApplicationServices
                         }
                     }
 
+                    // 1.43 이하 파일은 bind mount도 Volume 노드/연결로 저장했습니다.
+                    // 로드 시 명시적 HostPath/마운트 사양으로 승격해 이후 저장부터 새 형식을 사용합니다.
+                    foreach (ConnectorViewModel connector in sheetVm.Connectors.Where(candidate =>
+                                 candidate.RelationType == RelationType.VolumeMount))
+                    {
+                        NodeViewModel? storage = new[] { connector.Source, connector.Target }
+                            .OfType<NodeViewModel>()
+                            .FirstOrDefault(node => node.Type is NodeType.Volume or NodeType.HostPath);
+                        if (storage?.Type == NodeType.HostPath)
+                            connector.MountKind = MountKind.Bind;
+                    }
+
+                    foreach (NodeViewModel container in sheetVm.Nodes.Where(node =>
+                                 node.Type == NodeType.Container && node.MountSpecifications.Count == 0))
+                    {
+                        var migratedMounts = new List<ContainerMountSpec>();
+                        foreach (ConnectorViewModel connector in sheetVm.Connectors.Where(candidate =>
+                                     candidate.RelationType == RelationType.VolumeMount &&
+                                     (ReferenceEquals(candidate.Source, container) || ReferenceEquals(candidate.Target, container))))
+                        {
+                            NodeViewModel? storage = ReferenceEquals(connector.Source, container)
+                                ? connector.Target as NodeViewModel
+                                : connector.Source as NodeViewModel;
+                            if (storage?.Type is not (NodeType.Volume or NodeType.HostPath) ||
+                                string.IsNullOrWhiteSpace(connector.MountPath))
+                            {
+                                continue;
+                            }
+
+                            migratedMounts.Add(new ContainerMountSpec
+                            {
+                                Kind = storage.Type == NodeType.HostPath ? MountKind.Bind : MountKind.Volume,
+                                Source = storage.Type == NodeType.HostPath ? storage.HostPath : storage.EffectiveVolumeName,
+                                Target = connector.MountPath,
+                                ReadOnly = connector.MountReadOnly
+                            });
+                        }
+                        if (migratedMounts.Count > 0)
+                            container.SetMountSpecifications(migratedMounts);
+                    }
+
                     // 1.38 이하 파일에는 관리 플래그가 없으므로 기존 관계에서 안전하게 승격합니다.
                     foreach (NodeViewModel serviceNode in sheetVm.Nodes.Where(node =>
                                  node.ResourceKind == RuntimeResourceKind.SwarmService))
@@ -645,7 +1026,6 @@ namespace DockerDiagram.ApplicationServices
                             group.ContainedNodes.Contains(serviceNode));
                     }
 
-                    stagedSheets.Add(sheetVm);
                 }
 
                 // 모든 시트를 메모리에서 성공적으로 만든 뒤에만 현재 작업을 교체합니다.
@@ -664,7 +1044,7 @@ namespace DockerDiagram.ApplicationServices
                 }
                 else
                 {
-                    mainVm.SheetManager.AddSheet();
+                    mainVm.SheetManager.AddSheet(markModified: false);
                 }
 
                 committed = true;
@@ -675,6 +1055,9 @@ namespace DockerDiagram.ApplicationServices
             {
                 if (!committed)
                 {
+                    foreach (SheetViewModel stagedSheet in stagedSheets)
+                        stagedSheet.Dispose();
+
                     foreach (StagedConnection connection in stagedConnections
                                  .GroupBy(item => item.DockerService, ReferenceEqualityComparer.Instance)
                                  .Select(group => group.First()))
@@ -689,6 +1072,44 @@ namespace DockerDiagram.ApplicationServices
                 dialogService.ShowMessage($"파일 불러오기 실패 ({filePath}):\n{ex.Message}");
                 return false;
             }
+        }
+
+        private static DiagramFile DeserializeAndValidateDiagram(string json)
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("Docker Diagram 파일의 최상위 값은 JSON 객체여야 합니다.");
+
+            if (!root.TryGetProperty(nameof(DiagramFile.Sheets), out JsonElement sheetsElement) ||
+                sheetsElement.ValueKind != JsonValueKind.Array)
+            {
+                throw new InvalidDataException(
+                    "Docker Diagram 파일에 필수 Sheets 배열이 없습니다. 다른 종류의 JSON 파일일 수 있습니다.");
+            }
+
+            if (root.TryGetProperty(nameof(DiagramFile.Version), out JsonElement versionElement))
+            {
+                if (versionElement.ValueKind != JsonValueKind.String ||
+                    !Version.TryParse(versionElement.GetString(), out Version? fileVersion))
+                {
+                    throw new InvalidDataException("Docker Diagram 파일 버전 형식이 올바르지 않습니다.");
+                }
+
+                Version supportedVersion = Version.Parse(DiagramFile.CurrentVersion);
+                if (fileVersion > supportedVersion)
+                {
+                    throw new InvalidDataException(
+                        $"이 파일은 더 새로운 Docker Diagram 버전({fileVersion})에서 만들어졌습니다. " +
+                        $"현재 지원 버전은 {supportedVersion}까지입니다.");
+                }
+            }
+
+            DiagramFile? fileData = JsonSerializer.Deserialize<DiagramFile>(json);
+            if (fileData?.Sheets == null)
+                throw new InvalidDataException("Docker Diagram 파일 내용을 읽을 수 없습니다.");
+
+            return fileData;
         }
 
         private sealed record StagedConnection(
@@ -711,7 +1132,12 @@ namespace DockerDiagram.ApplicationServices
                         string.IsNullOrWhiteSpace(right.RemoteDockerSocketPath) ? SshTunnelManager.DefaultRemoteDockerSocketPath : right.RemoteDockerSocketPath.Trim(),
                         StringComparison.Ordinal),
                 EndpointType.DockerContext =>
-                    string.Equals(left.DockerEndpoint, right.DockerEndpoint, StringComparison.OrdinalIgnoreCase),
+                    string.Equals(left.DockerEndpoint, right.DockerEndpoint, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(left.DockerTlsCaPath, right.DockerTlsCaPath, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(left.DockerTlsCertPath, right.DockerTlsCertPath, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(left.DockerTlsKeyPath, right.DockerTlsKeyPath, StringComparison.OrdinalIgnoreCase) &&
+                    left.DockerTlsEnabled == right.DockerTlsEnabled &&
+                    left.DockerTlsSkipVerify == right.DockerTlsSkipVerify,
                 _ => false
             };
         }
@@ -750,7 +1176,7 @@ namespace DockerDiagram.ApplicationServices
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[DockerDiscovery] Failed to save LastFilePath='{path}'. {ex}");
+                AppLog.Warning($"최근 파일 경로 저장 실패: {path}", ex);
             }
         }
     }

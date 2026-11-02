@@ -7,7 +7,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerComposeCliServiceTests
 {
     [Fact]
-    public void CreateStartInfo_BuildsDetachedComposeCommandForSelectedEndpoint()
+    public void CreateStartInfoBuildsDetachedComposeCommandForSelectedEndpoint()
     {
         string directory = Path.Combine(Path.GetTempPath(), $"DockerDiagram Compose {Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
@@ -25,7 +25,9 @@ public sealed class DockerComposeCliServiceTests
                 });
 
             Assert.Equal("docker", startInfo.FileName);
-            Assert.Equal($"compose -f \"{composePath}\" up -d", startInfo.Arguments);
+            Assert.Equal(
+                new[] { "compose", "-f", composePath, "up", "-d" },
+                startInfo.ArgumentList.ToArray());
             Assert.Equal(directory, startInfo.WorkingDirectory);
             Assert.True(startInfo.RedirectStandardOutput);
             Assert.True(startInfo.RedirectStandardError);
@@ -40,7 +42,7 @@ public sealed class DockerComposeCliServiceTests
     }
 
     [Fact]
-    public void CreateStartInfo_RejectsMissingComposeFileBeforeStartingDocker()
+    public void CreateStartInfoRejectsMissingComposeFileBeforeStartingDocker()
     {
         string missingPath = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.yml");
 

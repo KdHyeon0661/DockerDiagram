@@ -23,6 +23,28 @@ namespace DockerDiagram.ApplicationServices
             return arguments;
         }
 
+        public static IReadOnlyList<string> BuildComposeConfigArguments(
+            string composeFilePath,
+            string? envFilePath = null)
+        {
+            if (string.IsNullOrWhiteSpace(composeFilePath))
+                throw new ArgumentException("Compose 파일 경로가 비어 있습니다.", nameof(composeFilePath));
+
+            var arguments = new List<string> { "compose" };
+            if (!string.IsNullOrWhiteSpace(envFilePath))
+            {
+                arguments.Add("--env-file");
+                arguments.Add(envFilePath);
+            }
+
+            arguments.Add("-f");
+            arguments.Add(composeFilePath);
+            arguments.Add("config");
+            arguments.Add("--no-normalize");
+            arguments.Add("--no-path-resolution");
+            return arguments;
+        }
+
         public static IReadOnlyList<string> BuildRemoveArguments(string stackName)
         {
             SwarmStackNamePolicy.Validate(stackName);

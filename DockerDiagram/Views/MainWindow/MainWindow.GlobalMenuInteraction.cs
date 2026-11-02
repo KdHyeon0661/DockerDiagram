@@ -1,7 +1,9 @@
+using System.Linq;
 using System.Windows;
 using System.Windows.Input;
-using System.Linq;
+using DockerDiagram.Common;
 using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
@@ -12,7 +14,7 @@ namespace DockerDiagram
         // --- 옵션 팝업 및 기능 버튼 ---
 
         /// <summary>
-        /// 파일/시트/Compose 전역 메뉴를 엽니다.
+        /// 파일/시트 전역 메뉴를 엽니다.
         /// </summary>
         private void OptionButton_Click(object sender, RoutedEventArgs e)
         {
@@ -26,39 +28,179 @@ namespace DockerDiagram
             ImageDockerPopup.IsOpen = true;
         }
 
-        private void UndoRedoOptionsButton_Click(object sender, RoutedEventArgs e)
+        private void SheetNavigationButton_Click(object sender, RoutedEventArgs e)
+        {
+            CloseAllOptionPopups();
+            SheetNavigationPopup.IsOpen = true;
+        }
+
+        private void SheetSettingsButton_Click(object sender, RoutedEventArgs e)
         {
             CloseAllOptionPopups();
 
-            if (ViewModel.ActiveSheet?.RuntimeKind == RuntimeKind.DockerSwarm)
+            if (DataContext is not MainViewModel vm || vm.ActiveSheet == null)
             {
-                ManageSwarmNodesButton_Click(sender, e);
+                _dialogService.ShowInfo("활성화된 시트가 없습니다.", "시트 설정");
                 return;
             }
 
-            UndoRedoOptionsPopup.IsOpen = true;
-        }
-
-        private void CanvasSizeButton_Click(object sender, RoutedEventArgs e)
-        {
-            CloseAllOptionPopups();
-
-            if (DataContext is MainViewModel vm && vm.ActiveSheet != null)
+            var window = new Views.SheetSettingsWindow(vm, _dialogService)
             {
-                txtMapWidth.Text = (vm.ActiveSheet.MapWidth / SheetViewModel.MapInputScale).ToString();
-                txtMapHeight.Text = (vm.ActiveSheet.MapHeight / SheetViewModel.MapInputScale).ToString();
+                Owner = this
+            };
+            if (window.ShowDialog() == true && window.SheetSizeChanged)
+            {
+                ZoomPanGrid.UpdateLayout();
+                CaptureActiveSheetViewportCenter(markModified: false);
+                vm.SheetManager.MarkAsModified();
             }
-
-            MapSizePanel.Visibility = Visibility.Visible;
-            CanvasSizePopup.IsOpen = true;
         }
 
         private void CloseAllOptionPopups()
         {
             OptionPopup.IsOpen = false;
             ImageDockerPopup.IsOpen = false;
-            UndoRedoOptionsPopup.IsOpen = false;
-            CanvasSizePopup.IsOpen = false;
+            SheetNavigationPopup.IsOpen = false;
+        }
+
+        private void FitSheetItems_Click(object sender, RoutedEventArgs e)
+        {
+            if (ViewModel.ActiveSheet is not SheetViewModel sheet)
+                return;
+
+            Rect? bounds = CalculateSheetItemBounds(sheet.Nodes.Cast<ConnectableItemViewModel>()
+                .Concat(sheet.Groups));
+            if (bounds == null)
+            {
+                _dialogService.ShowInfo("현재 시트에 배치된 항목이 없습니다.", "시트 탐색");
+                return;
+            }
+
+            FitSheetBounds(sheet, bounds.Value);
+        }
+
+        private void FocusSheetSelection_Click(object sender, RoutedEventArgs e)
+        {
+            if (ViewModel.ActiveSheet is not SheetViewModel sheet)
+                return;
+
+            Rect? bounds = CalculateSheetItemBounds(ViewModel.Inspector.SelectedCanvasItems);
+            if (bounds == null)
+            {
+                _dialogService.ShowInfo("먼저 시트에서 이동할 항목을 선택해 주세요.", "시트 탐색");
+                return;
+            }
+
+            if (!TryGetViewportSize(out double viewportWidth, out double viewportHeight))
+                return;
+
+            double scale = double.IsFinite(sheet.Scale) && sheet.Scale > 0 ? sheet.Scale : 1.0;
+            ApplySheetView(
+                sheet,
+                scale,
+                bounds.Value.Left + (bounds.Value.Width / 2.0),
+                bounds.Value.Top + (bounds.Value.Height / 2.0),
+                viewportWidth,
+                viewportHeight);
+        }
+
+        private void ResetSheetZoom_Click(object sender, RoutedEventArgs e)
+        {
+            if (ViewModel.ActiveSheet is not SheetViewModel sheet ||
+                !TryGetViewportSize(out double viewportWidth, out double viewportHeight))
+            {
+                return;
+            }
+
+            double currentScale = double.IsFinite(sheet.Scale) && sheet.Scale > 0 ? sheet.Scale : 1.0;
+            double centerX = ((viewportWidth / 2.0) - sheet.OffsetX) / currentScale;
+            double centerY = ((viewportHeight / 2.0) - sheet.OffsetY) / currentScale;
+            ApplySheetView(sheet, 1.0, centerX, centerY, viewportWidth, viewportHeight);
+        }
+
+        private void CenterSheet_Click(object sender, RoutedEventArgs e)
+        {
+            if (ViewModel.ActiveSheet is not SheetViewModel sheet ||
+                !TryGetViewportSize(out double viewportWidth, out double viewportHeight))
+            {
+                return;
+            }
+
+            double scale = double.IsFinite(sheet.Scale) && sheet.Scale > 0 ? sheet.Scale : 1.0;
+            ApplySheetView(
+                sheet,
+                scale,
+                sheet.MapWidth / 2.0,
+                sheet.MapHeight / 2.0,
+                viewportWidth,
+                viewportHeight);
+        }
+
+        private void FitSheetBounds(SheetViewModel sheet, Rect bounds)
+        {
+            if (!TryGetViewportSize(out double viewportWidth, out double viewportHeight))
+                return;
+
+            const double padding = 72.0;
+            const double minimumScale = 0.05;
+            double requiredWidth = Math.Max(1.0, bounds.Width + (padding * 2));
+            double requiredHeight = Math.Max(1.0, bounds.Height + (padding * 2));
+            double scale = Math.Clamp(
+                Math.Min(viewportWidth / requiredWidth, viewportHeight / requiredHeight),
+                minimumScale,
+                SheetViewModel.MaximumScale);
+            ApplySheetView(
+                sheet,
+                scale,
+                bounds.Left + (bounds.Width / 2.0),
+                bounds.Top + (bounds.Height / 2.0),
+                viewportWidth,
+                viewportHeight);
+        }
+
+        private void ApplySheetView(
+            SheetViewModel sheet,
+            double scale,
+            double centerX,
+            double centerY,
+            double viewportWidth,
+            double viewportHeight)
+        {
+            sheet.Scale = Math.Clamp(scale, 0.05, SheetViewModel.MaximumScale);
+            sheet.OffsetX = (viewportWidth / 2.0) - (centerX * sheet.Scale);
+            sheet.OffsetY = (viewportHeight / 2.0) - (centerY * sheet.Scale);
+            sheet.IsViewportInitialized = true;
+            sheet.CaptureViewportCenter(viewportWidth, viewportHeight);
+            ViewModel.SheetManager.MarkAsModified();
+            SheetNavigationPopup.IsOpen = false;
+        }
+
+        private bool TryGetViewportSize(out double width, out double height)
+        {
+            width = ViewportCanvas.ActualWidth;
+            height = ViewportCanvas.ActualHeight;
+            return double.IsFinite(width) && double.IsFinite(height) && width > 0 && height > 0;
+        }
+
+        private static Rect? CalculateSheetItemBounds(IEnumerable<ConnectableItemViewModel> items)
+        {
+            Rect bounds = Rect.Empty;
+            foreach (ConnectableItemViewModel item in items)
+            {
+                if (!double.IsFinite(item.X) || !double.IsFinite(item.Y) ||
+                    !double.IsFinite(item.Width) || !double.IsFinite(item.Height))
+                {
+                    continue;
+                }
+
+                Rect itemBounds = new(item.X, item.Y, Math.Max(1.0, item.Width), Math.Max(1.0, item.Height));
+                if (bounds.IsEmpty)
+                    bounds = itemBounds;
+                else
+                    bounds.Union(itemBounds);
+            }
+
+            return bounds.IsEmpty ? null : bounds;
         }
 
         private async void RefreshSwarmCluster_Click(object sender, RoutedEventArgs e)
@@ -108,7 +250,7 @@ namespace DockerDiagram
                 return;
             }
 
-            var dialog = new Views.SwarmSetupDialog(swarmService, _dialogService, vm.DockerServiceFactory,
+            using var dialog = new Views.SwarmSetupDialog(swarmService, _dialogService, vm.DockerServiceFactory,
                 suggestLocalAddresses: vm.ActiveSheet.Profile?.Type == EndpointType.Local)
             {
                 Owner = this
@@ -116,27 +258,6 @@ namespace DockerDiagram
             dialog.ShowDialog();
         }
 
-        private void ConnectSwarmManager_Click(object sender, RoutedEventArgs e)
-        {
-            CloseAllOptionPopups();
-            var dialog = new Views.SshConnectionDialog(ViewModel, _dialogService, RuntimeKind.DockerSwarm)
-            {
-                Owner = this
-            };
-            dialog.ShowDialog();
-        }
-
-        private void ManageSwarmConnections_Click(object sender, RoutedEventArgs e)
-        {
-            CloseAllOptionPopups();
-            ConnectionManagerButton_Click(sender, e);
-        }
-
-        private async void AddSwarmStackSheet_Click(object sender, RoutedEventArgs e)
-        {
-            CloseAllOptionPopups();
-            await SwarmStackController.CreateStackSheetAsync();
-        }
         /// <summary>
         /// 톱니바퀴(옵션) 팝업 메뉴에서 [이미지 관리] 버튼을 클릭했을 때 호출됩니다.
         /// 사용하지 않는 이미지를 정리하고 검색할 수 있는 전용 팝업 창을 엽니다.
@@ -165,7 +286,7 @@ namespace DockerDiagram
                 return;
             }
 
-            var window = new Views.ImageImportWindow
+            var window = new Views.ImageImportWindow(_dialogService)
             {
                 Owner = this
             };
@@ -175,9 +296,18 @@ namespace DockerDiagram
             try
             {
                 Mouse.OverrideCursor = Cursors.Wait;
-                await vm.ActiveSheet.DockerService.ImportImageFromTarAsync(window.TarPath, window.Repository, window.ImageTag, window.Message);
+                await vm.ActiveSheet.DockerService.ImportImageFromTarAsync(
+                    window.TarPath,
+                    window.Repository,
+                    window.ImageTag,
+                    window.Message,
+                    vm.LifetimeToken);
                 await vm.RefreshRuntimeResourcesAsync();
                 _dialogService.ShowInfo($"이미지를 import했습니다.\n{window.Repository}:{window.ImageTag}", "Import Image");
+            }
+            catch (OperationCanceledException) when (vm.LifetimeToken.IsCancellationRequested)
+            {
+                AppLog.Info($"이미지 import가 애플리케이션 종료로 취소되었습니다: {window.TarPath}");
             }
             catch (Exception ex)
             {
@@ -210,9 +340,15 @@ namespace DockerDiagram
             try
             {
                 Mouse.OverrideCursor = Cursors.Wait;
-                await vm.ActiveSheet.DockerService.LoadImageFromTarAsync(dialog.FileName);
+                await vm.ActiveSheet.DockerService.LoadImageFromTarAsync(
+                    dialog.FileName,
+                    vm.LifetimeToken);
                 await vm.RefreshRuntimeResourcesAsync();
                 _dialogService.ShowInfo($"이미지를 load했습니다.\n{dialog.FileName}", "Load Image");
+            }
+            catch (OperationCanceledException) when (vm.LifetimeToken.IsCancellationRequested)
+            {
+                AppLog.Info($"이미지 load가 애플리케이션 종료로 취소되었습니다: {dialog.FileName}");
             }
             catch (Exception ex)
             {
@@ -226,7 +362,7 @@ namespace DockerDiagram
 
         private async void MenuBuildImage_Click(object sender, RoutedEventArgs e)
         {
-            var dlg = new Views.BuildImageDialog();
+            var dlg = new Views.BuildImageDialog(_dialogService);
             dlg.Owner = this;
 
             if (dlg.ShowDialog() == true)
@@ -263,58 +399,6 @@ namespace DockerDiagram
             };
 
             window.ShowDialog();
-        }
-
-        /// <summary>
-        /// 맵 크기 조절 패널 닫기 버튼.
-        /// </summary>
-        private void CloseMapSize_Click(object sender, RoutedEventArgs e)
-        {
-            MapSizePanel.Visibility = Visibility.Collapsed;
-            CanvasSizePopup.IsOpen = false;
-        }
-
-        /// <summary>
-        /// 사용자가 입력한 가로/세로 값을 검증한 뒤 현재 활성화된 시트(ActiveSheet)의 실제 맵 크기로 즉시 적용(Apply)합니다.
-        /// </summary>
-        private void ApplyMapSize_Click(object sender, RoutedEventArgs e)
-        {
-            var vm = DataContext as MainViewModel;
-            if (vm?.ActiveSheet == null) return;
-
-            bool hasValidWidth = double.TryParse(txtMapWidth.Text.Trim(), out double width) && double.IsFinite(width);
-            bool hasValidHeight = double.TryParse(txtMapHeight.Text.Trim(), out double height) && double.IsFinite(height);
-
-            if (!hasValidWidth || !hasValidHeight)
-            {
-                _dialogService.ShowMessage("너비와 높이는 숫자로 입력해 주세요.");
-                return;
-            }
-
-            if (width < SheetViewModel.MinimumMapInputWidth ||
-                height < SheetViewModel.MinimumMapInputHeight)
-            {
-                _dialogService.ShowMessage(
-                    $"맵 크기는 너비 {SheetViewModel.MinimumMapInputWidth:0} 이상, 높이 {SheetViewModel.MinimumMapInputHeight:0} 이상이어야 합니다.");
-                return;
-            }
-
-            double mapWidth = width * SheetViewModel.MapInputScale;
-            double mapHeight = height * SheetViewModel.MapInputScale;
-            if (!double.IsFinite(mapWidth) || !double.IsFinite(mapHeight))
-            {
-                _dialogService.ShowMessage("입력한 맵 크기가 너무 큽니다.");
-                return;
-            }
-
-            vm.ActiveSheet.MapWidth = mapWidth;
-            vm.ActiveSheet.MapHeight = mapHeight;
-            ZoomPanGrid.UpdateLayout();
-            CaptureActiveSheetViewportCenter(markModified: false);
-            vm.SheetManager.MarkAsModified();
-
-            MapSizePanel.Visibility = Visibility.Collapsed;
-            CloseAllOptionPopups();
         }
 
     }

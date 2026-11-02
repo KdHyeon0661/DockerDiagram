@@ -8,8 +8,8 @@ namespace DockerDiagram.Models
         public string DockerVolumeName { get; set; } = string.Empty;
         public string Driver { get; set; } = "local";
         public bool External { get; set; }
-        public Dictionary<string, string> Labels { get; set; } = new();
-        public Dictionary<string, string> DriverOptions { get; set; } = new();
+        public Dictionary<string, string> Labels { get; set; } = [];
+        public Dictionary<string, string> DriverOptions { get; set; } = [];
 
         public string EffectiveDockerVolumeName =>
             string.IsNullOrWhiteSpace(DockerVolumeName) ? Name : DockerVolumeName;

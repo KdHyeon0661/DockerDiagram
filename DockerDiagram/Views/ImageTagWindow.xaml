@@ -1,13 +1,15 @@
-<Window x:Class="DockerDiagram.Views.ImageTagWindow"
+﻿<Window x:Class="DockerDiagram.Views.ImageTagWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Tag Image"
+        Style="{StaticResource DialogWindowStyle}"
+        Title="이미지 태그"
         Width="440"
-        Height="230"
+        Height="280"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
-        Background="#F5F6F8"
+        Background="{StaticResource DialogWindowBackgroundBrush}"
         FontFamily="Segoe UI">
+    <Window.Resources><ResourceDictionary><ResourceDictionary.MergedDictionaries><ResourceDictionary Source="Themes/DialogControlDefaults.xaml"/></ResourceDictionary.MergedDictionaries></ResourceDictionary></Window.Resources>
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -16,8 +18,8 @@
         </Grid.RowDefinitions>
 
         <StackPanel>
-            <TextBlock Text="Tag Image" FontSize="18" FontWeight="SemiBold" Foreground="#222"/>
-            <TextBlock x:Name="SourceText" FontSize="12" Foreground="#777" Margin="0,3,0,0"/>
+        <TextBlock Text="이미지 태그" Style="{StaticResource DialogTitleStyle}"/>
+            <TextBlock x:Name="SourceText" Style="{StaticResource DialogHintStyle}" Margin="0,3,0,0"/>
         </StackPanel>
 
         <Grid Grid.Row="1" Margin="0,16,0,0">
@@ -31,18 +33,18 @@
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <TextBlock Text="Repository" VerticalAlignment="Center" Foreground="#555"/>
-            <TextBox x:Name="RepositoryBox" Grid.Column="1" Height="30" Padding="6" VerticalContentAlignment="Center" BorderBrush="#C8CDD3"/>
+            <TextBlock Text="저장소" VerticalAlignment="Center" Foreground="{StaticResource DialogTextBrush}"/>
+            <TextBox x:Name="RepositoryBox" Grid.Column="1" MinHeight="38" Padding="6" VerticalContentAlignment="Center" BorderBrush="{StaticResource DialogStrongBorderBrush}"/>
 
-            <TextBlock Grid.Row="1" Text="Tag" VerticalAlignment="Center" Foreground="#555" Margin="0,10,0,0"/>
-            <TextBox x:Name="ImageTagBox" Grid.Row="1" Grid.Column="1" Height="30" Padding="6" VerticalContentAlignment="Center" BorderBrush="#C8CDD3" Margin="0,10,0,0"/>
+            <TextBlock Grid.Row="1" Text="태그" VerticalAlignment="Center" Foreground="{StaticResource DialogTextBrush}" Margin="0,10,0,0"/>
+            <TextBox x:Name="ImageTagBox" Grid.Row="1" Grid.Column="1" MinHeight="38" Padding="6" VerticalContentAlignment="Center" BorderBrush="{StaticResource DialogStrongBorderBrush}" Margin="0,10,0,0"/>
 
-            <CheckBox x:Name="ForceBox" Grid.Row="2" Grid.Column="1" Content="Overwrite existing tag" IsChecked="True" Margin="0,12,0,0"/>
+            <CheckBox x:Name="ForceBox" Grid.Row="2" Grid.Column="1" Content="기존 태그 덮어쓰기" IsChecked="True" Margin="0,12,0,0"/>
         </Grid>
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
-            <Button Content="Tag" Click="TagButton_Click" Width="76" Height="30" Margin="0,0,8,0" Background="#007ACC" Foreground="White" BorderThickness="0"/>
-            <Button Content="Cancel" Click="CancelButton_Click" Width="76" Height="30"/>
+            <Button Content="태그" Click="TagButton_Click" Width="82" Margin="0,0,8,0" Style="{StaticResource DialogPrimaryButtonStyle}"/>
+            <Button Content="취소" Click="CancelButton_Click" Width="76" Style="{StaticResource DialogSecondaryButtonStyle}"/>
         </StackPanel>
     </Grid>
 </Window>

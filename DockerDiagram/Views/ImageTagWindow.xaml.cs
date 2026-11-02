@@ -4,12 +4,18 @@ namespace DockerDiagram.Views
 {
     public partial class ImageTagWindow : Window
     {
+        private readonly DockerDiagram.Contracts.IDialogService _dialogService;
         public string Repository => RepositoryBox.Text.Trim();
         public string ImageTag => ImageTagBox.Text.Trim();
         public bool Force => ForceBox.IsChecked == true;
 
-        public ImageTagWindow(string sourceImage, string repository, string tag)
+        public ImageTagWindow(
+            DockerDiagram.Contracts.IDialogService dialogService,
+            string sourceImage,
+            string repository,
+            string tag)
         {
+            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
             InitializeComponent();
             SourceText.Text = sourceImage;
             RepositoryBox.Text = repository == "<none>" ? string.Empty : repository;
@@ -22,13 +28,13 @@ namespace DockerDiagram.Views
         {
             if (string.IsNullOrWhiteSpace(Repository))
             {
-                MessageBox.Show(this, "Repository is required.", "Tag Image", MessageBoxButton.OK, MessageBoxImage.Information);
+                _dialogService.ShowInfo("Repository is required.", "Tag Image");
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(ImageTag))
             {
-                MessageBox.Show(this, "Tag is required.", "Tag Image", MessageBoxButton.OK, MessageBoxImage.Information);
+                _dialogService.ShowInfo("Tag is required.", "Tag Image");
                 return;
             }
 

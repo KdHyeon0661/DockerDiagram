@@ -11,7 +11,7 @@ public sealed class SwarmServiceLifecycleTests
     [InlineData(RuntimeBindingState.Bound, false, false, false, true, SwarmServiceLifecycleState.Offline)]
     [InlineData(RuntimeBindingState.Missing, false, false, true, false, SwarmServiceLifecycleState.Offline)]
     [InlineData(RuntimeBindingState.Bound, false, false, true, true, SwarmServiceLifecycleState.Bound)]
-    public void Resolve_MapsExistingRuntimeState(
+    public void ResolveMapsExistingRuntimeState(
         RuntimeBindingState bindingState,
         bool isCreating,
         bool isCreationFailed,
@@ -36,7 +36,7 @@ public sealed class SwarmServiceLifecycleTests
     [InlineData(SwarmServiceLifecycleState.Failed, SwarmServiceLifecycleState.Creating)]
     [InlineData(SwarmServiceLifecycleState.Bound, SwarmServiceLifecycleState.Offline)]
     [InlineData(SwarmServiceLifecycleState.Offline, SwarmServiceLifecycleState.Bound)]
-    public void CanTransition_AllowsSupportedTransitions(
+    public void CanTransitionAllowsSupportedTransitions(
         SwarmServiceLifecycleState current,
         SwarmServiceLifecycleState next)
     {
@@ -44,7 +44,7 @@ public sealed class SwarmServiceLifecycleTests
     }
 
     [Fact]
-    public void CanTransition_DoesNotSkipCreationFromDraftToBound()
+    public void CanTransitionDoesNotSkipCreationFromDraftToBound()
     {
         Assert.False(SwarmServiceLifecycle.CanTransition(
             SwarmServiceLifecycleState.Draft,

@@ -10,7 +10,7 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmIntegrationContractTests
 {
     [Fact]
-    public void RuntimeProfiles_KeepStandaloneSwarmAndKubernetesCommandsSeparated()
+    public void RuntimeProfilesKeepStandaloneSwarmAndKubernetesCommandsSeparated()
     {
         RuntimeUiProfile docker = RuntimeUiProfiles.For(RuntimeKind.DockerEngine);
         RuntimeUiProfile swarm = RuntimeUiProfiles.For(RuntimeKind.DockerSwarm);
@@ -19,6 +19,7 @@ public sealed class SwarmIntegrationContractTests
         Assert.True(docker.ShowComposeCommands);
         Assert.True(docker.ShowStandaloneSidebar);
         Assert.False(docker.ShowSwarmCommands);
+        Assert.False(docker.ShowSwarmSetup);
         Assert.True(docker.ShowTertiaryCanvasButton);
         Assert.False(docker.UseSwarmNodeButton);
         Assert.Equal("Undo / Redo 옵션", docker.TertiaryCanvasButtonToolTip);
@@ -26,6 +27,7 @@ public sealed class SwarmIntegrationContractTests
         Assert.False(swarm.ShowComposeCommands);
         Assert.True(swarm.ShowSwarmSidebar);
         Assert.True(swarm.ShowSwarmCommands);
+        Assert.True(swarm.ShowSwarmSetup);
         Assert.False(swarm.ShowDockerHistoryOptions);
         Assert.True(swarm.ShowTertiaryCanvasButton);
         Assert.True(swarm.UseSwarmNodeButton);
@@ -33,12 +35,13 @@ public sealed class SwarmIntegrationContractTests
 
         Assert.False(kubernetes.ShowComposeCommands);
         Assert.False(kubernetes.ShowSwarmCommands);
+        Assert.False(kubernetes.ShowSwarmSetup);
         Assert.False(kubernetes.ShowImageMenu);
         Assert.False(kubernetes.ShowTertiaryCanvasButton);
     }
 
     [Fact]
-    public void LegacyDiagramWithoutStackMetadata_RemainsReadable()
+    public void LegacyDiagramWithoutStackMetadataRemainsReadable()
     {
         const string legacyJson = """
             {
@@ -66,7 +69,7 @@ public sealed class SwarmIntegrationContractTests
     }
 
     [Fact]
-    public void StackMetadata_RoundTripsThroughExistingSheetDataField()
+    public void StackMetadataRoundTripsThroughExistingSheetDataField()
     {
         const string yaml = "services:\n  api:\n    image: example/api:2\n";
         string document = SwarmStackDocument.Serialize(
@@ -75,7 +78,9 @@ public sealed class SwarmIntegrationContractTests
                 "prod",
                 "stack.yml",
                 SwarmStackDeployState.Deployed,
-                DateTimeOffset.Parse("2026-09-21T12:00:00+09:00"),
+                DateTimeOffset.Parse(
+                    "2026-09-21T12:00:00+09:00",
+                    System.Globalization.CultureInfo.InvariantCulture),
                 string.Empty));
         var file = new DiagramFile
         {
@@ -99,7 +104,7 @@ public sealed class SwarmIntegrationContractTests
     }
 
     [Fact]
-    public void SecretNodePersistence_HasNoPayloadOrJoinTokenField()
+    public void SecretNodePersistenceHasNoPayloadOrJoinTokenField()
     {
         var node = new NodeData
         {
@@ -117,7 +122,7 @@ public sealed class SwarmIntegrationContractTests
     }
 
     [Fact]
-    public async Task StackRemove_ForwardsCancellationWithoutRunningDocker()
+    public async Task StackRemoveForwardsCancellationWithoutRunningDocker()
     {
         var runner = new CancellationRecordingRunner();
         var service = new DockerCliSwarmStackService(runner);

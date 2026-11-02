@@ -1,14 +1,13 @@
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.Infrastructure;
-using DockerDiagram.Contracts;
-using DockerDiagram.Common;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Infrastructure;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
@@ -22,10 +21,10 @@ namespace DockerDiagram.ViewModels
         private readonly MainViewModel _mainVm;
         private readonly IDockerService _defaultDockerService;
         private readonly IDialogService _dialogService;
-        private readonly ObservableCollection<SheetViewModel> _emptySheets = new();
+        private readonly ObservableCollection<SheetViewModel> _emptySheets = [];
 
         // --- 1. 상태 및 데이터 ---
-        public ObservableCollection<ConnectionWorkspaceViewModel> Workspaces { get; } = new();
+        public ObservableCollection<ConnectionWorkspaceViewModel> Workspaces { get; } = [];
         internal IDockerService DefaultDockerService => _defaultDockerService;
 
         private ConnectionWorkspaceViewModel? _activeWorkspace;
@@ -137,8 +136,26 @@ namespace DockerDiagram.ViewModels
             }
         }
 
-        private bool _isModified = false;
-        public bool IsModified { get => _isModified; set => SetProperty(ref _isModified, value); }
+        private bool _isModified;
+        private long _modificationVersion;
+        public bool IsModified
+        {
+            get => _isModified;
+            set
+            {
+                if (value)
+                    Interlocked.Increment(ref _modificationVersion);
+                SetProperty(ref _isModified, value);
+            }
+        }
+
+        internal long ModificationVersion => Interlocked.Read(ref _modificationVersion);
+
+        internal void MarkSavedIfCurrent(long savedVersion)
+        {
+            if (Interlocked.Read(ref _modificationVersion) == savedVersion)
+                IsModified = false;
+        }
 
         private string? _currentFilePath;
         public string? CurrentFilePath { get => _currentFilePath; set => SetProperty(ref _currentFilePath, value); }
@@ -159,7 +176,7 @@ namespace DockerDiagram.ViewModels
         public ICommand AddSheetCommand { get; }
         public ICommand PrevSheetCommand { get; }
         public ICommand NextSheetCommand { get; }
-        public ICommand DeleteAllSheetCommand { get; }
+        public ICommand ResetProjectCommand { get; }
         public ICommand SaveCommand { get; }
         public ICommand SaveAsCommand { get; }
         public ICommand LoadCommand { get; }
@@ -173,7 +190,7 @@ namespace DockerDiagram.ViewModels
             AddSheetCommand = new RelayCommand(_ => AddSheet());
             PrevSheetCommand = new RelayCommand(_ => NavigateSheet(-1));
             NextSheetCommand = new RelayCommand(_ => NavigateSheet(1));
-            DeleteAllSheetCommand = new RelayCommand(ExecuteDeleteAllSheet);
+            ResetProjectCommand = new RelayCommand(ExecuteResetProject);
 
             SaveCommand = new RelayCommand(SaveAction);
             SaveAsCommand = new RelayCommand(SaveAsAction);
@@ -244,61 +261,120 @@ namespace DockerDiagram.ViewModels
                     {
                         CurrentFilePath = lastPath;
                         IsModified = false;
-                        await RestoreLiveStateAsync();
                     }
                 }
             }
-            catch (Exception ex) { Debug.WriteLine($"[Load Error]: {ex.Message}"); }
+            catch (Exception ex) { AppLog.Warning("최근 다이어그램 자동 복원 실패", ex); }
         }
 
-        public async Task RestoreLiveStateAsync()
+        public async Task RestoreLiveStateAsync(IDockerService? knownUnavailableService = null)
         {
+            var serviceAvailability = new Dictionary<IDockerService, bool>(
+                ReferenceEqualityComparer.Instance);
+            if (knownUnavailableService != null)
+                serviceAvailability[knownUnavailableService] = false;
+
             foreach (var sheet in AllSheets)
             {
-                foreach (var node in sheet.Nodes)
-                {
-                    node.ParentSheet = sheet;
-                    await node.RefreshDetailsAsync();
-                }
                 foreach (var group in sheet.Groups)
-                {
                     group.ParentSheet = sheet;
-                    if (group.ContainedNodes != null)
+
+                foreach (var node in sheet.Nodes)
+                    node.ParentSheet = sheet;
+
+                // Kubernetes 저장 노드는 런타임 조회 없이 저장된 스냅샷 상태를 복원합니다.
+                // Docker/Swarm 워크스페이스는 노드마다 실패를 반복하지 않도록 연결당 한 번만 확인합니다.
+                if (sheet.RuntimeKind != RuntimeKind.Kubernetes)
+                {
+                    if (!serviceAvailability.TryGetValue(sheet.DockerService, out bool available))
                     {
-                        foreach (var node in group.ContainedNodes)
+                        try
                         {
-                            node.ParentSheet = sheet;
-                            await node.RefreshDetailsAsync();
+                            available = await sheet.DockerService.PingAsync();
                         }
+                        catch (Exception ex)
+                        {
+                            available = false;
+                            AppLog.WarningThrottled(
+                                $"restore-runtime-{sheet.Profile.ProfileId}",
+                                $"'{sheet.Title}' 런타임 연결 확인 실패",
+                                ex);
+                        }
+
+                        serviceAvailability[sheet.DockerService] = available;
+                    }
+
+                    if (!available)
+                    {
+                        MarkSheetRuntimeUnavailable(sheet);
+                        continue;
                     }
                 }
+
+                sheet.IsRuntimeUnavailable = false;
+                sheet.RuntimeStatusMessage = string.Empty;
+                foreach (var node in sheet.Nodes)
+                    await node.RefreshDetailsAsync();
+            }
+        }
+
+        private static void MarkSheetRuntimeUnavailable(SheetViewModel sheet)
+        {
+            RuntimeAvailabilityMarker.MarkUnavailable(
+                sheet,
+                "저장된 다이어그램을 오프라인 스냅샷으로 표시합니다. 런타임 연결 후 다시 동기화하세요.");
+
+            foreach (NodeViewModel node in sheet.Nodes.Where(node =>
+                         !node.IsDraft && node.Type is NodeType.Container or NodeType.Volume))
+            {
+                node.SetDockerConnection(false);
+            }
+
+            foreach (NodeViewModel localReference in sheet.Nodes.Where(node =>
+                         node.Type is NodeType.Internet or NodeType.HostPath))
+            {
+                localReference.SetDockerConnection(true);
+            }
+
+            foreach (GroupViewModel group in sheet.Groups.Where(group =>
+                         !group.IsDraft && group.Type == GroupType.Network))
+            {
+                group.IsDockerConnected = false;
             }
         }
 
         // --- 4. 탭(Sheet) 관리 로직 ---
-        public void AddSheet()
+        public void AddSheet(bool markModified = true)
         {
             var workspace = ActiveWorkspace ?? EnsureLocalWorkspace();
             if (workspace.RuntimeKind == RuntimeKind.DockerSwarm)
             {
-                AddSwarmStackSheet();
+                AddSwarmStackSheet(markModified);
                 return;
             }
 
             AddSheetToWorkspace(workspace, $"Sheet {workspace.Sheets.Count + 1}", activate: true);
+            if (markModified)
+                MarkAsModified();
         }
 
-        public void AddSwarmStackSheet()
+        public void AddSwarmStackSheet(bool markModified = true)
         {
             var workspace = ActiveWorkspace;
             if (workspace?.RuntimeKind != RuntimeKind.DockerSwarm) return;
 
             int ordinal = workspace.Sheets.Count(sheet => sheet.RuntimeKind == RuntimeKind.DockerSwarm) + 1;
             AddSheetToWorkspace(workspace, $"Stack {ordinal}", activate: true);
-            MarkAsModified();
+            if (markModified)
+                MarkAsModified();
         }
 
-        public ConnectionWorkspaceViewModel AddWorkspace(ConnectionProfile profile, IDockerService dockerService, bool activate = true, bool createInitialSheet = true)
+        public ConnectionWorkspaceViewModel AddWorkspace(
+            ConnectionProfile profile,
+            IDockerService dockerService,
+            bool activate = true,
+            bool createInitialSheet = true,
+            bool markModified = true)
         {
             var existing = FindWorkspaceByProfile(profile);
             if (existing != null)
@@ -328,6 +404,9 @@ namespace DockerDiagram.ViewModels
                 ActiveWorkspace = workspace;
             }
 
+            if (markModified)
+                MarkAsModified();
+
             return workspace;
         }
 
@@ -353,7 +432,8 @@ namespace DockerDiagram.ViewModels
                 profile,
                 sourceWorkspace.DockerService,
                 activate: false,
-                createInitialSheet: false);
+                createInitialSheet: false,
+                markModified: false);
 
             if (workspace.Sheets.Count == 0)
             {
@@ -440,8 +520,10 @@ namespace DockerDiagram.ViewModels
                 ActiveSheet = workspace.Sheets[nextIndex];
             }
 
+            DetachSheet(sheet);
             workspace.Sheets.Remove(sheet);
             OnPropertyChanged(nameof(Sheets));
+            MarkAsModified();
         }
 
         private void NavigateSheet(int direction)
@@ -452,13 +534,89 @@ namespace DockerDiagram.ViewModels
             if (newIndex >= 0 && newIndex < Sheets.Count) ActiveSheet = Sheets[newIndex];
         }
 
-        private void ExecuteDeleteAllSheet(object? obj)
+        private void ExecuteResetProject(object? obj)
         {
-            if (_dialogService.ShowConfirm("모든 시트를 삭제하시겠습니까?", "Delete All Sheet"))
+            if (HasActiveCreationTasks)
             {
-                ClearAllWorkspaces();
-                AddSheet();
+                int count = ActiveCreationTaskCount;
+                bool continueReset = _dialogService.ShowConfirm(
+                    $"현재 생성 작업이 진행 중입니다. ({count}개)\n" +
+                    "모든 시트를 비우면 Docker 리소스가 일부 생성된 상태로 남을 수 있습니다. 계속하시겠습니까?",
+                    "작업 진행 중");
+                if (!continueReset)
+                    return;
             }
+
+            if (IsModified)
+            {
+                DialogChoice choice = _dialogService.ShowYesNoCancel(
+                    "현재 프로젝트에 저장되지 않은 변경 사항이 있습니다.\n\n" +
+                    "예: 저장한 뒤 모든 시트를 비웁니다.\n" +
+                    "아니오: 저장하지 않고 모든 시트를 비웁니다.\n" +
+                    "취소: 현재 프로젝트로 돌아갑니다.\n\n" +
+                    "실제 Docker 및 Kubernetes 리소스는 삭제되지 않습니다.",
+                    "모든 시트 비우기");
+                if (choice == DialogChoice.Cancel)
+                    return;
+
+                if (choice == DialogChoice.Yes && !SaveBeforeProjectReset())
+                    return;
+            }
+            else if (!_dialogService.ShowConfirm(
+                         "모든 Docker Engine, Swarm, Kubernetes 시트와 워크스페이스를 비우고 " +
+                         "Local PC의 빈 Sheet 1만 남기시겠습니까?\n\n실제 Docker 및 Kubernetes 리소스는 삭제되지 않습니다.",
+                         "모든 시트 비우기"))
+            {
+                return;
+            }
+
+            ClearAllWorkspaces();
+            AddSheet(markModified: false);
+            IsWorkspaceLayer = true;
+            CurrentFilePath = null;
+            FileService.ClearLastFilePath();
+            IsModified = false;
+        }
+
+        public bool ClearSheetContents(SheetViewModel? targetSheet)
+        {
+            if (targetSheet == null || !AllSheets.Contains(targetSheet))
+                return false;
+
+            int activeCreationCount = targetSheet.Nodes.Count(node => node.IsBusyCreating);
+            string creationWarning = activeCreationCount > 0
+                ? $"\n\n이 시트에서 생성 작업 {activeCreationCount}개가 진행 중입니다. " +
+                  "화면을 비워도 이미 시작된 런타임 작업은 계속될 수 있습니다."
+                : string.Empty;
+            bool confirmed = _dialogService.ShowConfirm(
+                $"'{targetSheet.Title}' 시트에 표시된 노드, 연결선, 그룹을 모두 지우시겠습니까?" +
+                creationWarning +
+                "\n\n실제 Docker 및 Kubernetes 리소스는 삭제되지 않습니다.",
+                "현재 시트 비우기");
+            if (!confirmed)
+                return false;
+
+            if (ReferenceEquals(ActiveSheet, targetSheet))
+                _mainVm.Inspector?.ClearSelection();
+
+            targetSheet.ClearContents();
+            MarkAsModified();
+            return true;
+        }
+
+        private bool SaveBeforeProjectReset()
+        {
+            if (!string.IsNullOrWhiteSpace(CurrentFilePath))
+            {
+                DiagramSaveResult result = FileService.QuickSaveWithResult(_mainVm, CurrentFilePath);
+                if (result.Success)
+                    return true;
+
+                _dialogService.ShowError(result.GetUserMessage(CurrentFilePath), "저장 실패");
+                return false;
+            }
+
+            return !string.IsNullOrWhiteSpace(FileService.SaveDiagramAs(_mainVm, _dialogService));
         }
 
         // --- 5. 이벤트 감시 (Dirty Tracking) ---
@@ -526,6 +684,7 @@ namespace DockerDiagram.ViewModels
                     node.OnPositionChanged -= Connectable_OnPositionChanged;
                     if (ownerSheet != null && ReferenceEquals(node.ParentSheet, ownerSheet))
                         node.ParentSheet = null;
+                    node.Dispose();
                 }
             }
             _mainVm.Explorer?.UpdateAvailableItems();
@@ -585,13 +744,17 @@ namespace DockerDiagram.ViewModels
 
         public void MoveSheet(int oldIndex, int newIndex)
         {
-            if (oldIndex < 0 || oldIndex >= Sheets.Count || newIndex < 0 || newIndex >= Sheets.Count) return;
+            if (oldIndex < 0 || oldIndex >= Sheets.Count || newIndex < 0 || newIndex >= Sheets.Count || oldIndex == newIndex) return;
             Sheets.Move(oldIndex, newIndex);
+            MarkAsModified();
         }
 
         public void RenameSheet(SheetViewModel sheet, string newName)
         {
-            if (sheet != null && !string.IsNullOrWhiteSpace(newName)) sheet.Title = newName;
+            if (sheet == null || string.IsNullOrWhiteSpace(newName)) return;
+
+            sheet.Title = newName.Trim();
+            MarkAsModified();
         }
 
         public void RenameWorkspace(ConnectionWorkspaceViewModel workspace, string newName)
@@ -619,7 +782,7 @@ namespace DockerDiagram.ViewModels
 
             foreach (var sheet in workspace.Sheets.ToList())
             {
-                UnsubscribeSheetEvents(sheet);
+                DetachSheet(sheet);
             }
 
             bool serviceUsedElsewhere = Workspaces.Any(w =>
@@ -658,6 +821,8 @@ namespace DockerDiagram.ViewModels
 
         public void ClearAllWorkspaces()
         {
+            _mainVm.Inspector?.ClearSelection();
+
             var workspaces = Workspaces.ToList();
             var ownedConnections = workspaces
                 .Where(workspace => workspace.DockerService != _defaultDockerService)
@@ -667,7 +832,7 @@ namespace DockerDiagram.ViewModels
 
             foreach (var sheet in workspaces.SelectMany(workspace => workspace.Sheets).ToList())
             {
-                UnsubscribeSheetEvents(sheet);
+                DetachSheet(sheet);
             }
 
             Workspaces.Clear();
@@ -683,6 +848,26 @@ namespace DockerDiagram.ViewModels
             }
         }
 
+        private void DetachSheet(SheetViewModel sheet)
+        {
+            UnsubscribeSheetEvents(sheet);
+            sheet.RuntimeResourcesChangedAsync = null;
+
+            foreach (NodeViewModel node in sheet.Nodes.ToList())
+            {
+                if (ReferenceEquals(node.ParentSheet, sheet))
+                    node.ParentSheet = null;
+            }
+
+            foreach (GroupViewModel group in sheet.Groups.ToList())
+            {
+                if (ReferenceEquals(group.ParentSheet, sheet))
+                    group.ParentSheet = null;
+            }
+
+            sheet.Dispose();
+        }
+
         public IDockerService? FindDockerServiceForConnection(ConnectionProfile profile)
         {
             return Workspaces
@@ -693,7 +878,12 @@ namespace DockerDiagram.ViewModels
         private ConnectionWorkspaceViewModel EnsureLocalWorkspace()
         {
             var localProfile = new ConnectionProfile { Name = "Local PC", Type = EndpointType.Local };
-            return AddWorkspace(localProfile, _defaultDockerService, activate: true, createInitialSheet: false);
+            return AddWorkspace(
+                localProfile,
+                _defaultDockerService,
+                activate: true,
+                createInitialSheet: false,
+                markModified: false);
         }
 
         private ConnectionWorkspaceViewModel? FindWorkspaceContaining(SheetViewModel sheet)
@@ -714,7 +904,7 @@ namespace DockerDiagram.ViewModels
             if (left.Type == EndpointType.DockerContext)
             {
                 return string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(left.DockerEndpoint, right.DockerEndpoint, StringComparison.OrdinalIgnoreCase);
+                    && IsSameDockerContextConnection(left, right);
             }
 
             return string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase)
@@ -747,7 +937,7 @@ namespace DockerDiagram.ViewModels
                     left.SshPort == right.SshPort &&
                     string.Equals(GetRemoteDockerSocketPath(left), GetRemoteDockerSocketPath(right), StringComparison.Ordinal),
                 EndpointType.DockerContext =>
-                    string.Equals(left.DockerEndpoint, right.DockerEndpoint, StringComparison.OrdinalIgnoreCase),
+                    IsSameDockerContextConnection(left, right),
                 _ => false
             };
         }
@@ -783,9 +973,23 @@ namespace DockerDiagram.ViewModels
                 LocalTunnelPort = source.LocalTunnelPort,
                 SshKeyFilePath = source.SshKeyFilePath,
                 RemoteDockerSocketPath = source.RemoteDockerSocketPath,
-                DockerEndpoint = source.DockerEndpoint
+                DockerContextName = source.DockerContextName,
+                DockerEndpoint = source.DockerEndpoint,
+                DockerTlsEnabled = source.DockerTlsEnabled,
+                DockerTlsSkipVerify = source.DockerTlsSkipVerify,
+                DockerTlsCaPath = source.DockerTlsCaPath,
+                DockerTlsCertPath = source.DockerTlsCertPath,
+                DockerTlsKeyPath = source.DockerTlsKeyPath
             };
         }
+
+        private static bool IsSameDockerContextConnection(ConnectionProfile left, ConnectionProfile right) =>
+            string.Equals(left.DockerEndpoint, right.DockerEndpoint, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(left.DockerTlsCaPath, right.DockerTlsCaPath, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(left.DockerTlsCertPath, right.DockerTlsCertPath, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(left.DockerTlsKeyPath, right.DockerTlsKeyPath, StringComparison.OrdinalIgnoreCase) &&
+            left.DockerTlsEnabled == right.DockerTlsEnabled &&
+            left.DockerTlsSkipVerify == right.DockerTlsSkipVerify;
 
         private static string GetRuntimeLabel(RuntimeKind runtimeKind) => runtimeKind switch
         {
@@ -852,6 +1056,7 @@ namespace DockerDiagram.ViewModels
             if (_disposed) return;
             _disposed = true;
             ClearAllWorkspaces();
+            GC.SuppressFinalize(this);
         }
     }
 }

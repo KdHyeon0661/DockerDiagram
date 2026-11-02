@@ -1,11 +1,10 @@
-﻿using DockerDiagram.Contracts;
+﻿using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
-using System;
-using System.Threading.Tasks;
-
+using DockerDiagram.Contracts;
 using DockerDiagram.Models;
-using System.Collections.Generic;
 
 namespace DockerDiagram.Views
 {
@@ -105,6 +104,20 @@ namespace DockerDiagram.Views
             return false;
         }
 
+        public void ShowPruneResult(
+            DockerPruneResult result,
+            string operationName,
+            IReadOnlyList<string>? failures = null)
+        {
+            ArgumentNullException.ThrowIfNull(result);
+
+            var dialog = new PruneResultDialog(result, operationName, failures)
+            {
+                Owner = Application.Current?.MainWindow
+            };
+            dialog.ShowDialog();
+        }
+
         public bool TryShowVolumeOptionsDialog(VolumeCreateOptions initialOptions, out VolumeCreateOptions options)
         {
             var dlg = new DockerDiagram.Views.VolumeDialog(this, initialOptions)
@@ -176,7 +189,7 @@ namespace DockerDiagram.Views
                 return;
             }
 
-            var window = new DockerDiagram.ContainerDetailWindow
+            var window = new DockerDiagram.ContainerDetailWindow(this)
             {
                 DataContext = dataContext,
                 Owner = Application.Current.MainWindow
@@ -193,7 +206,7 @@ namespace DockerDiagram.Views
 
             try
             {
-                window.Show();
+                ShowOwnedModeless(window);
             }
             catch
             {
@@ -203,7 +216,7 @@ namespace DockerDiagram.Views
         }
         public bool TryShowContainerRenameDialog(object ownerContext, string currentName, out string newName)
         {
-            var window = new DockerDiagram.Views.ContainerRenameWindow(currentName)
+            var window = new DockerDiagram.Views.ContainerRenameWindow(this, currentName)
             {
                 Owner = ResolveOwner(ownerContext)
             };
@@ -243,7 +256,7 @@ namespace DockerDiagram.Views
             out string author,
             out bool pause)
         {
-            var window = new DockerDiagram.Views.ContainerCommitWindow(containerName)
+            var window = new DockerDiagram.Views.ContainerCommitWindow(this, containerName)
             {
                 Owner = ResolveOwner(ownerContext)
             };
@@ -290,6 +303,35 @@ namespace DockerDiagram.Views
                 DataContext = dataContext,
                 Owner = Application.Current.MainWindow
             };
+            ShowOwnedModeless(window);
+        }
+
+        /// <summary>
+        /// 소유 관계와 비모달 동작은 유지하면서, 사용자가 활성 서브 창을 닫았을 때만
+        /// 소유 창을 다시 활성화합니다. 백그라운드에서 닫힌 창은 포커스를 빼앗지 않습니다.
+        /// </summary>
+        private static void ShowOwnedModeless(Window window)
+        {
+            ArgumentNullException.ThrowIfNull(window);
+
+            Window? owner = window.Owner;
+            bool restoreOwnerActivation = false;
+            window.Closing += (_, _) => restoreOwnerActivation = window.IsActive;
+            window.Closed += (_, _) =>
+            {
+                if (!restoreOwnerActivation || owner == null)
+                    return;
+
+                owner.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (owner.IsLoaded && owner.IsVisible &&
+                        owner.WindowState != WindowState.Minimized)
+                    {
+                        owner.Activate();
+                    }
+                }));
+            };
+
             window.Show();
         }
 
@@ -354,7 +396,7 @@ namespace DockerDiagram.Views
             out string newTag,
             out bool force)
         {
-            var window = new DockerDiagram.Views.ImageTagWindow(sourceImage, repository, tag)
+            var window = new DockerDiagram.Views.ImageTagWindow(this, sourceImage, repository, tag)
             {
                 Owner = Application.Current.MainWindow
             };
@@ -382,7 +424,7 @@ namespace DockerDiagram.Views
             out string password,
             out string serverAddress)
         {
-            var window = new DockerDiagram.Views.ImagePushWindow(repository, tag)
+            var window = new DockerDiagram.Views.ImagePushWindow(this, repository, tag)
             {
                 Owner = Application.Current.MainWindow
             };

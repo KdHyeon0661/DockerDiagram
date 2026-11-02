@@ -1,11 +1,11 @@
-using DockerDiagram.Contracts;
-using Docker.DotNet.Models;
-using DockerDiagram.ViewModels;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Windows.Threading;
+using Docker.DotNet.Models;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.ViewModels;
 
 namespace DockerDiagram.ApplicationServices
 {
@@ -43,14 +43,14 @@ namespace DockerDiagram.ApplicationServices
 
             _autoSyncTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromSeconds(5)
+                Interval = RuntimeSyncTiming.FullSyncInterval
             };
             _autoSyncTimer.Tick += AutoSyncTimer_Tick;
             _autoSyncTimer.Start();
 
             _eventSyncTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromMilliseconds(600)
+                Interval = RuntimeSyncTiming.EventDebounceInterval
             };
             _eventSyncTimer.Tick += EventSyncTimer_Tick;
 
@@ -61,7 +61,7 @@ namespace DockerDiagram.ApplicationServices
 
         public async Task OnDockerStartedAsync()
         {
-            Debug.WriteLine("[DockerSync] Docker started signal received. Refreshing...");
+            AppLog.Info("Docker started signal received; refreshing runtime resources.");
             await _syncPump.RequestAsync();
             await _sheetManager.RestoreLiveStateAsync();
             await _syncPump.RequestAsync();
@@ -88,7 +88,10 @@ namespace DockerDiagram.ApplicationServices
             catch (Exception ex)
             {
                 // 타이머/이벤트 기반 fire-and-forget 호출에서 예외가 UI dispatcher까지 전파되지 않게 합니다.
-                Debug.WriteLine($"[DockerSync] Refresh failed: {ex.GetBaseException().Message}");
+                AppLog.WarningThrottled(
+                    "docker-sync-refresh",
+                    "Docker 리소스 동기화 실패",
+                    ex.GetBaseException());
                 if (ReferenceEquals(sheet, _sheetManager.ActiveSheet))
                     _explorer.LastSyncTime = "Sync failed; retry scheduled";
             }
@@ -145,7 +148,7 @@ namespace DockerDiagram.ApplicationServices
                 {
                     await service.MonitorDockerEventsAsync(progress, cancellationToken);
                     if (!cancellationToken.IsCancellationRequested)
-                        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                        await Task.Delay(RuntimeSyncTiming.InitialRetryDelay, cancellationToken);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -159,7 +162,10 @@ namespace DockerDiagram.ApplicationServices
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[DockerEvents] Stream disconnected: {ex.Message}");
+                    AppLog.WarningThrottled(
+                        "docker-event-stream",
+                        "Docker 이벤트 스트림 연결 끊김; 재연결을 시도합니다.",
+                        ex);
                     try
                     {
                         await _dialogService.InvokeOnUiThreadAsync(() =>
@@ -174,7 +180,7 @@ namespace DockerDiagram.ApplicationServices
 
                     try
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+                        await Task.Delay(RuntimeSyncTiming.FailureRetryDelay, cancellationToken);
                     }
                     catch (OperationCanceledException)
                     {
@@ -249,14 +255,14 @@ namespace DockerDiagram.ApplicationServices
                 {
                     if (completedTask.IsFaulted)
                     {
-                        Debug.WriteLine(
-                            $"[DockerEvents] Monitor stopped with error: " +
-                            $"{completedTask.Exception?.GetBaseException().Message}");
+                        AppLog.Warning(
+                            "Docker 이벤트 감시 종료 중 오류",
+                            completedTask.Exception?.GetBaseException());
                     }
 
                     eventsCts.Dispose();
                 },
-                CancellationToken.None,
+                default,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
         }

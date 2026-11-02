@@ -1,41 +1,59 @@
-﻿using DockerDiagram.Contracts;
-using DockerDiagram.Models;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
     public sealed partial class ContainerOperationsViewModel
     {
-        public async Task RefreshDetailsAsync()
+        public async Task RefreshDetailsAsync(bool refreshMonitoring = true)
         {
             if (string.IsNullOrWhiteSpace(_node.ContainerId))
             {
-                _node.IsDockerConnected = false;
+                _node.ApplyRuntimeState(
+                    RuntimeConnectionState.Disconnected,
+                    RuntimeLifecycleState.Unknown);
                 return;
             }
 
             var info = await _containerService.InspectContainerAsync(_node.ContainerId);
-            _node.IsDockerConnected = true;
+            _node.SetDockerConnection(true);
+
+            string inspectedName = info.Name?.TrimStart('/') ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(inspectedName))
+                _node.Name = inspectedName;
+            if (!string.IsNullOrWhiteSpace(info.Config?.Image))
+                _node.ImageName = info.Config.Image;
 
             await RefreshResourceLimitsAsync(info);
 
-            _node.DetailStatus = info.State.Status;
-            _node.IsRunning = info.State.Running;
-            _node.IsPaused = info.State.Paused;
+            RuntimeLifecycleState lifecycleState = info.State.Paused
+                ? RuntimeLifecycleState.Paused
+                : info.State.Running
+                    ? RuntimeLifecycleState.Running
+                    : RuntimeLifecycleState.Stopped;
+            _node.SetLifecycleState(lifecycleState, info.State.Status);
             _node.StartedAt = DateTime.TryParse(info.State.StartedAt, out var started)
-                ? started.ToString("yyyy-MM-dd HH:mm:ss")
+                ? started.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)
                 : info.State.StartedAt;
             _node.FinishedAt = _node.IsRunning
                 ? "-"
                 : DateTime.TryParse(info.State.FinishedAt, out var finished)
-                    ? finished.ToString("yyyy-MM-dd HH:mm:ss")
+                    ? finished.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)
                     : info.State.FinishedAt;
-            _node.CreatedDate = info.Created.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            _node.StoppedRuntimeSummary = _node.IsRunning
+                ? string.Empty
+                : FormatStoppedRuntimeSummary(info.State.ExitCode, info.State.FinishedAt);
+            _node.CreatedDate = info.Created.ToLocalTime().ToString(
+                "yyyy-MM-dd HH:mm",
+                System.Globalization.CultureInfo.InvariantCulture);
 
             if (_node.IsRunning && DateTime.TryParse(info.State.StartedAt, out var startTime))
             {
@@ -49,6 +67,7 @@ namespace DockerDiagram.ViewModels
 
             UpdateHealth(info);
             UpdateRestartPolicy(info);
+            UpdateGeneralConfiguration(info);
             UpdateEnvironmentVariables(info.Config?.Env);
             UpdatePortBindings(info);
 
@@ -57,53 +76,107 @@ namespace DockerDiagram.ViewModels
             else
                 _node.Network.UpdateDetails(
                     Array.Empty<KeyValuePair<string, Docker.DotNet.Models.EndpointSettings>>());
+            try
+            {
+                await _node.Network.RefreshAvailableNetworksAsync();
+            }
+            catch (Exception ex)
+            {
+                AppLog.WarningThrottled(
+                    $"container-network-candidates-{_node.ContainerId}",
+                    "연결 가능한 Docker 네트워크 목록 갱신 실패",
+                    ex);
+            }
 
-            UpdateMounts(info.Mounts);
-            _node.StatusColor = _node.IsRunning
-                ? "#28a745"
-                : _node.IsPaused
-                    ? "#ffc107"
-                    : "#dc3545";
-
-            if (_node.IsRunning)
+            UpdateMounts(info.Mounts, info.HostConfig?.Mounts);
+            if (_node.IsRunning && refreshMonitoring)
             {
                 await _node.Monitoring.RefreshAsync(appendChartPoint: false);
             }
-            else
+            else if (!_node.IsRunning)
             {
                 _node.Monitoring.ApplyStoppedState();
             }
+
+            _node.LastDetailsRefresh = $"마지막 갱신 {DateTime.Now:HH:mm:ss}";
+        }
+
+        private static string FormatStoppedRuntimeSummary(long exitCode, string? finishedAt)
+        {
+            string finishedText = FormatRelativeFinishedTime(finishedAt);
+            return $"Exit code {exitCode} · {finishedText}";
+        }
+
+        private static string FormatRelativeFinishedTime(string? finishedAt)
+        {
+            if (!DateTimeOffset.TryParse(
+                    finishedAt,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal,
+                    out DateTimeOffset finished) ||
+                finished.Year <= 1)
+            {
+                return "종료 시각 -";
+            }
+
+            TimeSpan elapsed = DateTimeOffset.UtcNow - finished.ToUniversalTime();
+            if (elapsed < TimeSpan.Zero || elapsed.TotalMinutes < 1)
+                return "방금 종료";
+            if (elapsed.TotalHours < 1)
+                return $"{Math.Max(1, (int)elapsed.TotalMinutes)}분 전 종료";
+            if (elapsed.TotalDays < 1)
+                return $"{Math.Max(1, (int)elapsed.TotalHours)}시간 전 종료";
+            if (elapsed.TotalDays < 30)
+                return $"{Math.Max(1, (int)elapsed.TotalDays)}일 전 종료";
+
+            return $"{finished.ToLocalTime():yyyy-MM-dd HH:mm} 종료";
         }
 
         private async Task RefreshResourceLimitsAsync(
             Docker.DotNet.Models.ContainerInspectResponse info)
         {
             var monitoring = _node.Monitoring;
+            double maxCpuCount;
+            long maxMemoryMb;
 
             try
             {
                 var systemInfo = await _containerService.GetSystemInfoAsync();
-                monitoring.MaxCpuCount = systemInfo.NCPU > 0
+                maxCpuCount = systemInfo.NCPU > 0
                     ? systemInfo.NCPU
                     : Environment.ProcessorCount;
-                monitoring.MaxMemoryMb = systemInfo.MemTotal > 0
+                maxMemoryMb = systemInfo.MemTotal > 0
                     ? systemInfo.MemTotal / 1048576
                     : 32768;
             }
-            catch
+            catch (Exception ex)
             {
-                monitoring.MaxCpuCount = Environment.ProcessorCount;
-                monitoring.MaxMemoryMb = 32768;
+                AppLog.WarningThrottled(
+                    "container-system-info",
+                    "컨테이너 리소스 한도 계산을 위한 Docker 시스템 정보 조회 실패",
+                    ex);
+                maxCpuCount = Environment.ProcessorCount;
+                maxMemoryMb = 32768;
             }
 
-            if (info.HostConfig == null) return;
+            if (info.HostConfig == null)
+            {
+                monitoring.LoadResourceLimits(
+                    maxCpuCount, maxMemoryMb, false, maxCpuCount, false, maxMemoryMb);
+                return;
+            }
 
-            monitoring.TargetMemoryMb = info.HostConfig.Memory > 0
-                ? info.HostConfig.Memory / 1048576
-                : monitoring.MaxMemoryMb;
-            monitoring.TargetCpuCount = info.HostConfig.NanoCPUs > 0
-                ? info.HostConfig.NanoCPUs / 1_000_000_000.0
-                : monitoring.MaxCpuCount;
+            monitoring.LoadResourceLimits(
+                maxCpuCount,
+                maxMemoryMb,
+                info.HostConfig.NanoCPUs > 0,
+                info.HostConfig.NanoCPUs > 0
+                    ? info.HostConfig.NanoCPUs / 1_000_000_000.0
+                    : maxCpuCount,
+                info.HostConfig.Memory > 0,
+                info.HostConfig.Memory > 0
+                    ? info.HostConfig.Memory / 1048576
+                    : maxMemoryMb);
         }
 
         private void UpdateHealth(Docker.DotNet.Models.ContainerInspectResponse info)
@@ -111,7 +184,7 @@ namespace DockerDiagram.ViewModels
             string? health = info.State.Health?.Status;
             if (string.IsNullOrEmpty(health))
             {
-                _node.HealthStatus = "No Check";
+                _node.HealthStatus = "검사 없음";
                 _node.HealthColor = "#888888";
                 return;
             }
@@ -120,15 +193,15 @@ namespace DockerDiagram.ViewModels
             {
                 case "healthy":
                     _node.HealthStatus = "Healthy 💚";
-                    _node.HealthColor = "#28a745";
+                    _node.HealthColor = StatusColors.Running;
                     break;
                 case "starting":
                     _node.HealthStatus = "Starting 💛";
-                    _node.HealthColor = "#ffc107";
+                    _node.HealthColor = StatusColors.InProgress;
                     break;
                 case "unhealthy":
                     _node.HealthStatus = "Unhealthy 💔";
-                    _node.HealthColor = "#dc3545";
+                    _node.HealthColor = StatusColors.Failed;
                     break;
                 default:
                     _node.HealthStatus = health;
@@ -152,75 +225,193 @@ namespace DockerDiagram.ViewModels
 
         private void UpdateEnvironmentVariables(IList<string>? values)
         {
-            var environmentVariables = values?.ToList() ?? new List<string>();
+            var environmentVariables = values?.ToList() ?? [];
             _node.EnvironmentVariables = environmentVariables;
+            if (HasPendingConfigurationChanges) return;
+
             EnvironmentItems.Clear();
 
             foreach (var entry in environmentVariables)
             {
                 int separator = entry.IndexOf('=');
-                EnvironmentItems.Add(new EnvironmentVariableDisplayItem
+                var item = new EnvironmentVariableDisplayItem
                 {
                     Key = separator >= 0 ? entry[..separator] : entry,
                     Value = separator >= 0 ? entry[(separator + 1)..] : string.Empty
+                };
+                item.Changed = MarkConfigurationDirty;
+                EnvironmentItems.Add(item);
+            }
+        }
+
+        private void UpdateGeneralConfiguration(Docker.DotNet.Models.ContainerInspectResponse info)
+        {
+            GeneralConfigurationItems.Clear();
+            LabelItems.Clear();
+            var config = info.Config;
+            var host = info.HostConfig;
+            if (config == null) return;
+
+            void Add(string name, string? value) => GeneralConfigurationItems.Add(
+                new ConfigurationDisplayItem
+                {
+                    Name = name,
+                    Value = string.IsNullOrWhiteSpace(value) ? "-" : value
+                });
+
+            Add("이미지", config.Image);
+            Add("진입점 (Entrypoint)", config.Entrypoint == null ? null : string.Join(" ", config.Entrypoint));
+            Add("실행 명령", config.Cmd == null ? null : string.Join(" ", config.Cmd));
+            Add("작업 디렉터리", config.WorkingDir);
+            Add("사용자", config.User);
+            Add("호스트 이름", config.Hostname);
+            Add("터미널 / 표준 입력", $"TTY={config.Tty}, OpenStdin={config.OpenStdin}");
+            Add("재시작 정책", _node.RestartPolicy);
+            Add("네트워크 모드", host?.NetworkMode);
+            Add("PID / IPC 모드", $"PID={host?.PidMode ?? "-"}, IPC={host?.IpcMode ?? "-"}");
+            Add("권한 / 읽기 전용 루트", $"Privileged={host?.Privileged == true}, ReadOnly={host?.ReadonlyRootfs == true}");
+            Add("자동 삭제", (host?.AutoRemove == true).ToString());
+            Add("추가된 Capability", host?.CapAdd == null ? null : string.Join(", ", host.CapAdd));
+            Add("제거된 Capability", host?.CapDrop == null ? null : string.Join(", ", host.CapDrop));
+            Add("보안 옵션", host?.SecurityOpt == null ? null : string.Join(", ", host.SecurityOpt));
+            Add("DNS", host?.DNS == null ? null : string.Join(", ", host.DNS));
+            Add("종료 신호", config.StopSignal);
+
+            foreach (var pair in config.Labels ?? new Dictionary<string, string>())
+            {
+                LabelItems.Add(new EnvironmentVariableDisplayItem
+                {
+                    Key = pair.Key,
+                    Value = pair.Value
                 });
             }
         }
 
         private void UpdatePortBindings(Docker.DotNet.Models.ContainerInspectResponse info)
         {
-            _node.PortBindings = new List<string>();
-            PortItems.Clear();
-            if (info.HostConfig?.PortBindings == null) return;
+            var nodePortBindings = new List<string>();
+            var portSummaries = new List<string>();
+            var draftItems = new List<PortBindingDisplayItem>();
+            var livePortBindings = info.NetworkSettings?.Ports ?? info.HostConfig?.PortBindings;
+            if (livePortBindings == null)
+            {
+                _node.PortBindings = nodePortBindings;
+                _node.PortInfo = string.Empty;
+                if (!HasPendingConfigurationChanges)
+                    PortItems.Clear();
+                return;
+            }
 
-            foreach (var binding in info.HostConfig.PortBindings)
+            foreach (var binding in livePortBindings)
             {
                 var portParts = binding.Key.Split('/', 2);
                 string containerPort = portParts[0];
                 string protocol = portParts.Length > 1 ? portParts[1] : "tcp";
 
-                foreach (var hostBinding in binding.Value ?? Array.Empty<Docker.DotNet.Models.PortBinding>())
+                var hostBindings = binding.Value ?? Array.Empty<Docker.DotNet.Models.PortBinding>();
+                if (hostBindings.Count == 0)
+                {
+                    draftItems.Add(new PortBindingDisplayItem
+                    {
+                        HostIp = "0.0.0.0",
+                        HostPort = string.Empty,
+                        ContainerPort = containerPort,
+                        Protocol = protocol
+                    });
+                }
+
+                foreach (var hostBinding in hostBindings)
                 {
                     if (!string.IsNullOrEmpty(hostBinding.HostPort))
                     {
-                        _node.PortBindings.Add($"{hostBinding.HostPort}:{containerPort}");
+                        nodePortBindings.Add($"{hostBinding.HostPort}:{containerPort}");
+                        string hostIpPrefix = string.IsNullOrWhiteSpace(hostBinding.HostIP) ||
+                                              hostBinding.HostIP is "0.0.0.0" or "::"
+                            ? string.Empty
+                            : $"{hostBinding.HostIP}:";
+                        portSummaries.Add(
+                            $"{hostIpPrefix}{hostBinding.HostPort}->{containerPort}/{protocol}");
                     }
 
-                    PortItems.Add(new PortBindingDisplayItem
+                    draftItems.Add(new PortBindingDisplayItem
                     {
                         HostIp = string.IsNullOrWhiteSpace(hostBinding.HostIP) ? "0.0.0.0" : hostBinding.HostIP,
-                        HostPort = string.IsNullOrWhiteSpace(hostBinding.HostPort) ? "-" : hostBinding.HostPort,
+                        HostPort = hostBinding.HostPort ?? string.Empty,
                         ContainerPort = containerPort,
                         Protocol = protocol
                     });
                 }
             }
+
+            _node.PortBindings = nodePortBindings;
+            _node.PortInfo = string.Join(", ", portSummaries.Distinct(StringComparer.OrdinalIgnoreCase));
+            if (!HasPendingConfigurationChanges)
+            {
+                PortItems.Clear();
+                foreach (var item in draftItems)
+                {
+                    item.Changed = MarkConfigurationDirty;
+                    PortItems.Add(item);
+                }
+            }
         }
 
-        private void UpdateMounts(IList<Docker.DotNet.Models.MountPoint>? mounts)
+        private void UpdateMounts(
+            IList<Docker.DotNet.Models.MountPoint>? mounts,
+            IList<Docker.DotNet.Models.Mount>? configuredMounts)
         {
-            _cachedMounts = mounts?.ToList() ?? new List<Docker.DotNet.Models.MountPoint>();
-            _node.MountCount = _cachedMounts.Count;
+            _cachedMounts = mounts?.ToList() ?? [];
+            List<ContainerMountSpec> specifications = ContainerMountMapper.FromInspect(_cachedMounts, configuredMounts);
+            _node.SetMountSpecifications(specifications);
+            var namedItems = new List<MountDisplayItem>();
+            var bindItems = new List<MountDisplayItem>();
+            var tmpfsItems = new List<MountDisplayItem>();
 
-            NamedVolumeItems.Clear();
-            BindMountItems.Clear();
-
-            foreach (var mount in _cachedMounts)
+            foreach (ContainerMountSpec mount in specifications)
             {
                 var item = new MountDisplayItem
                 {
-                    Source = mount.Type == "volume" && !string.IsNullOrWhiteSpace(mount.Name)
-                        ? mount.Name
-                        : mount.Source,
-                    Target = mount.Destination,
-                    Mode = mount.RW ? "rw" : "ro"
+                    Kind = mount.Kind,
+                    Source = mount.Source,
+                    Target = mount.Target,
+                    Mode = mount.ReadOnly ? "ro" : "rw",
+                    BindPropagation = mount.BindPropagation,
+                    VolumeNoCopy = mount.VolumeNoCopy,
+                    TmpfsSizeBytes = mount.TmpfsSizeBytes,
+                    TmpfsMode = Convert.ToString(mount.TmpfsMode, 8)
                 };
 
-                if (mount.Type == "volume")
-                    NamedVolumeItems.Add(item);
-                else if (mount.Type == "bind")
-                    BindMountItems.Add(item);
+                if (mount.Kind == MountKind.Volume)
+                    namedItems.Add(item);
+                else if (mount.Kind == MountKind.Bind)
+                    bindItems.Add(item);
+                else if (mount.Kind == MountKind.Tmpfs)
+                    tmpfsItems.Add(item);
             }
+
+            if (!HasPendingStorageChanges)
+            {
+                NamedVolumeItems.Clear();
+                BindMountItems.Clear();
+                TmpfsMountItems.Clear();
+                foreach (var item in namedItems)
+                {
+                    item.Changed = MarkStorageDirty;
+                    NamedVolumeItems.Add(item);
+                }
+                foreach (var item in bindItems)
+                {
+                    item.Changed = MarkStorageDirty;
+                    BindMountItems.Add(item);
+                }
+                foreach (var item in tmpfsItems)
+                {
+                    item.Changed = MarkStorageDirty;
+                    TmpfsMountItems.Add(item);
+                }
+            }
+
+            _node.ParentSheet?.SynchronizeContainerMounts(_node, specifications);
         }
 
         private async Task OpenDetailWindowAsync()
@@ -232,6 +423,9 @@ namespace DockerDiagram.ViewModels
 
             if (_node.IsKubernetesResource && !_node.IsRuntimeUnavailable && _node.IsDockerConnected)
                 await _node.RefreshKubernetesResourceAsync();
+
+            if (IsConnectedContainer)
+                await _node.RefreshDetailsAsync();
 
             await LoadLogsAsync();
             _dialogService.ShowContainerDetail(_node);
@@ -251,10 +445,13 @@ namespace DockerDiagram.ViewModels
             if (string.IsNullOrWhiteSpace(_node.ContainerId)) return;
 
             var monitoring = _node.Monitoring;
+            double requestedCpu = monitoring.CpuLimitEnabled ? monitoring.TargetCpuCount : 0;
+            long requestedMemory = monitoring.MemoryLimitEnabled ? monitoring.TargetMemoryMb : 0;
             bool confirm = _dialogService.ShowConfirm(
                 $"컨테이너 리소스를 실시간으로 제한하시겠습니까? (재시작 없음)\n\n" +
-                $"- 목표 CPU: {monitoring.TargetCpuCount:0.##} Core\n" +
-                $"- 목표 Memory: {monitoring.TargetMemoryMb} MB",
+                $"- CPU 제한: {(monitoring.CpuLimitEnabled ? $"{monitoring.TargetCpuCount:0.##} Core" : "무제한")}\n" +
+                $"- Memory 제한: {(monitoring.MemoryLimitEnabled ? $"{monitoring.TargetMemoryMb} MB" : "무제한")}\n\n" +
+                "메모리 스왑 설정은 변경하지 않습니다.",
                 "실시간 리소스 변경");
             if (!confirm) return;
 
@@ -262,8 +459,10 @@ namespace DockerDiagram.ViewModels
             {
                 await _containerService.UpdateContainerResourcesAsync(
                     _node.ContainerId,
-                    monitoring.TargetCpuCount,
-                    monitoring.TargetMemoryMb);
+                    requestedCpu,
+                    requestedMemory);
+                monitoring.AcceptResourceLimitDraft();
+                await _node.RefreshDetailsAsync(refreshMonitoring: false);
                 _dialogService.ShowInfo("리소스 제한이 무중단으로 성공적으로 적용되었습니다.", "업데이트 완료");
             }
             catch (Exception ex)
@@ -272,6 +471,12 @@ namespace DockerDiagram.ViewModels
                     $"리소스 업데이트 실패: {ex.Message}\n(참고: CPU 제한이 호스트 코어 수를 넘을 수 없습니다.)",
                     "오류");
             }
+        }
+
+        private async Task ResetResourceLimitsAsync(object? parameter)
+        {
+            _node.Monitoring.DiscardResourceLimitDraft();
+            await _node.RefreshDetailsAsync(refreshMonitoring: false);
         }
 
         public async Task StartLogStreamAsync(Action<string> onLogReceived, int initialTailCount = 100)
@@ -295,7 +500,7 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Log stream error: {ex.Message}");
+                AppLog.Warning("컨테이너 로그 스트림 오류", ex);
             }
         }
 
@@ -332,7 +537,7 @@ namespace DockerDiagram.ViewModels
                 {
                     _node.ContainerLogs = "Fetching logs from Kubernetes...";
                     string logs = await kubernetesService.GetKubernetesPodLogsAsync(_node.KubernetesNamespace, _node.KubernetesPodName, 500);
-                    _node.ContainerLogs = string.IsNullOrWhiteSpace(logs) ? "(No logs found)" : logs;
+                    _node.ContainerLogs = string.IsNullOrWhiteSpace(logs) ? string.Empty : logs;
                 }
                 catch (Exception ex)
                 {
@@ -358,7 +563,7 @@ namespace DockerDiagram.ViewModels
             {
                 _node.ContainerLogs = "Fetching logs from Docker engine...";
                 string logs = await _containerService.GetContainerLogsAsync(_node.ContainerId, tailCount: 500);
-                _node.ContainerLogs = string.IsNullOrEmpty(logs) ? "(No logs found)" : logs;
+                _node.ContainerLogs = string.IsNullOrEmpty(logs) ? string.Empty : logs;
             }
             catch (Exception ex)
             {

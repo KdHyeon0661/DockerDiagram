@@ -1,4 +1,5 @@
 using DockerDiagram.Contracts;
+using DockerDiagram.Common;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ApplicationServices
@@ -24,7 +25,7 @@ namespace DockerDiagram.ApplicationServices
             {
                 engineReachable = await ((ISystemService)service)
                     .PingAsync()
-                    .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                    .WaitAsync(SwarmOperationTiming.ReadinessQueryTimeout, cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -47,8 +48,8 @@ namespace DockerDiagram.ApplicationServices
             try
             {
                 cluster = await ((ISwarmService)service)
-                    .GetSwarmStateAsync()
-                    .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                    .GetSwarmStateAsync(cancellationToken)
+                    .WaitAsync(SwarmOperationTiming.ReadinessQueryTimeout, cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -64,15 +65,17 @@ namespace DockerDiagram.ApplicationServices
 
             IReadOnlyList<DockerSwarmNode>? nodes = null;
             int? serviceCount = null;
+            bool? ingressNetworkAvailable = null;
             string nodeError = string.Empty;
             string serviceError = string.Empty;
+            string networkError = string.Empty;
             if (cluster.IsManager)
             {
                 try
                 {
                     nodes = await ((ISwarmService)service)
                         .GetSwarmNodesAsync()
-                        .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                        .WaitAsync(SwarmOperationTiming.ReadinessQueryTimeout, cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -87,7 +90,7 @@ namespace DockerDiagram.ApplicationServices
                 {
                     serviceCount = (await ((ISwarmService)service)
                             .GetSwarmServicesAsync()
-                            .WaitAsync(TimeSpan.FromSeconds(10), cancellationToken))
+                            .WaitAsync(SwarmOperationTiming.ReadinessQueryTimeout, cancellationToken))
                         .Count;
                 }
                 catch (OperationCanceledException)
@@ -98,6 +101,22 @@ namespace DockerDiagram.ApplicationServices
                 {
                     serviceError = ex.GetBaseException().Message;
                 }
+
+                try
+                {
+                    List<DockerNetworkGroup> networks = await ((INetworkService)service)
+                        .GetNetworksAsync()
+                        .WaitAsync(SwarmOperationTiming.ReadinessQueryTimeout, cancellationToken);
+                    ingressNetworkAvailable = SwarmIngressNetworkSupport.HasIngressNetwork(networks);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    networkError = ex.GetBaseException().Message;
+                }
             }
 
             IReadOnlyList<SwarmReadinessCheck> checks = SwarmReadinessPolicy.Evaluate(
@@ -107,7 +126,9 @@ namespace DockerDiagram.ApplicationServices
                 nodes,
                 serviceCount,
                 nodeError,
-                serviceError);
+                serviceError,
+                ingressNetworkAvailable,
+                networkError);
             return new SwarmReadinessReport(DateTimeOffset.Now, checks);
         }
     }

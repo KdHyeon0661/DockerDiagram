@@ -1,16 +1,22 @@
-<Window x:Class="DockerDiagram.ContainerDetailWindow"
+﻿<Window x:Class="DockerDiagram.ContainerDetailWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource DialogWindowStyle}"
         xmlns:oxy="http://oxyplot.org/wpf"
-        Title="{Binding Name, StringFormat='Details &amp; Logs : {0}'}" 
-        Height="650" Width="850"
+        Title="{Binding Name, StringFormat='컨테이너 상세 정보 : {0}'}"
+        Height="760" Width="1050"
+        MinHeight="540" MinWidth="820"
         WindowStartupLocation="CenterOwner"
-        Background="#F5F6F8"
+        Background="{StaticResource DialogWindowBackgroundBrush}"
         FontFamily="Segoe UI">
 
     <Window.Resources>
+        <ResourceDictionary>
+        <ResourceDictionary.MergedDictionaries>
+            <ResourceDictionary Source="Themes/DialogControlDefaults.xaml"/>
+        </ResourceDictionary.MergedDictionaries>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
-        <Style x:Key="ContainerControlButtonBase" TargetType="Button">
+        <Style x:Key="ContainerControlButtonBase" TargetType="Button" BasedOn="{StaticResource DialogSolidButtonStyle}">
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="10,8"/>
             <Setter Property="Margin" Value="2"/>
@@ -19,61 +25,69 @@
             <Setter Property="Foreground" Value="White"/>
             <Style.Triggers>
                 <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Background" Value="#E3E7EB"/>
-                    <Setter Property="Foreground" Value="#68737D"/>
+                    <Setter Property="Background" Value="{StaticResource DialogDisabledSurfaceBrush}"/>
+                    <Setter Property="Foreground" Value="{StaticResource DialogMutedTextBrush}"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
         <Style x:Key="StartContainerButton" TargetType="Button" BasedOn="{StaticResource ContainerControlButtonBase}">
-            <Setter Property="Background" Value="#28A745"/>
+            <Setter Property="Background" Value="{StaticResource DialogSuccessBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource DialogSuccessBrush}"/>
         </Style>
         <Style x:Key="StopContainerButton" TargetType="Button" BasedOn="{StaticResource ContainerControlButtonBase}">
-            <Setter Property="Background" Value="#DC3545"/>
+            <Setter Property="Background" Value="{StaticResource DialogDangerBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource DialogDangerBrush}"/>
         </Style>
         <Style x:Key="PauseContainerButton" TargetType="Button" BasedOn="{StaticResource ContainerControlButtonBase}">
-            <Setter Property="Background" Value="#FFC107"/>
-            <Setter Property="Foreground" Value="#333333"/>
+            <Setter Property="Background" Value="{StaticResource DialogWarningBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource DialogWarningBrush}"/>
         </Style>
         <Style x:Key="RestartContainerButton" TargetType="Button" BasedOn="{StaticResource ContainerControlButtonBase}">
-            <Setter Property="Background" Value="#17A2B8"/>
+            <Setter Property="Background" Value="{StaticResource DialogPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource DialogPrimaryBrush}"/>
         </Style>
+        </ResourceDictionary>
     </Window.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="White" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1" Padding="20,15">
+        <Border Grid.Row="0" Style="{StaticResource DialogHeaderPanelStyle}" Padding="20,15">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Name}" FontSize="22" FontWeight="Bold" Foreground="#333"/>
+                    <TextBlock Text="{Binding Name}" FontSize="22" FontWeight="Bold" Foreground="{StaticResource DialogTextBrush}"/>
                     <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
-                        <TextBlock Text="{Binding ContainerId, StringFormat='ID: {0}'}" FontSize="12" Foreground="#888" FontFamily="Consolas"/>
-                        <TextBlock Text="{Binding ImageName, StringFormat=' | {0}'}" FontSize="12" Foreground="#007ACC" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding ShortContainerId, StringFormat='ID: {0}'}" FontSize="12" Foreground="{StaticResource DialogMutedTextBrush}" FontFamily="Consolas" VerticalAlignment="Center"/>
+                        <Button Content="복사" Command="{Binding CopyContainerIdCommand}" Margin="7,0,0,0" Padding="7,1" MinHeight="24" Style="{StaticResource DialogCompactButtonStyle}"/>
+                        <TextBlock Text="{Binding ImageName, StringFormat='  |  {0}'}" FontSize="12" Foreground="{StaticResource DialogTextBrush}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="520" ToolTip="{Binding ImageName}"/>
                     </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding DetailStatus}" FontSize="16" FontWeight="Bold" Foreground="{Binding StatusColor}" HorizontalAlignment="Right"/>
-                    <TextBlock Text="{Binding Uptime}" FontSize="11" Foreground="#888" HorizontalAlignment="Right" Margin="0,3,0,0"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <TextBlock Text="{Binding DetailStatus}" FontSize="16" FontWeight="Bold" Foreground="{Binding StatusColor}" VerticalAlignment="Center"/>
+                        <Button Content="새로 고침" Click="RefreshDetails_Click" Margin="12,0,0,0" Padding="10,4" Style="{StaticResource DialogSecondaryButtonStyle}"/>
+                    </StackPanel>
+                    <TextBlock Text="{Binding Uptime}" FontSize="11" Foreground="{StaticResource DialogMutedTextBrush}" HorizontalAlignment="Right" Margin="0,3,0,0"/>
+                    <TextBlock Text="{Binding LastDetailsRefresh}" FontSize="10" Foreground="{StaticResource DialogMutedTextBrush}" HorizontalAlignment="Right"/>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <TabControl x:Name="DetailTabControl" Grid.Row="1" Margin="15" Background="White" BorderBrush="#DDD" BorderThickness="1">
+        <TabControl x:Name="DetailTabControl" Grid.Row="1" Margin="15" Background="{StaticResource DialogSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1">
 
-            <TabItem Header="☷ Swarm Service" FontSize="14" Padding="15,8"
+            <TabItem Header="Swarm Service" FontSize="14" Padding="15,8"
                      Visibility="{Binding IsSwarmService, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
-                        <TextBlock Text="Service Summary" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,18">
+                            <TextBlock Text="Service 요약" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8"/>
+                        <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,18">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="120"/>
@@ -87,90 +101,98 @@
                                     <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
 
-                                <TextBlock Text="Mode" Foreground="#777" Margin="0,0,8,8"/>
+                                    <TextBlock Text="모드" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Column="1" Text="{Binding SwarmMode}" FontWeight="SemiBold" Margin="0,0,12,8"/>
-                                <TextBlock Grid.Column="2" Text="Replicas" Foreground="#777" Margin="0,0,8,8"/>
+                                    <TextBlock Grid.Column="2" Text="Replica 수" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Column="3" Text="{Binding SwarmReplicaSummary}" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,0,0,8"/>
 
-                                <TextBlock Grid.Row="1" Text="Image" Foreground="#777" Margin="0,0,8,8"/>
+                                    <TextBlock Grid.Row="1" Text="이미지" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding ImageName}" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,8"/>
 
-                                <TextBlock Grid.Row="2" Text="Ports" Foreground="#777"/>
+                                    <TextBlock Grid.Row="2" Text="포트" Foreground="{StaticResource DialogMutedTextBrush}"/>
                                 <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding PortInfo}" FontFamily="Consolas" TextWrapping="Wrap"/>
                             </Grid>
                         </Border>
 
-                        <Border Background="#FFF8E7" BorderBrush="#E5C07B" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,12">
+                        <Border Background="{StaticResource DialogWarningSurfaceBrush}" BorderBrush="{StaticResource DialogWarningBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,12">
                             <TextBlock Text="{Binding SwarmDiagramApplyStatus}" Foreground="{Binding SwarmDiagramApplyStatusColor}" FontWeight="SemiBold"/>
                         </Border>
 
-                        <TextBlock Text="Scale" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                        <Border Background="#F8F0FF" BorderBrush="#E5D0FF" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,18">
+                            <TextBlock Text="규모 조정" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8"/>
+                        <Border Background="{StaticResource DialogSwarmSurfaceBrush}" BorderBrush="{StaticResource DialogSwarmBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,18">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="100"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="replicated mode service의 desired replica 수를 변경합니다." Foreground="#666" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                <TextBlock Text="replicated 모드 Service의 희망 Replica 수를 변경합니다." Foreground="{StaticResource DialogMutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
                                 <TextBox Grid.Column="1" Text="{Binding TargetSwarmReplicas, UpdateSourceTrigger=PropertyChanged}" Width="80" Padding="6,4" TextAlignment="Right" FontFamily="Consolas" Margin="10,0"/>
-                                <Button Grid.Column="2" Command="{Binding ScaleSwarmServiceCommand}" Content="Apply" Background="#6f42c1" Foreground="White" BorderThickness="0" Padding="14,6" FontWeight="Bold" Cursor="Hand"/>
+                                <Button Grid.Column="2" Command="{Binding ScaleSwarmServiceCommand}" Content="적용"
+                                        Style="{StaticResource DialogSwarmButtonStyle}" Padding="14,6"/>
                             </Grid>
                         </Border>
 
-                        <TextBlock Text="Actions" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
+                            <TextBlock Text="작업" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8"/>
                         <UniformGrid Rows="2" Columns="3" Margin="0,0,0,18">
-                            <Button Command="{Binding RefreshSwarmServiceCommand}" Content="Refresh" Background="#007ACC" Foreground="White" BorderThickness="0" Padding="10,8" Margin="3" Cursor="Hand" FontWeight="Bold"/>
-                            <Button Content="Apply Diagram Changes" Click="ApplySwarmDiagram_Click" IsEnabled="{Binding CanControlSwarmService}" Background="#287BAE" Foreground="White" BorderThickness="0" Padding="10,8" Margin="3" Cursor="Hand" FontWeight="Bold" ToolTip="다이어그램의 port, volume, overlay network, Secret, Config 관계를 실제 ServiceSpec에 적용합니다."/>
-                            <Button Content="Placement" Click="EditSwarmPlacement_Click" IsEnabled="{Binding CanControlSwarmService}" Background="#4D7C6F" Foreground="White" BorderThickness="0" Padding="10,8" Margin="3" Cursor="Hand" FontWeight="Bold"/>
-                            <Button Content="Diagnostics" Click="OpenSwarmTaskDiagnostics_Click" IsEnabled="{Binding CanControlSwarmService}" Background="#B45309" Foreground="White" BorderThickness="0" Padding="10,8" Margin="3" Cursor="Hand" FontWeight="Bold"/>
-                            <Button Content="Edit Service" Click="EditSwarmService_Click" IsEnabled="{Binding CanControlSwarmService}" Background="#6F42C1" Foreground="White" BorderThickness="0" Padding="10,8" Margin="3" Cursor="Hand" FontWeight="Bold"/>
-                            <Button Command="{Binding RemoveSwarmServiceCommand}" Content="Remove Service" Background="#dc3545" Foreground="White" BorderThickness="0" Padding="10,8" Margin="3" Cursor="Hand" FontWeight="Bold"/>
+                                <Button Command="{Binding RefreshSwarmServiceCommand}" Content="새로고침"
+                                    Style="{StaticResource DialogSecondaryButtonStyle}" Padding="10,8" Margin="3"/>
+                                <Button Content="다이어그램 변경 적용" Click="ApplySwarmDiagram_Click" IsEnabled="{Binding CanControlSwarmService}"
+                                    Style="{StaticResource DialogPrimaryButtonStyle}" Padding="10,8" Margin="3"
+                                    ToolTip="다이어그램의 port, volume, overlay network, Secret, Config 관계를 실제 ServiceSpec에 적용합니다."/>
+                                <Button Content="배치 조건" Click="EditSwarmPlacement_Click" IsEnabled="{Binding CanControlSwarmService}"
+                                    Style="{StaticResource DialogSecondaryButtonStyle}" Padding="10,8" Margin="3"/>
+                                <Button Content="진단" Click="OpenSwarmTaskDiagnostics_Click" IsEnabled="{Binding CanControlSwarmService}"
+                                    Style="{StaticResource DialogWarningButtonStyle}" Padding="10,8" Margin="3"/>
+                                <Button Content="Service 편집" Click="EditSwarmService_Click" IsEnabled="{Binding CanControlSwarmService}"
+                                    Style="{StaticResource DialogSwarmButtonStyle}" Padding="10,8" Margin="3"/>
+                                <Button Command="{Binding RemoveSwarmServiceCommand}" Content="Service 제거"
+                                    Style="{StaticResource DialogDangerButtonStyle}" Padding="10,8" Margin="3"/>
                         </UniformGrid>
 
                         <Grid Margin="0,0,0,8">
-                            <TextBlock Text="Tasks" FontWeight="Bold" FontSize="14" Foreground="#555"/>
-                            <TextBlock Text="{Binding SwarmTaskSummary}" HorizontalAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#59636F"/>
+                            <TextBlock Text="Task" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}"/>
+                            <TextBlock Text="{Binding SwarmTaskSummary}" HorizontalAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource DialogMutedTextBrush}"/>
                         </Grid>
-                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="0" Margin="0,0,0,18">
+                        <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="0" Margin="0,0,0,18">
                             <ListView ItemsSource="{Binding SwarmTasks}" BorderThickness="0" Background="Transparent" MaxHeight="220">
                                 <ListView.View>
                                     <GridView>
-                                        <GridViewColumn Header="Slot" Width="48" DisplayMemberBinding="{Binding Slot}"/>
+                                            <GridViewColumn Header="슬롯" Width="48" DisplayMemberBinding="{Binding Slot}"/>
                                         <GridViewColumn Header="Task" Width="105" DisplayMemberBinding="{Binding ShortId}"/>
-                                        <GridViewColumn Header="Node" Width="130" DisplayMemberBinding="{Binding NodeName}"/>
-                                        <GridViewColumn Header="Desired" Width="80" DisplayMemberBinding="{Binding DesiredState}"/>
-                                        <GridViewColumn Header="State" Width="95">
+                                            <GridViewColumn Header="노드" Width="130" DisplayMemberBinding="{Binding NodeName}"/>
+                                            <GridViewColumn Header="희망 상태" Width="80" DisplayMemberBinding="{Binding DesiredState}"/>
+                                            <GridViewColumn Header="현재 상태" Width="95">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <TextBlock Text="{Binding CurrentState}" Foreground="{Binding StatusColor}" FontWeight="SemiBold"/>
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
-                                        <GridViewColumn Header="Container" Width="105" DisplayMemberBinding="{Binding ShortContainerId}"/>
-                                        <GridViewColumn Header="Error" Width="220" DisplayMemberBinding="{Binding Error}"/>
+                                            <GridViewColumn Header="컨테이너" Width="105" DisplayMemberBinding="{Binding ShortContainerId}"/>
+                                            <GridViewColumn Header="오류" Width="220" DisplayMemberBinding="{Binding Error}"/>
                                     </GridView>
                                 </ListView.View>
                             </ListView>
                         </Border>
 
                         <Grid Margin="0,0,0,8">
-                            <TextBlock Text="Task Placement · Service → Task → Swarm Node" FontWeight="Bold" FontSize="14" Foreground="#555"/>
-                            <TextBlock Text="{Binding SwarmPlacementSummary}" HorizontalAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="#59636F"/>
+                            <TextBlock Text="Task 배치 · Service → Task → Swarm 노드" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}"/>
+                            <TextBlock Text="{Binding SwarmPlacementSummary}" HorizontalAlignment="Right" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource DialogMutedTextBrush}"/>
                         </Grid>
                         <ItemsControl ItemsSource="{Binding SwarmTaskPlacements}" Margin="0,0,0,18">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Background="#F7F3FB" BorderBrush="#D8CBE8" BorderThickness="1" CornerRadius="5" Padding="10" Margin="0,0,0,8">
+                                    <Border Background="{StaticResource DialogSwarmSurfaceBrush}" BorderBrush="{StaticResource DialogSwarmBorderBrush}" BorderThickness="1" CornerRadius="5" Padding="10" Margin="0,0,0,8">
                                         <StackPanel>
                                             <Grid Margin="0,0,0,7">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                                 <StackPanel>
-                                                    <TextBlock Text="{Binding NodeName}" FontWeight="Bold" Foreground="#5D467B"/>
-                                                    <TextBlock Text="{Binding NodeSummary}" FontSize="10" Foreground="#776887"/>
+                                                    <TextBlock Text="{Binding NodeName}" FontWeight="Bold" Foreground="{StaticResource DialogSwarmTextBrush}"/>
+                                                    <TextBlock Text="{Binding NodeSummary}" FontSize="10" Foreground="{StaticResource DialogSwarmTextBrush}"/>
                                                 </StackPanel>
-                                                <Border Grid.Column="1" Background="#E4D9F0" CornerRadius="8" Padding="7,2" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding TaskSummary}" FontSize="10" FontWeight="SemiBold" Foreground="#5D467B"/>
+                                                <Border Grid.Column="1" Background="{StaticResource DialogSwarmSurfaceBrush}" CornerRadius="8" Padding="7,2" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding TaskSummary}" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource DialogSwarmTextBrush}"/>
                                                 </Border>
                                             </Grid>
                                             <ItemsControl ItemsSource="{Binding Tasks}">
@@ -180,10 +202,10 @@
                                                             <Grid.ColumnDefinitions>
                                                                 <ColumnDefinition Width="42"/><ColumnDefinition Width="105"/><ColumnDefinition Width="90"/><ColumnDefinition Width="*"/>
                                                             </Grid.ColumnDefinitions>
-                                                            <TextBlock Text="{Binding Slot, StringFormat=slot {0}}" FontFamily="Consolas" Foreground="#666"/>
+                                                            <TextBlock Text="{Binding Slot, StringFormat=slot {0}}" FontFamily="Consolas" Foreground="{StaticResource DialogMutedTextBrush}"/>
                                                             <TextBlock Grid.Column="1" Text="{Binding ShortId}" FontFamily="Consolas"/>
                                                             <TextBlock Grid.Column="2" Text="{Binding CurrentState}" Foreground="{Binding StatusColor}" FontWeight="SemiBold"/>
-                                                            <TextBlock Grid.Column="3" Text="{Binding Error}" Foreground="#B23A3A" TextTrimming="CharacterEllipsis"/>
+                                                            <TextBlock Grid.Column="3" Text="{Binding Error}" Foreground="{StaticResource DialogErrorTextBrush}" TextTrimming="CharacterEllipsis"/>
                                                         </Grid>
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
@@ -194,23 +216,23 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <TextBlock Text="Raw Inspect" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                        <TextBox Text="{Binding SwarmServiceInspectJson}" FontFamily="Consolas" FontSize="12" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="180" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                            <TextBlock Text="원본 Inspect 정보" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8"/>
+                        <TextBox Text="{Binding SwarmServiceInspectJson}" FontFamily="Consolas" FontSize="12" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="180" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Background="{StaticResource DialogCodeBackgroundBrush}" Foreground="{StaticResource DialogCodeTextBrush}" BorderThickness="0" Padding="10"/>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="☸ Kubernetes Pod" FontSize="14" Padding="15,8"
+            <TabItem Header="Kubernetes Pod" FontSize="14" Padding="15,8"
                      Visibility="{Binding IsKubernetesPod, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
                         <Grid Margin="0,0,0,8">
-                            <TextBlock Text="Pod Summary" FontWeight="Bold" FontSize="14" Foreground="#555"/>
-                            <Button Command="{Binding RefreshKubernetesPodCommand}" Content="Refresh" HorizontalAlignment="Right"
-                                    Background="#326CE5" Foreground="White" BorderThickness="0" Padding="12,6" Cursor="Hand" FontWeight="Bold"/>
+                            <TextBlock Text="Pod 요약" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}"/>
+                            <Button Command="{Binding RefreshKubernetesPodCommand}" Content="새로고침" HorizontalAlignment="Right"
+                                    Style="{StaticResource DialogKubernetesButtonStyle}" Padding="12,6"/>
                         </Grid>
 
-                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,18">
+                        <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,18">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="120"/>
@@ -225,84 +247,79 @@
                                     <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
 
-                                <TextBlock Text="Namespace" Foreground="#777" Margin="0,0,8,8"/>
+                                    <TextBlock Text="네임스페이스" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Column="1" Text="{Binding KubernetesNamespace}" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,0,12,8"/>
-                                <TextBlock Grid.Column="2" Text="Pod" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Column="2" Text="Pod" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Column="3" Text="{Binding KubernetesPodName}" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,0,0,8"/>
 
-                                <TextBlock Grid.Row="1" Text="Ready" Foreground="#777" Margin="0,0,8,8"/>
+                                    <TextBlock Grid.Row="1" Text="준비 상태" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding KubernetesReady}" FontFamily="Consolas" Margin="0,0,12,8"/>
-                                <TextBlock Grid.Row="1" Grid.Column="2" Text="Restarts" Foreground="#777" Margin="0,0,8,8"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="재시작 횟수" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding KubernetesRestarts}" FontFamily="Consolas" Margin="0,0,0,8"/>
 
-                                <TextBlock Grid.Row="2" Text="Pod IP" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Row="2" Text="Pod IP" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding KubernetesPodIp}" FontFamily="Consolas" Margin="0,0,12,8"/>
-                                <TextBlock Grid.Row="2" Grid.Column="2" Text="Node" Foreground="#777" Margin="0,0,8,8"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="2" Text="노드" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding KubernetesNodeName}" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,8"/>
 
-                                <TextBlock Grid.Row="3" Text="Image" Foreground="#777"/>
+                                    <TextBlock Grid.Row="3" Text="이미지" Foreground="{StaticResource DialogMutedTextBrush}"/>
                                 <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding ImageName}" FontFamily="Consolas" TextWrapping="Wrap"/>
                             </Grid>
                         </Border>
 
-                        <Border Background="#F7FAFF" BorderBrush="#D7E3FF" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,18">
+                        <Border Background="{StaticResource DialogInfoSurfaceBrush}" BorderBrush="{StaticResource DialogInfoBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,18">
                             <StackPanel>
-                                <TextBlock Text="Live Actions" FontWeight="Bold" Foreground="#555" Margin="0,0,0,8"/>
+                            <TextBlock Text="실시간 작업" FontWeight="Bold" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8"/>
                                 <WrapPanel>
-                                    <Button Command="{Binding OpenKubernetesLogsFollowCommand}" Content="Follow Logs" Height="32" Margin="0,0,8,0"
-                                            Padding="14,0"
-                                            Background="#326CE5" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
-                                    <Button Command="{Binding OpenKubernetesPortForwardCommand}" Content="Port Forward" Height="32" Margin="0,0,8,0"
-                                            Padding="14,0"
-                                            Background="#2E7D32" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
-                                    <Button Command="{Binding ExportKubernetesYamlCommand}" Content="Export YAML" Height="32" Margin="0,0,8,0"
-                                            Padding="14,0"
-                                            Background="#455A64" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
-                                    <Button Command="{Binding ApplyKubernetesManifestCommand}" Content="Apply Manifest" Height="32" Margin="0,0,8,0"
-                                            Padding="14,0"
-                                            Background="#00897B" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
-                                    <Button Command="{Binding DeleteKubernetesResourceCommand}" Content="Delete Pod" Height="32"
-                                            Padding="14,0"
-                                            Background="#D32F2F" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                <Button Command="{Binding OpenKubernetesLogsFollowCommand}" Content="로그 실시간 보기" MinHeight="38" Margin="0,0,8,0"
+                                            Padding="14,0" Style="{StaticResource DialogKubernetesButtonStyle}"/>
+                                <Button Command="{Binding OpenKubernetesPortForwardCommand}" Content="포트 전달" MinHeight="38" Margin="0,0,8,0"
+                                            Padding="14,0" Style="{StaticResource DialogTrafficButtonStyle}"/>
+                                <Button Command="{Binding ExportKubernetesYamlCommand}" Content="YAML 내보내기" MinHeight="38" Margin="0,0,8,0"
+                                            Padding="14,0" Style="{StaticResource DialogSecondaryButtonStyle}"/>
+                                <Button Command="{Binding ApplyKubernetesManifestCommand}" Content="Manifest 적용" MinHeight="38" Margin="0,0,8,0"
+                                            Padding="14,0" Style="{StaticResource DialogSuccessButtonStyle}"/>
+                                <Button Command="{Binding DeleteKubernetesResourceCommand}" Content="Pod 삭제" MinHeight="38"
+                                            Padding="14,0" Style="{StaticResource DialogDangerButtonStyle}"/>
                                 </WrapPanel>
                             </StackPanel>
                         </Border>
 
-                        <TabControl Background="White" BorderBrush="#DDD" BorderThickness="1">
-                            <TabItem Header="Describe" Padding="10,6">
+                        <TabControl Background="{StaticResource DialogSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1">
+                        <TabItem Header="설명" Padding="10,6">
                                 <TextBox Text="{Binding KubernetesPodDescribeText}" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
                                          AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="300"
                                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                                         Background="{StaticResource DialogCodeBackgroundBrush}" Foreground="{StaticResource DialogCodeTextBrush}" BorderThickness="0" Padding="10"/>
                             </TabItem>
                             <TabItem Header="YAML" Padding="10,6">
                                 <TextBox Text="{Binding KubernetesPodYamlText}" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
                                          AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="300"
                                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                                         Background="{StaticResource DialogCodeBackgroundBrush}" Foreground="{StaticResource DialogCodeTextBrush}" BorderThickness="0" Padding="10"/>
                             </TabItem>
                             <TabItem Header="JSON" Padding="10,6">
                                 <TextBox Text="{Binding KubernetesPodJsonText}" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
                                          AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="300"
                                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                                         Background="{StaticResource DialogCodeBackgroundBrush}" Foreground="{StaticResource DialogCodeTextBrush}" BorderThickness="0" Padding="10"/>
                             </TabItem>
                         </TabControl>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="☸ Kubernetes Resource" FontSize="14" Padding="15,8"
+            <TabItem Header="Kubernetes Resource" FontSize="14" Padding="15,8"
                      Visibility="{Binding IsGenericKubernetesResource, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
                         <Grid Margin="0,0,0,8">
-                            <TextBlock Text="Resource Summary" FontWeight="Bold" FontSize="14" Foreground="#555"/>
-                            <Button Command="{Binding RefreshKubernetesResourceCommand}" Content="Refresh" HorizontalAlignment="Right"
-                                    Background="#326CE5" Foreground="White" BorderThickness="0" Padding="12,6" Cursor="Hand" FontWeight="Bold"/>
+                            <TextBlock Text="리소스 요약" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}"/>
+                            <Button Command="{Binding RefreshKubernetesResourceCommand}" Content="새로고침" HorizontalAlignment="Right"
+                                    Style="{StaticResource DialogKubernetesButtonStyle}" Padding="12,6"/>
                         </Grid>
 
-                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,18">
+                        <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,18">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="120"/>
@@ -316,25 +333,25 @@
                                     <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
 
-                                <TextBlock Text="Kind" Foreground="#777" Margin="0,0,8,8"/>
+                                    <TextBlock Text="종류" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Column="1" Text="{Binding KubernetesKind}" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,0,12,8"/>
-                                <TextBlock Grid.Column="2" Text="Namespace" Foreground="#777" Margin="0,0,8,8"/>
+                                    <TextBlock Grid.Column="2" Text="네임스페이스" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Column="3" Text="{Binding KubernetesNamespace}" FontFamily="Consolas" FontWeight="SemiBold" Margin="0,0,0,8"/>
 
-                                <TextBlock Grid.Row="1" Text="Name" Foreground="#777" Margin="0,0,8,8"/>
+                                    <TextBlock Grid.Row="1" Text="이름" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding KubernetesResourceName}" FontFamily="Consolas" Margin="0,0,12,8"/>
-                                <TextBlock Grid.Row="1" Grid.Column="2" Text="API" Foreground="#777" Margin="0,0,8,8"/>
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="API" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,8,8"/>
                                 <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding KubernetesApiVersion}" FontFamily="Consolas" Margin="0,0,0,8"/>
 
-                                <TextBlock Grid.Row="2" Text="Status" Foreground="#777"/>
+                                    <TextBlock Grid.Row="2" Text="상태" Foreground="{StaticResource DialogMutedTextBrush}"/>
                                 <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding DetailStatus}" FontFamily="Consolas" TextWrapping="Wrap"/>
                             </Grid>
                         </Border>
 
-                        <Border Background="#F7FAFF" BorderBrush="#D7E3FF" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,18"
+                        <Border Background="{StaticResource DialogInfoSurfaceBrush}" BorderBrush="{StaticResource DialogInfoBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,18"
                                 Visibility="{Binding IsKubernetesDeployment, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <StackPanel>
-                                <TextBlock Text="Deployment Control" FontWeight="Bold" Foreground="#555" Margin="0,0,0,8"/>
+                            <TextBlock Text="Deployment 제어" FontWeight="Bold" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8"/>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="90"/>
@@ -343,84 +360,118 @@
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="Replicas" VerticalAlignment="Center" Foreground="#666"/>
-                                    <TextBox Grid.Column="1" Text="{Binding TargetKubernetesReplicas, UpdateSourceTrigger=PropertyChanged}" Height="30" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" FontFamily="Consolas"/>
-                                    <Button Grid.Column="2" Command="{Binding ScaleKubernetesDeploymentCommand}" Content="Apply" Height="30" Padding="14,0" Margin="8,0,0,0"
-                                            Background="#326CE5" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
-                                    <Button Grid.Column="3" Command="{Binding RestartKubernetesRolloutCommand}" Content="Rollout Restart" Height="30" Padding="14,0" Margin="8,0,0,0"
-                                            Background="#6F42C1" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
-                                    <TextBlock Grid.Column="4" Text="{Binding KubernetesReplicaSummary}" VerticalAlignment="Center" HorizontalAlignment="Right" Foreground="#666"/>
+                                <TextBlock Text="Replica 수" VerticalAlignment="Center" Foreground="{StaticResource DialogMutedTextBrush}"/>
+                                    <TextBox Grid.Column="1" Text="{Binding TargetKubernetesReplicas, UpdateSourceTrigger=PropertyChanged}" MinHeight="38" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" FontFamily="Consolas"/>
+                                <Button Grid.Column="2" Command="{Binding ScaleKubernetesDeploymentCommand}" Content="적용" MinHeight="38" Padding="14,6" Margin="8,0,0,0"
+                                            Style="{StaticResource DialogKubernetesButtonStyle}"/>
+                                <Button Grid.Column="3" Command="{Binding RestartKubernetesRolloutCommand}" Content="Rollout 재시작" MinHeight="38" Padding="14,6" Margin="8,0,0,0"
+                                            Style="{StaticResource DialogWarningButtonStyle}"/>
+                                    <TextBlock Grid.Column="4" Text="{Binding KubernetesReplicaSummary}" VerticalAlignment="Center" HorizontalAlignment="Right" Foreground="{StaticResource DialogMutedTextBrush}"/>
                                 </Grid>
                             </StackPanel>
                         </Border>
 
-                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,18">
+                        <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,18">
                             <StackPanel>
-                                <TextBlock Text="Resource Actions" FontWeight="Bold" Foreground="#555" Margin="0,0,0,8"/>
+                            <TextBlock Text="리소스 작업" FontWeight="Bold" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8"/>
                                 <WrapPanel>
-                                    <Button Command="{Binding OpenKubernetesPortForwardCommand}" Content="Port Forward" Height="32" Margin="0,0,8,0"
-                                            Padding="14,0"
-                                            Background="#2E7D32" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
-                                    <Button Command="{Binding ExportKubernetesYamlCommand}" Content="Export YAML" Height="32" Margin="0,0,8,0"
-                                            Padding="14,0"
-                                            Background="#455A64" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
-                                    <Button Command="{Binding ApplyKubernetesManifestCommand}" Content="Apply Manifest" Height="32" Margin="0,0,8,0"
-                                            Padding="14,0"
-                                            Background="#00897B" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
-                                    <Button Command="{Binding DeleteKubernetesResourceCommand}" Content="Delete Resource" Height="32"
-                                            Padding="14,0"
-                                            Background="#D32F2F" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                                <Button Command="{Binding OpenKubernetesPortForwardCommand}" Content="포트 전달" MinHeight="38" Margin="0,0,8,0"
+                                            Padding="14,0" Style="{StaticResource DialogTrafficButtonStyle}"/>
+                                <Button Command="{Binding ExportKubernetesYamlCommand}" Content="YAML 내보내기" MinHeight="38" Margin="0,0,8,0"
+                                            Padding="14,0" Style="{StaticResource DialogSecondaryButtonStyle}"/>
+                                <Button Command="{Binding ApplyKubernetesManifestCommand}" Content="Manifest 적용" MinHeight="38" Margin="0,0,8,0"
+                                            Padding="14,0" Style="{StaticResource DialogSuccessButtonStyle}"/>
+                                <Button Command="{Binding DeleteKubernetesResourceCommand}" Content="리소스 삭제" MinHeight="38"
+                                            Padding="14,0" Style="{StaticResource DialogDangerButtonStyle}"/>
                                 </WrapPanel>
                             </StackPanel>
                         </Border>
 
-                        <TabControl Background="White" BorderBrush="#DDD" BorderThickness="1">
-                            <TabItem Header="Describe" Padding="10,6">
+                        <TabControl Background="{StaticResource DialogSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1">
+                        <TabItem Header="설명" Padding="10,6">
                                 <TextBox Text="{Binding KubernetesPodDescribeText}" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
                                          AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="300"
                                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                                         Background="{StaticResource DialogCodeBackgroundBrush}" Foreground="{StaticResource DialogCodeTextBrush}" BorderThickness="0" Padding="10"/>
                             </TabItem>
                             <TabItem Header="YAML" Padding="10,6">
                                 <TextBox Text="{Binding KubernetesPodYamlText}" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
                                          AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="300"
                                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                                         Background="{StaticResource DialogCodeBackgroundBrush}" Foreground="{StaticResource DialogCodeTextBrush}" BorderThickness="0" Padding="10"/>
                             </TabItem>
                             <TabItem Header="JSON" Padding="10,6">
                                 <TextBox Text="{Binding KubernetesPodJsonText}" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
                                          AcceptsReturn="True" TextWrapping="NoWrap" MinHeight="300"
                                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                                         Background="#1E1E1E" Foreground="#DCDCDC" BorderThickness="0" Padding="10"/>
+                                         Background="{StaticResource DialogCodeBackgroundBrush}" Foreground="{StaticResource DialogCodeTextBrush}" BorderThickness="0" Padding="10"/>
                             </TabItem>
                         </TabControl>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="📊 Status" FontSize="14" Padding="15,8"
+            <TabItem Header="상태" FontSize="14" Padding="15,8"
                      Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
 
-                        <TextBlock Text="Container Controls" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="5" Margin="0,0,0,20">
+                        <TextBlock Text="컨테이너 제어" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8"/>
+                        <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="5" Margin="0,0,0,20">
                             <UniformGrid Rows="1">
-                                <Button Command="{Binding StartCommand}" Content="▶ Start" Style="{StaticResource StartContainerButton}"/>
-                                <Button Command="{Binding StopCommand}" Content="■ Stop" Style="{StaticResource StopContainerButton}"/>
-                                <Button Command="{Binding PauseCommand}" Content="⏸ Pause" Style="{StaticResource PauseContainerButton}" ToolTip="Pause/Unpause"/>
-                                <Button Command="{Binding RestartCommand}" Content="🔄 Restart" Style="{StaticResource RestartContainerButton}"/>
+                                <Button Command="{Binding StartCommand}" Style="{StaticResource StartContainerButton}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path Data="{StaticResource DialogPlayIcon}" Width="14" Height="14" Fill="White" Stretch="Uniform" Margin="0,0,6,0"/>
+                                        <TextBlock Text="시작"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Command="{Binding StopCommand}" Style="{StaticResource StopContainerButton}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path Data="{StaticResource DialogStopIcon}" Width="14" Height="14" Fill="White" Stretch="Uniform" Margin="0,0,6,0"/>
+                                        <TextBlock Text="중지"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Command="{Binding PauseCommand}" Style="{StaticResource PauseContainerButton}" ToolTip="일시정지/재개">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path Data="{StaticResource DialogPauseIcon}" Width="14" Height="14" Fill="White" Stretch="Uniform" Margin="0,0,6,0"/>
+                                        <TextBlock Text="{Binding PauseActionLabel}"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Command="{Binding RestartCommand}" Style="{StaticResource RestartContainerButton}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path Data="{StaticResource DialogRefreshIcon}" Width="14" Height="14" Fill="White" Stretch="Uniform" Margin="0,0,6,0"/>
+                                        <TextBlock Text="재시작"/>
+                                    </StackPanel>
+                                </Button>
                             </UniformGrid>
                         </Border>
 
-                        <TextBlock Text="Resource Usage (Live)" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,20">
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="실시간 리소스 사용량" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}"/>
+                            <TextBlock Grid.Column="1" Text="{Binding Monitoring.StatsStatusText}"
+                                       Foreground="{StaticResource DialogDangerBrush}"
+                                       FontSize="11"
+                                       HorizontalAlignment="Right"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip="{Binding Monitoring.StatsStatusText}"
+                                       Visibility="{Binding Monitoring.HasStatsError, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                        </Grid>
+                        <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,20">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="20"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="14"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
 
                                 <Grid Grid.Column="0">
                                     <Grid.RowDefinitions>
@@ -428,33 +479,68 @@
                                         <RowDefinition Height="85"/>
                                     </Grid.RowDefinitions>
                                     <Grid Grid.Row="0" Margin="0,0,0,2">
-                                        <TextBlock Text="CPU Usage" Foreground="#888" FontSize="12"/>
-                                        <TextBlock Text="{Binding Monitoring.CpuUsage}" Foreground="#28a745" FontWeight="Bold" FontFamily="Consolas" HorizontalAlignment="Right"/>
+                                        <TextBlock Text="CPU" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="12"/>
+                                        <TextBlock Text="{Binding Monitoring.CpuUsage}" Foreground="{StaticResource DialogSuccessBrush}" FontWeight="Bold" FontFamily="Consolas" HorizontalAlignment="Right"/>
                                     </Grid>
 
                                     <oxy:PlotView x:Name="cpuPlotView" Grid.Row="1" Model="{Binding Monitoring.CpuPlotModel}" Background="Transparent" Margin="0,5,0,0"/>
                                 </Grid>
 
-                                <Grid Grid.Column="2">
+                                <Grid Grid.Column="2" Grid.Row="0">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="85"/>
                                     </Grid.RowDefinitions>
                                     <Grid Grid.Row="0" Margin="0,0,0,2">
-                                        <TextBlock Text="Memory Usage" Foreground="#888" FontSize="12"/>
-                                        <TextBlock Text="{Binding Monitoring.MemoryUsage}" Foreground="#007ACC" FontWeight="Bold" FontFamily="Consolas" HorizontalAlignment="Right"/>
+                                        <TextBlock Text="메모리" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="12"/>
+                                        <TextBlock Text="{Binding Monitoring.MemoryUsage}" Foreground="{StaticResource DialogPrimaryBrush}" FontWeight="Bold" FontFamily="Consolas" HorizontalAlignment="Right"/>
                                     </Grid>
 
                                     <oxy:PlotView x:Name="memoryPlotView" Grid.Row="1" Model="{Binding Monitoring.MemoryPlotModel}" Background="Transparent" Margin="0,5,0,0"/>
+                                </Grid>
+
+                                <Grid Grid.Row="2" Grid.Column="0">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="85"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="네트워크 I/O" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="12"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Monitoring.NetworkIo}" Foreground="{StaticResource DialogPrimaryBrush}" FontWeight="Bold" FontFamily="Consolas" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" ToolTip="{Binding Monitoring.NetworkIo}"/>
+                                    </Grid>
+                                    <oxy:PlotView x:Name="networkIoPlotView" Grid.Row="1" Model="{Binding Monitoring.NetworkIoPlotModel}" Background="Transparent" Margin="0,5,0,0"/>
+                                    <TextBlock Grid.Row="2" Text="{Binding Monitoring.NetworkIoTotal}" Foreground="{StaticResource DialogMutedTextBrush}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                </Grid>
+                                <Grid Grid.Row="2" Grid.Column="2">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="85"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="디스크(Block) I/O" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="12"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Monitoring.BlockIo}" Foreground="{StaticResource DialogWarningBrush}" FontWeight="Bold" FontFamily="Consolas" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" ToolTip="{Binding Monitoring.BlockIo}"/>
+                                    </Grid>
+                                    <oxy:PlotView x:Name="blockIoPlotView" Grid.Row="1" Model="{Binding Monitoring.BlockIoPlotModel}" Background="Transparent" Margin="0,5,0,0"/>
+                                    <TextBlock Grid.Row="2" Text="{Binding Monitoring.BlockIoTotal}" Foreground="{StaticResource DialogMutedTextBrush}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                 </Grid>
                             </Grid>
                         </Border>
 
                         <Expander IsExpanded="False" Margin="0,0,0,8">
                         <Expander.Header>
-                            <TextBlock Text="Runtime Resource Limits" FontWeight="Bold" FontSize="14" Foreground="#555"/>
+                            <TextBlock Text="실시간 리소스 제한" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}"/>
                         </Expander.Header>
-                        <Border Background="#F7F8FA" BorderBrush="#D9DEE3" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,8,0,12">
+                        <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,8,0,12">
                             <StackPanel>
                                 <Grid Margin="0,0,0,15">
                                     <Grid.RowDefinitions>
@@ -462,28 +548,29 @@
                                         <RowDefinition Height="Auto"/>
                                     </Grid.RowDefinitions>
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="60"/>
+                                        <ColumnDefinition Width="105"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="90"/>
                                     </Grid.ColumnDefinitions>
 
-                                    <TextBlock Text="CPU" FontWeight="Bold" Foreground="#333" VerticalAlignment="Center"/>
+                                    <CheckBox Content="CPU 제한" IsChecked="{Binding Monitoring.CpuLimitEnabled, Mode=TwoWay}" FontWeight="Bold" Foreground="{StaticResource DialogTextBrush}" VerticalAlignment="Center"/>
 
                                     <Slider Grid.Column="1" Minimum="0.1" Maximum="{Binding Monitoring.MaxCpuCount}" IsSnapToTickEnabled="False"
                                             SmallChange="{Binding Monitoring.CpuAdjustmentStep}" LargeChange="1.0"
-                                            Value="{Binding Monitoring.CpuSliderValue}" Margin="10,0" VerticalAlignment="Center"/>
+                                            Value="{Binding Monitoring.CpuSliderValue}" Margin="10,0" VerticalAlignment="Center"
+                                            IsEnabled="{Binding Monitoring.CpuLimitEnabled}"/>
 
                                     <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                        <TextBox Text="{Binding Monitoring.TargetCpuCount, UpdateSourceTrigger=PropertyChanged}" Width="45" Padding="2" TextAlignment="Right" VerticalContentAlignment="Center" BorderBrush="#CCC"/>
-                                        <TextBlock Text=" Core" FontWeight="SemiBold" Foreground="#6f42c1" VerticalAlignment="Center" Margin="3,0,0,0"/>
+                                        <TextBox Text="{Binding Monitoring.TargetCpuCount, UpdateSourceTrigger=PropertyChanged}" Width="45" Padding="2" TextAlignment="Right" VerticalContentAlignment="Center" BorderBrush="{StaticResource DialogStrongBorderBrush}" IsEnabled="{Binding Monitoring.CpuLimitEnabled}"/>
+                                        <TextBlock Text=" Core" FontWeight="SemiBold" Foreground="{StaticResource DialogSwarmBrush}" VerticalAlignment="Center" Margin="3,0,0,0"/>
                                     </StackPanel>
 
                                     <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="10,6,0,0">
-                                        <TextBlock Text="Step:" FontSize="11" Foreground="#777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <TextBlock Text="조절 단위:" FontSize="11" Foreground="{StaticResource DialogMutedTextBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                         <RadioButton Content="0.25" GroupName="CpuResourceStep" IsChecked="{Binding Monitoring.IsCpuStepQuarter, Mode=TwoWay}" FontSize="11" Margin="0,0,10,0"/>
                                         <RadioButton Content="0.5" GroupName="CpuResourceStep" IsChecked="{Binding Monitoring.IsCpuStepHalf, Mode=TwoWay}" FontSize="11" Margin="0,0,10,0"/>
                                         <RadioButton Content="1" GroupName="CpuResourceStep" IsChecked="{Binding Monitoring.IsCpuStepOne, Mode=TwoWay}" FontSize="11"/>
-                                        <TextBlock Text=" Core" FontSize="11" Foreground="#777" VerticalAlignment="Center"/>
+                                        <TextBlock Text=" Core" FontSize="11" Foreground="{StaticResource DialogMutedTextBrush}" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Grid>
 
@@ -493,60 +580,62 @@
                                         <RowDefinition Height="Auto"/>
                                     </Grid.RowDefinitions>
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="60"/>
+                                        <ColumnDefinition Width="105"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="90"/>
                                     </Grid.ColumnDefinitions>
 
-                                    <TextBlock Text="Memory" FontWeight="Bold" Foreground="#333" VerticalAlignment="Center"/>
+                                    <CheckBox Content="메모리 제한" IsChecked="{Binding Monitoring.MemoryLimitEnabled, Mode=TwoWay}" FontWeight="Bold" Foreground="{StaticResource DialogTextBrush}" VerticalAlignment="Center"/>
 
                                     <Slider Grid.Column="1" Minimum="64" Maximum="{Binding Monitoring.MaxMemoryMb}" IsSnapToTickEnabled="False"
                                             SmallChange="{Binding Monitoring.MemoryAdjustmentStepMb}" LargeChange="1024"
-                                            Value="{Binding Monitoring.MemorySliderValue}" Margin="10,0" VerticalAlignment="Center"/>
+                                            Value="{Binding Monitoring.MemorySliderValue}" Margin="10,0" VerticalAlignment="Center"
+                                            IsEnabled="{Binding Monitoring.MemoryLimitEnabled}"/>
 
                                     <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                        <TextBox Text="{Binding Monitoring.TargetMemoryMb, UpdateSourceTrigger=PropertyChanged}" Width="55" Padding="2" TextAlignment="Right" VerticalContentAlignment="Center" BorderBrush="#CCC"/>
-                                        <TextBlock Text=" MB" FontWeight="SemiBold" Foreground="#6f42c1" VerticalAlignment="Center" Margin="3,0,0,0"/>
+                                        <TextBox Text="{Binding Monitoring.TargetMemoryMb, UpdateSourceTrigger=PropertyChanged}" Width="55" Padding="2" TextAlignment="Right" VerticalContentAlignment="Center" BorderBrush="{StaticResource DialogStrongBorderBrush}" IsEnabled="{Binding Monitoring.MemoryLimitEnabled}"/>
+                                        <TextBlock Text=" MB" FontWeight="SemiBold" Foreground="{StaticResource DialogSwarmBrush}" VerticalAlignment="Center" Margin="3,0,0,0"/>
                                     </StackPanel>
 
                                     <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="10,6,0,0">
-                                        <TextBlock Text="Step:" FontSize="11" Foreground="#777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <TextBlock Text="조절 단위:" FontSize="11" Foreground="{StaticResource DialogMutedTextBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                         <RadioButton Content="64" GroupName="MemoryResourceStep" IsChecked="{Binding Monitoring.IsMemoryStep64, Mode=TwoWay}" FontSize="11" Margin="0,0,10,0"/>
                                         <RadioButton Content="128" GroupName="MemoryResourceStep" IsChecked="{Binding Monitoring.IsMemoryStep128, Mode=TwoWay}" FontSize="11" Margin="0,0,10,0"/>
                                         <RadioButton Content="256" GroupName="MemoryResourceStep" IsChecked="{Binding Monitoring.IsMemoryStep256, Mode=TwoWay}" FontSize="11"/>
-                                        <TextBlock Text=" MB" FontSize="11" Foreground="#777" VerticalAlignment="Center"/>
+                                        <TextBlock Text=" MB" FontSize="11" Foreground="{StaticResource DialogMutedTextBrush}" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Grid>
 
-                                <TextBlock Text="Changes are applied without restarting the container." FontSize="11" Foreground="#777" Margin="0,0,0,8" HorizontalAlignment="Right"/>
-                                <Button Command="{Binding UpdateResourcesCommand}" Content="Apply Changes" Background="#455A64" Foreground="White" BorderThickness="0" Padding="14,7" Cursor="Hand" FontWeight="SemiBold" HorizontalAlignment="Right">
-                                    <Button.Resources>
-                                        <Style TargetType="Border">
-                                            <Setter Property="CornerRadius" Value="4"/>
-                                        </Style>
-                                    </Button.Resources>
-                                </Button>
+                                <TextBlock Text="체크를 해제하면 제한을 제거합니다. 스왑 설정은 변경하지 않으며 컨테이너 재시작도 필요하지 않습니다." FontSize="11" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,0,8" HorizontalAlignment="Right" TextWrapping="Wrap"/>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <TextBlock Text="편집 중 · 자동 갱신으로 덮어쓰지 않습니다." Foreground="{StaticResource DialogWarningTextBrush}" VerticalAlignment="Center" Margin="0,0,12,0"
+                                               Visibility="{Binding Monitoring.HasPendingLimitChanges, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                    <Button Command="{Binding ContainerOperations.ResetResourcesCommand}" Content="변경 취소"
+                                            Style="{StaticResource DialogSecondaryButtonStyle}" Padding="14,7" Margin="0,0,8,0"/>
+                                    <Button Command="{Binding UpdateResourcesCommand}" Content="변경 적용"
+                                            Style="{StaticResource DialogPrimaryButtonStyle}" Padding="14,7"/>
+                                </StackPanel>
                             </StackPanel>
                         </Border>
                         </Expander>
 
-                        <TextBlock Text="Lifecycle &amp; Policies" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                        <Border Background="#FAFAFA" BorderBrush="#EEE" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,10">
+                        <TextBlock Text="수명주기 및 정책" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8"/>
+                        <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,0,0,10">
                             <UniformGrid Columns="4">
                                 <StackPanel Margin="0,0,10,0">
-                                    <TextBlock Text="Started At" Foreground="#888" FontSize="11" Margin="0,0,0,2"/>
-                                    <TextBlock Text="{Binding StartedAt}" FontFamily="Consolas" Foreground="#333" FontSize="13" TextWrapping="Wrap"/>
+                                    <TextBlock Text="시작 시각" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="11" Margin="0,0,0,2"/>
+                                    <TextBlock Text="{Binding StartedAt}" FontFamily="Consolas" Foreground="{StaticResource DialogTextBrush}" FontSize="13" TextWrapping="Wrap"/>
                                 </StackPanel>
                                 <StackPanel Margin="0,0,10,0">
-                                    <TextBlock Text="Last Finished At" Foreground="#888" FontSize="11" Margin="0,0,0,2"/>
-                                    <TextBlock Text="{Binding FinishedAt}" FontFamily="Consolas" Foreground="#333" FontSize="13" TextWrapping="Wrap"/>
+                                    <TextBlock Text="마지막 종료 시각" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="11" Margin="0,0,0,2"/>
+                                    <TextBlock Text="{Binding FinishedAt}" FontFamily="Consolas" Foreground="{StaticResource DialogTextBrush}" FontSize="13" TextWrapping="Wrap"/>
                                 </StackPanel>
                                 <StackPanel Margin="0,0,10,0">
-                                    <TextBlock Text="Restart Policy" Foreground="#888" FontSize="11" Margin="0,0,0,2"/>
-                                    <TextBlock Text="{Binding RestartPolicy}" FontWeight="SemiBold" Foreground="#333" FontSize="13"/>
+                                    <TextBlock Text="재시작 정책" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="11" Margin="0,0,0,2"/>
+                                    <TextBlock Text="{Binding RestartPolicy}" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}" FontSize="13"/>
                                 </StackPanel>
                                 <StackPanel>
-                                    <TextBlock Text="Health Status" Foreground="#888" FontSize="11" Margin="0,0,0,2"/>
+                                        <TextBlock Text="상태 검사" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="11" Margin="0,0,0,2"/>
                                     <TextBlock Text="{Binding HealthStatus}" FontWeight="Bold" Foreground="{Binding HealthColor}" FontSize="13"/>
                                 </StackPanel>
                             </UniformGrid>
@@ -555,23 +644,57 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="⚙️ Configuration" FontSize="14" Padding="15,8"
+            <TabItem Header="설정" FontSize="14" Padding="15,8"
                      Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <TabControl Background="Transparent" BorderThickness="0">
+                    <TabItem Header="일반" Padding="14,7">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel Margin="15">
+                                <TextBlock Text="컨테이너 생성 설정" FontWeight="Bold" FontSize="14" Margin="0,0,0,8"/>
+                                <ItemsControl ItemsSource="{Binding ContainerOperations.GeneralConfigurationItems}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,7">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Name}" Foreground="{StaticResource DialogMutedTextBrush}"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding Value}" FontFamily="Consolas" TextWrapping="Wrap"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="레이블" FontWeight="Bold" FontSize="14" Margin="0,14,0,8"/>
+                                <ItemsControl ItemsSource="{Binding ContainerOperations.LabelItems}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,0,0,6">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="260"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Key}" FontFamily="Consolas" FontWeight="SemiBold"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding Value}" FontFamily="Consolas" TextWrapping="Wrap"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Button Content="Docker 원본 JSON 보기" Command="{Binding ViewRawInspectCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,8" HorizontalAlignment="Left" Margin="0,14,0,0"/>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+                    <TabItem Header="환경 변수" Padding="14,7">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="15" Grid.IsSharedSizeScope="True">
-                        <TextBlock FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8">
-                            <Run Text="Environment Variables  "/>
-                            <Run Text="{Binding ContainerOperations.EnvironmentItems.Count, Mode=OneWay}" Foreground="#007ACC"/>
+                        <TextBlock FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8">
+                            <Run Text="환경 변수  "/>
+                            <Run Text="{Binding ContainerOperations.EnvironmentItems.Count, Mode=OneWay}" Foreground="{StaticResource DialogPrimaryBrush}"/>
                         </TextBlock>
-                        <Border Background="#FAFAFA" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="4" Margin="0,0,0,20">
+                        <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Margin="0,0,0,20">
                             <StackPanel>
-                                <Grid Background="#F1F3F5" Height="32">
+                                <Grid Background="{StaticResource DialogReadOnlySurfaceBrush}" Height="32">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="220" SharedSizeGroup="ConfigKey"/>
                                         <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="120"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="Key" FontWeight="SemiBold" Foreground="#555" Margin="12,0" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="1" Text="Value" FontWeight="SemiBold" Foreground="#555" Margin="12,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="이름" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}" Margin="12,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="값" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}" Margin="12,0" VerticalAlignment="Center"/>
                                 </Grid>
                                 <ListBox ItemsSource="{Binding ContainerOperations.EnvironmentItems}"
                                          BorderThickness="0" Background="Transparent"
@@ -589,14 +712,34 @@
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="220" SharedSizeGroup="ConfigKey"/>
                                                     <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="120"/>
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock Text="{Binding Key}" FontFamily="Consolas" FontSize="12" FontWeight="SemiBold" Foreground="#B42369" Margin="12,7" TextTrimming="CharacterEllipsis" ToolTip="{Binding Key}"/>
-                                                <TextBlock Grid.Column="1" Text="{Binding Value}" FontFamily="Consolas" FontSize="12" Foreground="#333" Margin="12,7" TextTrimming="CharacterEllipsis" ToolTip="{Binding Value}"/>
+                                                <TextBox Text="{Binding Key, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" FontSize="12" FontWeight="SemiBold" Margin="7,3"/>
+                                                <Grid Grid.Column="1" Margin="7,3">
+                                                    <TextBox Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas">
+                                                        <TextBox.Style>
+                                                            <Style TargetType="TextBox" BasedOn="{StaticResource DialogTextBoxStyle}">
+                                                                <Style.Triggers><DataTrigger Binding="{Binding IsValueVisible}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+                                                            </Style>
+                                                        </TextBox.Style>
+                                                    </TextBox>
+                                                    <TextBlock Text="{Binding DisplayValue}" FontFamily="Consolas" VerticalAlignment="Center" Margin="7,0">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding IsValueVisible}" Value="False"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </Grid>
+                                                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="3">
+                                                    <Button Content="{Binding RevealButtonText}" Command="{Binding DataContext.ContainerOperations.ToggleEnvironmentSecretCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Padding="7,2" Margin="0,0,4,0">
+                                                        <Button.Style><Style TargetType="Button" BasedOn="{StaticResource DialogCompactButtonStyle}"><Style.Triggers><DataTrigger Binding="{Binding IsSecret}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                                                    </Button>
+                                                    <Button Content="삭제" Command="{Binding DataContext.ContainerOperations.RemoveEnvironmentCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Style="{StaticResource DialogCompactButtonStyle}" Padding="7,2"/>
+                                                </StackPanel>
                                             </Grid>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
-                                <TextBlock Text="환경 변수가 없습니다." Foreground="#888" Margin="12" FontStyle="Italic">
+                                <TextBlock Text="환경 변수가 없습니다." Foreground="{StaticResource DialogMutedTextBrush}" Margin="12" FontStyle="Italic">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Visibility" Value="Collapsed"/>
@@ -610,24 +753,30 @@
                                 </TextBlock>
                             </StackPanel>
                         </Border>
-
-                        <TextBlock FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8">
-                            <Run Text="Port Bindings  "/>
-                            <Run Text="{Binding ContainerOperations.PortItems.Count, Mode=OneWay}" Foreground="#007ACC"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="환경 변수 추가" Command="{Binding ContainerOperations.AddEnvironmentCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,6" Margin="0,0,8,0"/>
+                            <Button Content="변경 취소" Command="{Binding ContainerOperations.ResetRecreateChangesCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,6" Margin="0,0,8,0"/>
+                            <Button Content="재생성하여 적용" Command="{Binding ContainerOperations.ApplyRecreateChangesCommand}" Style="{StaticResource DialogPrimaryButtonStyle}" Padding="12,6"/>
+                        </StackPanel>
+                        <TextBlock Text="{Binding ContainerOperations.RecreateStatus}" Foreground="{StaticResource DialogWarningTextBrush}" HorizontalAlignment="Right" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </ScrollViewer>
+                    </TabItem>
+                    <TabItem Header="포트" Padding="14,7">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="15" Grid.IsSharedSizeScope="True">
+                        <TextBlock FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8">
+                            <Run Text="포트 매핑  "/>
+                            <Run Text="{Binding ContainerOperations.PortItems.Count, Mode=OneWay}" Foreground="{StaticResource DialogPrimaryBrush}"/>
                         </TextBlock>
-                        <Border Background="#FAFAFA" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="4">
+                        <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4">
                             <StackPanel>
-                                <Grid Background="#F1F3F5" Height="32">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="90"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="Host IP" FontWeight="SemiBold" Foreground="#555" Margin="12,0" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="1" Text="Host Port" FontWeight="SemiBold" Foreground="#555" Margin="12,0" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="2" Text="Container Port" FontWeight="SemiBold" Foreground="#555" Margin="12,0" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="3" Text="Protocol" FontWeight="SemiBold" Foreground="#555" Margin="12,0" VerticalAlignment="Center"/>
+                                <Grid Background="{StaticResource DialogReadOnlySurfaceBrush}" Height="32">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="90"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="호스트 IP" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}" Margin="12,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="호스트 포트" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}" Margin="12,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="2" Text="컨테이너 포트" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}" Margin="12,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="3" Text="프로토콜" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}" Margin="12,0" VerticalAlignment="Center"/>
                                 </Grid>
                                 <ListBox ItemsSource="{Binding ContainerOperations.PortItems}"
                                          BorderThickness="0" Background="Transparent"
@@ -642,21 +791,17 @@
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
                                             <Grid MinHeight="34">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="90"/>
-                                                </Grid.ColumnDefinitions>
-                                                <TextBlock Text="{Binding HostIp}" FontFamily="Consolas" Margin="12,7" TextTrimming="CharacterEllipsis" ToolTip="{Binding HostIp}"/>
-                                                <TextBlock Grid.Column="1" Text="{Binding HostPort}" FontFamily="Consolas" Margin="12,7"/>
-                                                <TextBlock Grid.Column="2" Text="{Binding ContainerPort}" FontFamily="Consolas" Margin="12,7"/>
-                                                <TextBlock Grid.Column="3" Text="{Binding Protocol}" FontFamily="Consolas" Margin="12,7"/>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="90"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                                                <TextBox Text="{Binding HostIp, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Margin="4,3" ToolTip="비우면 0.0.0.0"/>
+                                                <TextBox Grid.Column="1" Text="{Binding HostPort, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Margin="4,3" ToolTip="비우면 expose만 하고 host에 publish하지 않습니다."/>
+                                                <TextBox Grid.Column="2" Text="{Binding ContainerPort, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Margin="4,3"/>
+                                                <TextBox Grid.Column="3" Text="{Binding Protocol, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Margin="4,3" ToolTip="tcp, udp 또는 sctp"/>
+                                                <Button Grid.Column="4" Content="삭제" Command="{Binding DataContext.ContainerOperations.RemovePortCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Style="{StaticResource DialogCompactButtonStyle}" Margin="4,3" Padding="7,2"/>
                                             </Grid>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
-                                <TextBlock Text="게시된 포트가 없습니다." Foreground="#888" Margin="12" FontStyle="Italic">
+                                <TextBlock Text="게시된 포트가 없습니다." Foreground="{StaticResource DialogMutedTextBrush}" Margin="12" FontStyle="Italic">
                                     <TextBlock.Style>
                                         <Style TargetType="TextBlock">
                                             <Setter Property="Visibility" Value="Collapsed"/>
@@ -670,39 +815,53 @@
                                 </TextBlock>
                             </StackPanel>
                         </Border>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                            <Button Content="포트 추가" Command="{Binding ContainerOperations.AddPortCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,6" Margin="0,0,8,0"/>
+                            <Button Content="변경 취소" Command="{Binding ContainerOperations.ResetRecreateChangesCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,6" Margin="0,0,8,0"/>
+                            <Button Content="재생성하여 적용" Command="{Binding ContainerOperations.ApplyRecreateChangesCommand}" Style="{StaticResource DialogPrimaryButtonStyle}" Padding="12,6"/>
+                        </StackPanel>
+                        <TextBlock Text="{Binding ContainerOperations.RecreateStatus}" Foreground="{StaticResource DialogWarningTextBrush}" HorizontalAlignment="Right" Margin="0,8,0,0"/>
                     </StackPanel>
                 </ScrollViewer>
+                    </TabItem>
+                </TabControl>
             </TabItem>
 
-            <TabItem Header="🌐 Networks" FontSize="14" Padding="15,8"
+            <TabItem Header="네트워크" FontSize="14" Padding="15,8"
                      Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="15">
-                        <TextBlock Text="Connected Networks" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                        <TextBlock Text="Review current addresses here. Expand a network only when its connection settings need to change."
-                                   Foreground="#777" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                        <TextBlock Text="연결된 네트워크" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8"/>
+                        <TextBlock Text="현재 Docker 연결값을 표시합니다. 고급 설정 변경은 적용할 때만 연결을 다시 생성합니다."
+                                   Foreground="{StaticResource DialogMutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                        <Grid Margin="0,0,0,12"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <ComboBox ItemsSource="{Binding Network.AvailableNetworks}" SelectedItem="{Binding Network.SelectedNetworkToConnect, Mode=TwoWay}" MinHeight="34" ToolTip="연결 가능한 사용자/bridge 네트워크"/>
+                            <Button Grid.Column="1" Content="네트워크 연결" Command="{Binding Network.ConnectSelectedNetworkCommand}" Style="{StaticResource DialogPrimaryButtonStyle}" Margin="8,0,0,0" Padding="12,6"/>
+                        </Grid>
                         <ItemsControl ItemsSource="{Binding Network.Details}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Background="#FAFAFA" BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="4" Padding="14" Margin="0,0,0,10">
+                                    <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogDisabledSurfaceBrush}" BorderThickness="1" CornerRadius="4" Padding="14" Margin="0,0,0,10">
                                         <StackPanel>
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock Text="{Binding NetworkName}" FontWeight="Bold" FontSize="14" Foreground="#333" VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding NetworkName}" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}" VerticalAlignment="Center"/>
                                                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                                    <TextBlock Text="IPv4 " Foreground="#888"/>
-                                                    <TextBlock Text="{Binding IPv4}" FontFamily="Consolas" FontWeight="SemiBold" Foreground="#333"/>
-                                                    <TextBlock Text="   ·   IPv6 " Foreground="#AAA"/>
-                                                    <TextBlock Text="{Binding IPv6}" FontFamily="Consolas" FontWeight="SemiBold" Foreground="#333"/>
+                                                    <TextBlock Text="IPv4 " Foreground="{StaticResource DialogMutedTextBrush}"/>
+                                                    <TextBlock Text="{Binding IPv4}" FontFamily="Consolas" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}"/>
+                                                    <TextBlock Text="   ·   IPv6 " Foreground="{StaticResource DialogDisabledTextBrush}"/>
+                                                    <TextBlock Text="{Binding IPv6}" FontFamily="Consolas" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}"/>
                                                 </StackPanel>
+                                                <Button Grid.Column="2" Content="연결 해제" Command="{Binding DataContext.Network.DisconnectNetworkCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Style="{StaticResource DialogDangerButtonStyle}" Padding="9,4" Margin="12,0,0,0"/>
                                             </Grid>
 
                                             <Expander IsExpanded="{Binding IsAdvancedExpanded, Mode=TwoWay}" Margin="0,12,0,0">
                                                 <Expander.Header>
-                                                    <TextBlock Text="Advanced network settings" FontWeight="SemiBold" Foreground="#555"/>
+                                                    <StackPanel Orientation="Horizontal"><TextBlock Text="고급 네트워크 설정" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}"/><TextBlock Text="  변경됨" Foreground="{StaticResource DialogWarningBrush}"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding HasPendingChanges}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></StackPanel>
                                                 </Expander.Header>
                                                 <StackPanel Margin="0,8,0,0">
                                                     <Grid>
@@ -716,13 +875,13 @@
                                                             <RowDefinition Height="Auto"/>
                                                             <RowDefinition Height="Auto"/>
                                                         </Grid.RowDefinitions>
-                                                        <TextBlock Text="Static IPv4" Foreground="#555" Margin="0,0,10,8" VerticalAlignment="Center"/>
+                                            <TextBlock Text="고정 IPv4" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,10,8" VerticalAlignment="Center"/>
                                                         <TextBox Grid.Column="1" Text="{Binding StaticIPv4, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Padding="5,3" Margin="0,0,0,8"/>
-                                                        <TextBlock Grid.Row="1" Text="Static IPv6" Foreground="#555" Margin="0,0,10,8" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Row="1" Text="고정 IPv6" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,10,8" VerticalAlignment="Center"/>
                                                         <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding StaticIPv6, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Padding="5,3" Margin="0,0,0,8"/>
-                                                        <TextBlock Grid.Row="2" Text="Aliases" Foreground="#555" Margin="0,0,10,8" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Row="2" Text="별칭" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,10,8" VerticalAlignment="Center"/>
                                                         <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding AliasesText, UpdateSourceTrigger=PropertyChanged}" Padding="5,3" Margin="0,0,0,8"/>
-                                                        <TextBlock Grid.Row="3" Text="Endpoint options" Foreground="#555" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Row="3" Text="엔드포인트 옵션" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,10,0" VerticalAlignment="Center"/>
                                                         <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding DriverOptionsText, UpdateSourceTrigger=PropertyChanged}" Padding="5,3"/>
                                                     </Grid>
                                                     <Grid Margin="0,12,0,0">
@@ -730,8 +889,8 @@
                                                             <ColumnDefinition Width="*"/>
                                                             <ColumnDefinition Width="Auto"/>
                                                         </Grid.ColumnDefinitions>
-                                                        <TextBlock Text="Applying changes briefly reconnects this network. Confirmation is required." Foreground="#9A6700" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                                                        <Button Grid.Column="1" Content="Apply Changes" Command="{Binding ApplyCommand}" Padding="12,6" Background="#007ACC" Foreground="White" BorderThickness="0" Cursor="Hand"/>
+                                                        <TextBlock Text="적용 시 이 네트워크 연결을 잠시 끊었다 다시 연결합니다." Foreground="{StaticResource DialogWarningTextBrush}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                                        <StackPanel Grid.Column="1" Orientation="Horizontal"><Button Content="취소" Command="{Binding ResetCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,6" Margin="0,0,8,0"/><Button Content="변경 적용" Command="{Binding ApplyCommand}" Style="{StaticResource DialogPrimaryButtonStyle}" Padding="12,6"/></StackPanel>
                                                     </Grid>
                                                 </StackPanel>
                                             </Expander>
@@ -744,47 +903,56 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="💾 Volumes" FontSize="14" Padding="15,8"
+            <TabItem Header="마운트" FontSize="14" Padding="15,8"
                      Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <TabControl Background="Transparent" BorderThickness="0">
+                    <TabItem Header="이름 있는 볼륨" Padding="14,7">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="15">
-                        <TextBlock FontWeight="Bold" FontSize="14" Foreground="#007ACC" Margin="0,0,0,3">
-                            <Run Text="📦 Named Volumes  "/>
-                            <Run Text="{Binding ContainerOperations.NamedVolumeItems.Count, Mode=OneWay}"/>
-                        </TextBlock>
-                        <TextBlock Text="Docker가 관리하는 볼륨과 컨테이너 내부 연결 위치입니다." Foreground="#888" FontSize="11" Margin="0,0,0,10"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                            <Path Data="{StaticResource DialogVolumeIcon}" Width="16" Height="16" Stretch="Uniform"
+                                  Fill="{StaticResource DialogVolumeBrush}" Margin="0,0,7,0"/>
+                            <TextBlock Text="이름 있는 볼륨" FontWeight="SemiBold" FontSize="14" Foreground="{StaticResource DialogTextBrush}"/>
+                            <TextBlock Text="{Binding ContainerOperations.NamedVolumeItems.Count, StringFormat='  {0}'}"
+                                       FontWeight="SemiBold" FontSize="14" Foreground="{StaticResource DialogVolumeBrush}"/>
+                        </StackPanel>
+                        <TextBlock Text="Docker가 관리하는 볼륨과 컨테이너 내부 연결 위치입니다." Foreground="{StaticResource DialogMutedTextBrush}" FontSize="11" Margin="0,0,0,10"/>
                         <ItemsControl ItemsSource="{Binding ContainerOperations.NamedVolumeItems}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Background="#FAFAFA" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,8">
+                                    <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,8">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="28"/>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="60"/>
+                                                <ColumnDefinition Width="70"/>
+                                                <ColumnDefinition Width="70"/>
                                             </Grid.ColumnDefinitions>
                                             <StackPanel>
-                                                <TextBlock Text="Volume" Foreground="#888" FontSize="10"/>
-                                                <TextBlock Text="{Binding Source}" FontFamily="Consolas" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Source}"/>
+                                                <TextBlock Text="볼륨" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="10"/>
+                                                <TextBox Text="{Binding Source, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" FontWeight="SemiBold"/>
                                             </StackPanel>
-                                            <TextBlock Grid.Column="1" Text="→" Foreground="#888" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,1"/>
+                                            <TextBlock Grid.Column="1" Text="→" Foreground="{StaticResource DialogMutedTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,1"/>
                                             <StackPanel Grid.Column="2">
-                                                <TextBlock Text="Container path" Foreground="#888" FontSize="10"/>
-                                                <TextBlock Text="{Binding Target}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" ToolTip="{Binding Target}"/>
+                                                <TextBlock Text="컨테이너 경로" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="10"/>
+                                                <TextBox Text="{Binding Target, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
                                             </StackPanel>
-                                            <Border Grid.Column="3" Background="#E8F3FF" CornerRadius="3" Padding="6,2" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding Mode}" FontFamily="Consolas" Foreground="#0067A8"/>
-                                            </Border>
+                                            <StackPanel Grid.Column="3" Margin="4,0">
+                                                <TextBox Text="{Binding Mode, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" ToolTip="ro 또는 rw"/>
+                                                <CheckBox Content="nocopy" IsChecked="{Binding VolumeNoCopy, UpdateSourceTrigger=PropertyChanged}" FontSize="10" Margin="0,3,0,0"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="4" Content="삭제" Command="{Binding DataContext.ContainerOperations.RemoveNamedVolumeCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Style="{StaticResource DialogCompactButtonStyle}" Margin="4" Padding="7,2"/>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                        <TextBlock Text="연결된 Named Volume이 없습니다." Foreground="#888" FontStyle="Italic" Margin="12,6,0,18">
+                        <TextBlock Text="연결된 이름 있는 볼륨이 없습니다.">
                             <TextBlock.Style>
-                                <Style TargetType="TextBlock">
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource DialogEmptyStateTextStyle}">
                                     <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Setter Property="Margin" Value="12,6,0,18"/>
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding ContainerOperations.NamedVolumeItems.Count}" Value="0">
                                             <Setter Property="Visibility" Value="Visible"/>
@@ -794,44 +962,65 @@
                             </TextBlock.Style>
                         </TextBlock>
 
-                        <Separator Margin="0,10,0,16"/>
-                        <TextBlock FontWeight="Bold" FontSize="14" Foreground="#E67E22" Margin="0,0,0,3">
-                            <Run Text="🔗 Bind Mounts  "/>
-                            <Run Text="{Binding ContainerOperations.BindMountItems.Count, Mode=OneWay}"/>
-                        </TextBlock>
-                        <TextBlock Text="호스트 경로와 컨테이너 내부 연결 위치입니다." Foreground="#888" FontSize="11" Margin="0,0,0,10"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                            <Button Content="볼륨 추가" Command="{Binding ContainerOperations.AddNamedVolumeCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,6" Margin="0,0,8,0"/>
+                            <Button Content="변경 취소" Command="{Binding ContainerOperations.ResetRecreateChangesCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,6" Margin="0,0,8,0"/>
+                            <Button Content="재생성하여 적용" Command="{Binding ContainerOperations.ApplyRecreateChangesCommand}" Style="{StaticResource DialogPrimaryButtonStyle}" Padding="12,6"/>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+                    </TabItem>
+                    <TabItem Header="바인드 마운트" Padding="14,7">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="15">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                            <Path Data="{StaticResource DialogLinkIcon}" Width="16" Height="16" Stretch="Uniform"
+                                  Fill="{StaticResource DialogVolumeBrush}" Margin="0,0,7,0"/>
+                            <TextBlock Text="바인드 마운트" FontWeight="SemiBold" FontSize="14" Foreground="{StaticResource DialogTextBrush}"/>
+                            <TextBlock Text="{Binding ContainerOperations.BindMountItems.Count, StringFormat='  {0}'}"
+                                       FontWeight="SemiBold" FontSize="14" Foreground="{StaticResource DialogVolumeBrush}"/>
+                        </StackPanel>
+                        <TextBlock Text="호스트 경로와 컨테이너 내부 연결 위치입니다." Foreground="{StaticResource DialogMutedTextBrush}" FontSize="11" Margin="0,0,0,10"/>
                         <ItemsControl ItemsSource="{Binding ContainerOperations.BindMountItems}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Background="#FAFAFA" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,8">
+                                    <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,8">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="28"/>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="60"/>
+                                                <ColumnDefinition Width="70"/>
+                                                <ColumnDefinition Width="70"/>
                                             </Grid.ColumnDefinitions>
                                             <StackPanel>
-                                                <TextBlock Text="Host path" Foreground="#888" FontSize="10"/>
-                                                <TextBlock Text="{Binding Source}" FontFamily="Consolas" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Source}"/>
+                                                <TextBlock Text="호스트 경로" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="10"/>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                    <TextBox Text="{Binding Source, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" FontWeight="SemiBold"/>
+                                                    <Button Grid.Column="1" Content="찾기" Command="{Binding DataContext.ContainerOperations.BrowseBindMountCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Style="{StaticResource DialogCompactButtonStyle}" Margin="5,0,0,0" Padding="7,2"/>
+                                                </Grid>
                                             </StackPanel>
-                                            <TextBlock Grid.Column="1" Text="→" Foreground="#888" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,1"/>
+                                            <TextBlock Grid.Column="1" Text="→" Foreground="{StaticResource DialogMutedTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,1"/>
                                             <StackPanel Grid.Column="2">
-                                                <TextBlock Text="Container path" Foreground="#888" FontSize="10"/>
-                                                <TextBlock Text="{Binding Target}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" ToolTip="{Binding Target}"/>
+                                                <TextBlock Text="컨테이너 경로" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="10"/>
+                                                <TextBox Text="{Binding Target, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
                                             </StackPanel>
-                                            <Border Grid.Column="3" Background="#FFF1E5" CornerRadius="3" Padding="6,2" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding Mode}" FontFamily="Consolas" Foreground="#B45309"/>
-                                            </Border>
+                                            <StackPanel Grid.Column="3" Margin="4,0">
+                                                <TextBox Text="{Binding Mode, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" ToolTip="ro 또는 rw"/>
+                                                    <TextBox Text="{Binding BindPropagation, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" FontSize="10" Margin="0,3,0,0" ToolTip="바인드 전파"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="4" Content="삭제" Command="{Binding DataContext.ContainerOperations.RemoveBindMountCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Style="{StaticResource DialogCompactButtonStyle}" Margin="4" Padding="7,2"/>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                        <TextBlock Text="연결된 Bind Mount가 없습니다." Foreground="#888" FontStyle="Italic" Margin="12,6,0,0">
+                        <TextBlock Text="연결된 바인드 마운트가 없습니다.">
                             <TextBlock.Style>
-                                <Style TargetType="TextBlock">
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource DialogEmptyStateTextStyle}">
                                     <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Setter Property="Margin" Value="12,6,0,0"/>
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding ContainerOperations.BindMountItems.Count}" Value="0">
                                             <Setter Property="Visibility" Value="Visible"/>
@@ -840,76 +1029,127 @@
                                 </Style>
                             </TextBlock.Style>
                         </TextBlock>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                            <Button Content="바인드 마운트 추가" Command="{Binding ContainerOperations.AddBindMountCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,6" Margin="0,0,8,0"/>
+                            <Button Content="변경 취소" Command="{Binding ContainerOperations.ResetRecreateChangesCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,6" Margin="0,0,8,0"/>
+                            <Button Content="재생성하여 적용" Command="{Binding ContainerOperations.ApplyRecreateChangesCommand}" Style="{StaticResource DialogPrimaryButtonStyle}" Padding="12,6"/>
+                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
-            </TabItem>
-
-            <TabItem Header="📁 File Transfer" FontSize="14" Padding="15,8"
-                     Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Margin="15">
-                        <TextBlock Text="컨테이너와 이 PC 사이에서 파일 또는 폴더를 복사합니다." Foreground="#777" Margin="0,0,0,12"/>
-                        <Border Background="White" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="5" Padding="16" MaxWidth="900" HorizontalAlignment="Stretch">
-                            <StackPanel>
-                                <TextBlock Text="Host Path (내 PC 경로)" FontWeight="Bold" Foreground="#555" Margin="0,0,0,5"/>
-                                <Grid Margin="0,0,0,14">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBox Text="{Binding HostFilePath, UpdateSourceTrigger=PropertyChanged}" Padding="7,5" ToolTip="업로드할 파일/폴더 또는 다운로드할 대상 폴더"/>
-                                    <Button Grid.Column="1" Command="{Binding ContainerOperations.BrowseHostFileCommand}" Content="File…" Padding="12,5" Margin="6,0,0,0" Background="#F1F3F5" BorderBrush="#C8CDD2" Cursor="Hand"/>
-                                    <Button Grid.Column="2" Command="{Binding ContainerOperations.BrowseHostFolderCommand}" Content="Folder…" Padding="12,5" Margin="6,0,0,0" Background="#F1F3F5" BorderBrush="#C8CDD2" Cursor="Hand"/>
-                                </Grid>
-
-                                <TextBlock Text="Container Path (컨테이너 내부 경로)" FontWeight="Bold" Foreground="#555" Margin="0,0,0,5"/>
-                                <TextBox Text="{Binding ContainerFilePath, UpdateSourceTrigger=PropertyChanged}" Padding="7,5" Margin="0,0,0,12" ToolTip="예: /var/lib/mysql 또는 /app/data"/>
-
-                                <Border Background="#F5F7F9" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="3" Padding="10,7" Margin="0,0,0,14">
-                                    <TextBlock Text="{Binding ContainerOperations.TransferStatus}" Foreground="#555" TextWrapping="Wrap"/>
-                                </Border>
-
-                                <UniformGrid Columns="2">
-                                    <Button Command="{Binding CopyToContainerCommand}" Content="⬆ Copy To Container (업로드)" Background="#28A745" Foreground="White" BorderThickness="0" Padding="10" Margin="0,0,5,0" Cursor="Hand" FontWeight="Bold"/>
-                                    <Button Command="{Binding CopyFromContainerCommand}" Content="⬇ Copy From Container (다운로드)" Background="#007ACC" Foreground="White" BorderThickness="0" Padding="10" Margin="5,0,0,0" Cursor="Hand" FontWeight="Bold"/>
-                                </UniformGrid>
+                    </TabItem>
+                    <TabItem Header="tmpfs" Padding="14,7">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel Margin="15">
+                                <TextBlock Text="메모리 기반 임시 마운트입니다. 변경사항은 안전한 컨테이너 재생성으로 적용됩니다." Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
+                                <ItemsControl ItemsSource="{Binding ContainerOperations.TmpfsMountItems}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,8">
+                                                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="110"/><ColumnDefinition Width="90"/><ColumnDefinition Width="70"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                                                    <StackPanel><TextBlock Text="컨테이너 경로" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="10"/><TextBox Text="{Binding Target, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/></StackPanel>
+                                                    <StackPanel Grid.Column="1" Margin="5,0"><TextBlock Text="크기(bytes)" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="10"/><TextBox Text="{Binding TmpfsSizeBytes, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/></StackPanel>
+                                                <StackPanel Grid.Column="2" Margin="5,0"><TextBlock Text="모드(8진수)" Foreground="{StaticResource DialogMutedTextBrush}" FontSize="10"/><TextBox Text="{Binding TmpfsMode, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/></StackPanel>
+                                                    <TextBox Grid.Column="3" Text="{Binding Mode, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Margin="4" ToolTip="ro 또는 rw"/>
+                                                    <Button Grid.Column="4" Content="삭제" Command="{Binding DataContext.ContainerOperations.RemoveTmpfsMountCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" Style="{StaticResource DialogCompactButtonStyle}" Margin="4" Padding="7,2"/>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="연결된 tmpfs 마운트가 없습니다.">
+                                    <TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource DialogEmptyStateTextStyle}"><Setter Property="Visibility" Value="Collapsed"/><Setter Property="Margin" Value="12,6,0,0"/><Style.Triggers><DataTrigger Binding="{Binding ContainerOperations.TmpfsMountItems.Count}" Value="0"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                </TextBlock>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                                    <Button Content="tmpfs 추가" Command="{Binding ContainerOperations.AddTmpfsMountCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,6" Margin="0,0,8,0"/>
+                                    <Button Content="변경 취소" Command="{Binding ContainerOperations.ResetRecreateChangesCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,6" Margin="0,0,8,0"/>
+                                    <Button Content="재생성하여 적용" Command="{Binding ContainerOperations.ApplyRecreateChangesCommand}" Style="{StaticResource DialogPrimaryButtonStyle}" Padding="12,6"/>
+                                </StackPanel>
                             </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
+                        </ScrollViewer>
+                    </TabItem>
+                </TabControl>
             </TabItem>
 
-            <TabItem Header="⚡ Actions" FontSize="14" Padding="15,8"
+            <TabItem Header="파일 전송" FontSize="14" Padding="15,8"
+                     Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <TabControl Background="Transparent" BorderThickness="0">
+                        <TabItem Header="업로드" Padding="14,7">
+                            <StackPanel Margin="18">
+                                <TextBlock Text="PC의 파일 또는 폴더를 컨테이너로 복사합니다." Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,0,12"/>
+                                <TextBlock Text="PC 원본 경로" FontWeight="Bold" Margin="0,0,0,5"/>
+                                <Grid Margin="0,0,0,14"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding ContainerOperations.UploadHostPath, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <Button Grid.Column="1" Content="파일 선택" Command="{Binding ContainerOperations.BrowseUploadFileCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Margin="6,0,0,0"/>
+                                    <Button Grid.Column="2" Content="폴더 선택" Command="{Binding ContainerOperations.BrowseUploadFolderCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Margin="6,0,0,0"/>
+                                </Grid>
+                                <TextBlock Text="컨테이너 대상 경로" FontWeight="Bold" Margin="0,0,0,5"/>
+                                <TextBox Text="{Binding ContainerOperations.UploadContainerPath, UpdateSourceTrigger=PropertyChanged}" ToolTip="예: /app/data" Margin="0,0,0,14"/>
+                                <Button Content="컨테이너로 업로드" Command="{Binding ContainerOperations.DetailUploadCommand}" Style="{StaticResource DialogSuccessButtonStyle}" Padding="12,8" HorizontalAlignment="Right"/>
+                            </StackPanel>
+                        </TabItem>
+                        <TabItem Header="다운로드" Padding="14,7">
+                            <StackPanel Margin="18">
+                                <TextBlock Text="컨테이너의 파일 또는 폴더를 PC 폴더로 복사합니다." Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,0,12"/>
+                                <TextBlock Text="컨테이너 원본 경로" FontWeight="Bold" Margin="0,0,0,5"/>
+                                <TextBox Text="{Binding ContainerOperations.DownloadContainerPath, UpdateSourceTrigger=PropertyChanged}" ToolTip="예: /app/data" Margin="0,0,0,14"/>
+                                <TextBlock Text="PC 대상 폴더" FontWeight="Bold" Margin="0,0,0,5"/>
+                                <Grid Margin="0,0,0,14"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding ContainerOperations.DownloadHostFolder, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <Button Grid.Column="1" Content="폴더 선택" Command="{Binding ContainerOperations.BrowseDownloadFolderCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Margin="6,0,0,0"/>
+                                </Grid>
+                                <TextBlock Text="대상 폴더가 비어 있지 않으면 덮어쓰기 전에 확인합니다." Foreground="{StaticResource DialogWarningTextBrush}" Margin="0,0,0,10"/>
+                                <Button Content="PC로 다운로드" Command="{Binding ContainerOperations.DetailDownloadCommand}" Style="{StaticResource DialogPrimaryButtonStyle}" Padding="12,8" HorizontalAlignment="Right"/>
+                            </StackPanel>
+                        </TabItem>
+                    </TabControl>
+                    <Border Grid.Row="1" Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" Padding="12" Margin="15,0,15,15">
+                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="{Binding ContainerOperations.TransferStatus}" TextWrapping="Wrap"/><ProgressBar Height="4" Margin="0,7,12,0" IsIndeterminate="True"><ProgressBar.Style><Style TargetType="ProgressBar"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding ContainerOperations.IsTransferBusy}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></ProgressBar.Style></ProgressBar></StackPanel>
+                            <Button Grid.Column="1" Content="취소" Command="{Binding ContainerOperations.CancelTransferCommand}" Style="{StaticResource DialogSecondaryButtonStyle}"/>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="작업" FontSize="14" Padding="15,8"
                      Visibility="{Binding IsDockerRuntimeContainer, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="15">
-                        <TextBlock Text="Container Actions" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,0,0,8"/>
-                        <TextBlock Text="이 컨테이너에 직접 적용되는 작업입니다." Foreground="#777" Margin="0,0,0,14"/>
+                        <TextBlock Text="일반 작업" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8"/>
+                        <TextBlock Text="컨테이너 데이터나 실행 상태를 직접 변경할 수 있습니다." Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,0,14"/>
 
-                        <Border Background="White" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="5" Padding="16" Margin="0,0,0,14">
-                            <UniformGrid Columns="2">
-                                <Button Content="Aa  이름 변경" Command="{Binding RenameContainerCommand}" Padding="12,10" Margin="0,0,6,8" Background="#F1F3F5" BorderBrush="#C8CDD2" Cursor="Hand" FontWeight="SemiBold"/>
-                                <Button Content="&gt;_  명령 실행" Command="{Binding ExecContainerCommand}" Padding="12,10" Margin="6,0,0,8" Background="#007ACC" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
-                                <Button Content="⬆  이미지로 저장" Command="{Binding CommitContainerCommand}" Padding="12,10" Margin="0,0,6,0" Background="#28A745" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
-                                <Button Content="!  강제 종료" Command="{Binding KillContainerCommand}" Padding="12,10" Margin="6,0,0,0" Background="#DC3545" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold"/>
+                        <Border Background="{StaticResource DialogSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="5" Padding="16" Margin="0,0,0,14">
+                            <UniformGrid Columns="3">
+                                <Button Content="이름 변경" Command="{Binding RenameContainerCommand}" Style="{StaticResource DialogSecondaryButtonStyle}" Padding="12,10" Margin="0,0,6,0"/>
+                                <Button Content="명령 실행" Command="{Binding ExecContainerCommand}" Style="{StaticResource DialogPrimaryButtonStyle}" Padding="12,10" Margin="6,0"/>
+                                <Button Command="{Binding CommitContainerCommand}" Style="{StaticResource DialogSuccessButtonStyle}" Padding="12,10" Margin="6,0,0,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Path Data="{StaticResource DialogSaveIcon}" Width="15" Height="15" Fill="White" Stretch="Uniform" Margin="0,0,7,0"/>
+                                        <TextBlock Text="이미지로 저장"/>
+                                    </StackPanel>
+                                </Button>
                             </UniformGrid>
                         </Border>
 
-                        <TextBlock Text="Advanced / Debug" FontWeight="Bold" FontSize="14" Foreground="#555" Margin="0,8,0,8"/>
-                        <Border Background="#FAFAFA" BorderBrush="#E1E4E8" BorderThickness="1" CornerRadius="5" Padding="16">
-                            <Button Content="{}  Docker 원본 JSON 보기" Command="{Binding ViewRawInspectCommand}" Padding="12,9" Background="#F1F3F5" BorderBrush="#C8CDD2" Cursor="Hand" HorizontalAlignment="Left"/>
+                        <TextBlock Text="위험 작업" FontWeight="Bold" FontSize="14" Foreground="{StaticResource DialogDangerBrush}" Margin="0,8,0,8"/>
+                        <Border Background="{StaticResource DialogWarningSurfaceBrush}" BorderBrush="{StaticResource DialogWarningBorderBrush}" BorderThickness="1" CornerRadius="5" Padding="16">
+                            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="SIGKILL은 정상 종료 절차를 건너뜁니다. 중지가 실패한 경우에만 사용하세요." Foreground="{StaticResource DialogWarningTextBrush}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                                <Button Grid.Column="1" Content="강제 종료" Command="{Binding KillContainerCommand}" Style="{StaticResource DialogDangerButtonStyle}" Padding="16,9"/>
+                            </Grid>
                         </Border>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
-            <TabItem Header="📄 Logs" FontSize="14" Padding="15,8">
-                <Grid Background="#1E1E1E">
+            <TabItem Header="로그" FontSize="14" Padding="15,8">
+                <Grid Background="{StaticResource DialogCodeBackgroundBrush}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <Border Grid.Row="0" Background="#2D2D2D" Padding="10,5">
+                    <Border Grid.Row="0" Background="{StaticResource DialogCodeToolbarBrush}" Padding="10,5">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
@@ -918,20 +1158,28 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="🔍 Find:" Foreground="#CCC" VerticalAlignment="Center" Margin="0,0,5,0" FontWeight="Bold"/>
-                                <TextBox x:Name="txtLogSearch" Width="150" Padding="3,2" Background="#444" Foreground="White" BorderThickness="1" BorderBrush="#555" VerticalContentAlignment="Center" 
-                                         TextChanged="TxtLogSearch_TextChanged" ToolTip="검색어가 포함된 로그만 표시하고 일치 부분을 강조합니다."/>
+                                <Path Data="{StaticResource DialogSearchIcon}" Width="14" Height="14" Fill="{StaticResource DialogCodeTextBrush}"
+                                      Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                <TextBlock Text="검색" Foreground="{StaticResource DialogCodeTextBrush}" VerticalAlignment="Center" Margin="0,0,7,0" FontWeight="SemiBold"/>
+                                <TextBox x:Name="txtLogSearch" Width="150" Padding="3,2" Background="{StaticResource DialogCodeToolbarBrush}"
+                                         Foreground="{StaticResource DialogCodeTextBrush}" BorderThickness="1" BorderBrush="{StaticResource DialogStrongBorderBrush}" VerticalContentAlignment="Center"
+                                         TextChanged="TxtLogSearch_TextChanged" ToolTip="검색어가 포함된 로그만 표시합니다."/>
                             </StackPanel>
 
                             <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
-                                <Button Content="📋 Copy" Click="CopyVisibleLogs_Click" Background="#444" Foreground="White" BorderThickness="0" Padding="10,5" Margin="0,0,5,0" Cursor="Hand" ToolTip="현재 화면에 표시된 로그를 복사합니다."/>
-                                <Button Command="{Binding ExportLogsCommand}" Content="💾 Export" Background="#444" Foreground="White" BorderThickness="0" Padding="10,5" Margin="0,0,10,0" Cursor="Hand"/>
+                                <TextBlock x:Name="txtLogStreamStatus" Text="연결 준비" Foreground="{StaticResource DialogCodeTextBrush}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                <CheckBox x:Name="chkAutoScroll" Content="자동 스크롤" IsChecked="True" Foreground="{StaticResource DialogCodeTextBrush}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <Button x:Name="btnLogPause" Content="일시정지" Click="ToggleLogPause_Click" Style="{StaticResource DialogCompactButtonStyle}" Padding="10,5" Margin="0,0,5,0"/>
+                                <Button Content="복사" Click="CopyVisibleLogs_Click" Style="{StaticResource DialogCompactButtonStyle}"
+                                        Padding="10,5" Margin="0,0,5,0" ToolTip="현재 화면에 표시된 로그를 복사합니다."/>
+                                <Button Command="{Binding ExportLogsCommand}" Content="전체 저장" Style="{StaticResource DialogCompactButtonStyle}"
+                                        Padding="10,5" Margin="0,0,10,0"/>
                             </StackPanel>
                         </Grid>
                     </Border>
 
                     <ListBox x:Name="lstLogs" Grid.Row="1"
-                             Background="Transparent" Foreground="#D4D4D4" BorderThickness="0" Padding="10"
+                             Background="Transparent" Foreground="{StaticResource DialogCodeTextBrush}" BorderThickness="0" Padding="10"
                              FontFamily="Consolas" FontSize="12" Focusable="False"
                              ScrollViewer.VerticalScrollBarVisibility="Auto"
                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
@@ -959,17 +1207,26 @@
                         </ListBox.ItemContainerStyle>
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" Foreground="#D4D4D4" Margin="0,1" TextWrapping="NoWrap"/>
+                                <TextBlock Text="{Binding}" Foreground="{StaticResource DialogCodeTextBrush}" Margin="0,1" TextWrapping="NoWrap"/>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
+                    <TextBlock Grid.Row="1" Text="출력된 로그가 없습니다." Foreground="{StaticResource DialogMutedTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" FontStyle="Italic" IsHitTestVisible="False">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasItems, ElementName=lstLogs}" Value="False">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </Grid>
             </TabItem>
 
         </TabControl>
 
-        <Border Grid.Row="2" Background="White" BorderBrush="#E0E0E0" BorderThickness="0,1,0,0" Padding="15">
-            <Button Content="Close" Width="100" Height="35" HorizontalAlignment="Right" Background="#DDD" BorderThickness="0" Cursor="Hand" Click="Close_Click"/>
-        </Border>
     </Grid>
 </Window>

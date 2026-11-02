@@ -1,13 +1,14 @@
-using DockerDiagram.Diagram;
-using DockerDiagram.Contracts;
-using Docker.DotNet.Models;
-using DockerDiagram.Models;
-using DockerDiagram.ViewModels;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Docker.DotNet.Models;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
+using DockerDiagram.Models;
+using DockerDiagram.ViewModels;
 
 namespace DockerDiagram.ApplicationServices
 {
@@ -138,7 +139,7 @@ namespace DockerDiagram.ApplicationServices
                 {
                     ContainerInspectResponse inspect = await _dockerService
                         .InspectContainerAsync(entry.Resource.Id)
-                        .WaitAsync(TimeSpan.FromSeconds(20));
+                        .WaitAsync(ContainerCreationTiming.ComposePlacementInspectTimeout);
                     return (Entry: entry, Inspect: inspect, Error: (Exception?)null);
                 }
                 catch (Exception ex)
@@ -189,9 +190,13 @@ namespace DockerDiagram.ApplicationServices
                 }
 
                 if (inspect.Mounts == null) continue;
-                foreach (var mount in inspect.Mounts.Where(mount => string.Equals(mount.Type, "volume", StringComparison.OrdinalIgnoreCase)))
+                List<ContainerMountSpec> inspectedMounts = ContainerMountMapper.FromInspect(
+                    inspect.Mounts,
+                    inspect.HostConfig?.Mounts);
+                sheet.SynchronizeContainerMounts(entry.Node, inspectedMounts);
+                foreach (ContainerMountSpec mount in inspectedMounts.Where(mount => mount.Kind == MountKind.Volume))
                 {
-                    string volumeName = mount.Name ?? string.Empty;
+                    string volumeName = mount.Source;
                     if (string.IsNullOrWhiteSpace(volumeName)) continue;
 
                     if (!volumeNodes.TryGetValue(volumeName, out NodeViewModel? volumeNode))
@@ -206,21 +211,43 @@ namespace DockerDiagram.ApplicationServices
                         volumeNodes[volumeName] = volumeNode;
                     }
 
-                    sheet.TryAddDirectedConnection(
-                        entry.Node,
-                        volumeNode,
-                        RelationType.VolumeMount,
-                        mountPath: mount.Destination ?? string.Empty,
-                        allowSelfConnection: true);
                 }
             }
+            var projectContainerSet = new HashSet<NodeViewModel>(
+                layoutNodes.Values,
+                ReferenceEqualityComparer.Instance);
+            List<NodeViewModel> hostPathNodes = sheet.Nodes
+                .Where(node => node.Type == NodeType.HostPath)
+                .Where(hostPath => sheet.Connectors.Any(connector =>
+                {
+                    if (connector.RelationType != RelationType.VolumeMount)
+                        return false;
+                    NodeViewModel? owner = ReferenceEquals(connector.Source, hostPath)
+                        ? connector.Target as NodeViewModel
+                        : ReferenceEquals(connector.Target, hostPath)
+                            ? connector.Source as NodeViewModel
+                            : null;
+                    return owner != null && projectContainerSet.Contains(owner);
+                }))
+                .Distinct<NodeViewModel>(ReferenceEqualityComparer.Instance)
+                .ToList();
+            foreach (NodeViewModel hostPath in hostPathNodes)
+            {
+                hostPath.ComposeProjectName = project.Name;
+                hostPath.ComposeProjectIdentity = projectIdentity;
+                hostPath.ComposeLayoutInstanceId = layoutInstanceId;
+            }
+            List<NodeViewModel> storageNodes = volumeNodes.Values
+                .Concat(hostPathNodes)
+                .Distinct<NodeViewModel>(ReferenceEqualityComparer.Instance)
+                .ToList();
             ComposeDiagramLayoutService.Arrange(
                 sheet,
                 layoutNodes,
                 dependencyMap,
                 originX,
                 originY,
-                volumeNodes.Values.ToList(),
+                storageNodes,
                 networkGroups.Values.ToList());
 
             return new ComposeProjectPlacementResult
@@ -229,7 +256,7 @@ namespace DockerDiagram.ApplicationServices
                 VolumeCount = volumeNodes.Count,
                 NetworkCount = networkGroups.Count,
                 Nodes = layoutNodes.Values
-                    .Concat(volumeNodes.Values)
+                    .Concat(storageNodes)
                     .Distinct<NodeViewModel>(ReferenceEqualityComparer.Instance)
                     .ToList(),
                 Groups = networkGroups.Values
@@ -239,7 +266,7 @@ namespace DockerDiagram.ApplicationServices
             };
         }
 
-        private NodeViewModel CreateVolumeNode(
+        private static NodeViewModel CreateVolumeNode(
             SheetViewModel sheet,
             string volumeName,
             string volumeId,
@@ -276,13 +303,13 @@ namespace DockerDiagram.ApplicationServices
 
         private static string CreateLayoutKey(
             DockerContainer container,
-            IReadOnlyDictionary<string, NodeViewModel> existing)
+            Dictionary<string, NodeViewModel> existing)
         {
             string service = string.IsNullOrWhiteSpace(container.ComposeServiceName)
                 ? container.Name
                 : container.ComposeServiceName;
             string suffix = container.ComposeContainerNumber > 0
-                ? container.ComposeContainerNumber.ToString()
+                ? container.ComposeContainerNumber.ToString(System.Globalization.CultureInfo.InvariantCulture)
                 : container.Id[..Math.Min(12, container.Id.Length)];
             string key = $"{service}#{suffix}";
             int duplicate = 2;
@@ -290,7 +317,7 @@ namespace DockerDiagram.ApplicationServices
             return key;
         }
 
-        private static IReadOnlyList<string> ParseDependsOn(IReadOnlyDictionary<string, string> labels)
+        private static IReadOnlyList<string> ParseDependsOn(Dictionary<string, string> labels)
         {
             if (!labels.TryGetValue("com.docker.compose.depends_on", out string? value) ||
                 string.IsNullOrWhiteSpace(value))
@@ -312,8 +339,6 @@ namespace DockerDiagram.ApplicationServices
         }
 
         private static bool IsBuiltInNetwork(string networkName) =>
-            string.Equals(networkName, "bridge", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(networkName, "host", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(networkName, "none", StringComparison.OrdinalIgnoreCase);
+            DockerNetworkSafety.IsBuiltInContainerNetwork(networkName);
     }
 }

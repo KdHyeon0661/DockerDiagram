@@ -9,15 +9,16 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using DockerDiagram.Common;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.Infrastructure
 {
-    internal static class RegistryImageMetadataReader
+    internal static partial class RegistryImageMetadataReader
     {
         private static readonly HttpClient HttpClient = new()
         {
-            Timeout = TimeSpan.FromSeconds(15)
+            Timeout = DockerConnectionTiming.RegistryMetadataTimeout
         };
 
         private const string ManifestAccept =
@@ -188,7 +189,7 @@ namespace DockerDiagram.Infrastructure
             if (!challenge.StartsWith("Bearer", StringComparison.OrdinalIgnoreCase))
                 return null;
 
-            var parameters = Regex.Matches(challenge, @"(\w+)=""([^""]*)""")
+            var parameters = MyRegex().Matches(challenge)
                 .ToDictionary(
                     match => match.Groups[1].Value,
                     match => match.Groups[2].Value,
@@ -355,5 +356,8 @@ namespace DockerDiagram.Infrastructure
             string Repository,
             string Tag,
             Uri BaseUri);
+
+        [GeneratedRegex(@"(\w+)=""([^""]*)""")]
+        private static partial Regex MyRegex();
     }
 }

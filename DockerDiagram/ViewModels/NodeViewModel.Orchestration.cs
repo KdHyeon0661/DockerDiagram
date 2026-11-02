@@ -1,13 +1,13 @@
-using DockerDiagram.Contracts;
-using DockerDiagram.Common;
-using DockerDiagram.Diagram;
-using DockerDiagram.Models;
-using Newtonsoft.Json.Linq;
 using System;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
+using DockerDiagram.Models;
+using Newtonsoft.Json.Linq;
 
 namespace DockerDiagram.ViewModels
 {
@@ -35,8 +35,10 @@ namespace DockerDiagram.ViewModels
 
                 if (match == null)
                 {
-                    IsDockerConnected = false;
-                    StatusColor = "#808080";
+                    ApplyRuntimeState(
+                        RuntimeConnectionState.Disconnected,
+                        RuntimeLifecycleState.Unknown);
+                    StatusColor = StatusColors.Unknown;
                     SwarmServiceInspectJson = "Swarm service not found.";
                     SwarmTasks.Clear();
                     SwarmTaskPlacements.Clear();
@@ -55,10 +57,11 @@ namespace DockerDiagram.ViewModels
                 SwarmRunningReplicas = match.SwarmRunningReplicas;
                 TargetSwarmReplicas = SwarmDesiredReplicas;
                 DetailStatus = PortInfo;
+                ApplyRuntimeState(
+                    RuntimeConnectionState.Connected,
+                    RuntimeLifecycleState.Running,
+                    PortInfo);
                 StatusColor = match.StateColor;
-                IsDockerConnected = true;
-                IsRunning = true;
-                IsPaused = false;
 
                 Task<object> inspectTask = swarmService.InspectSwarmServiceRawAsync(ContainerId);
                 Task<SwarmServiceTaskSnapshot> taskSnapshotTask =
@@ -180,8 +183,10 @@ namespace DockerDiagram.ViewModels
 
                 if (match == null)
                 {
-                    IsDockerConnected = false;
-                    StatusColor = "#808080";
+                    ApplyRuntimeState(
+                        RuntimeConnectionState.Disconnected,
+                        RuntimeLifecycleState.Unknown);
+                    StatusColor = StatusColors.Unknown;
                     KubernetesPodDescribeText = "Kubernetes Pod not found.";
                     KubernetesPodYamlText = "Kubernetes Pod not found.";
                     KubernetesPodJsonText = "Kubernetes Pod not found.";
@@ -201,9 +206,13 @@ namespace DockerDiagram.ViewModels
                 KubernetesReady = match.KubernetesReady;
                 KubernetesRestarts = match.KubernetesRestarts;
                 KubernetesPodIp = match.KubernetesPodIp;
-                IsDockerConnected = true;
-                IsRunning = match.State.Equals("Running", StringComparison.OrdinalIgnoreCase);
-                IsPaused = false;
+                ApplyRuntimeState(
+                    RuntimeConnectionState.Connected,
+                    match.State.Equals("Running", StringComparison.OrdinalIgnoreCase)
+                        ? RuntimeLifecycleState.Running
+                        : RuntimeLifecycleState.Stopped,
+                    match.State);
+                StatusColor = match.StateColor;
 
                 object raw = await kubernetesService.InspectKubernetesPodRawAsync(KubernetesNamespace, KubernetesPodName);
                 KubernetesPodJsonText = raw.ToString() ?? string.Empty;
@@ -262,7 +271,7 @@ namespace DockerDiagram.ViewModels
                     KubernetesNamespace,
                     KubernetesResourceName);
                 UpdateKubernetesReplicaStateFromJson();
-                IsDockerConnected = true;
+                SetDockerConnection(true);
                 RaiseKubernetesCommandStates();
             }
             catch (Exception ex)
@@ -480,9 +489,13 @@ namespace DockerDiagram.ViewModels
                 TargetKubernetesReplicas = KubernetesDesiredReplicas;
                 OnPropertyChanged(nameof(KubernetesReplicaSummary));
             }
-            catch
+            catch (Exception ex)
             {
                 // 저장된 스냅샷의 JSON이 비어 있거나 오래된 형식이어도 상세 창은 계속 열려야 합니다.
+                AppLog.WarningThrottled(
+                    $"kubernetes-snapshot-replicas:{Id}",
+                    "저장된 Kubernetes 스냅샷에서 replica 상태를 읽지 못했습니다.",
+                    ex);
             }
         }
 
@@ -505,8 +518,12 @@ namespace DockerDiagram.ViewModels
                 int resolvedLocal = resolvedRemote is 80 or 443 ? 8080 : resolvedRemote;
                 return (resolvedLocal, resolvedRemote);
             }
-            catch
+            catch (Exception ex)
             {
+                AppLog.WarningThrottled(
+                    $"kubernetes-snapshot-ports:{Id}",
+                    "저장된 Kubernetes 스냅샷에서 포트 정보를 읽지 못했습니다.",
+                    ex);
                 return (fallbackLocal, fallbackRemote);
             }
         }

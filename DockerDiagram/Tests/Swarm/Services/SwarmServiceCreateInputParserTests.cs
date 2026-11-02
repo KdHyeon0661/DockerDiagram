@@ -5,8 +5,13 @@ namespace DockerDiagram.Tests;
 
 public sealed class SwarmServiceCreateInputParserTests
 {
+
+    private static readonly string[] ParseFullReplicatedFormMapsEverySectionExpectedValues1 = new[] { "/app/start" };
+    private static readonly string[] ParseFullReplicatedFormMapsEverySectionExpectedValues2 = new[] { "--listen", "8080" };
+    private static readonly string[] ParseFullReplicatedFormMapsEverySectionExpectedValues3 = new[] { "web", "public" };
+
     [Fact]
-    public void Parse_FullReplicatedForm_MapsEverySection()
+    public void ParseFullReplicatedFormMapsEverySection()
     {
         SwarmServiceCreateOptions result = SwarmServiceCreateInputParser.Parse(new SwarmServiceCreateFormInput
         {
@@ -41,12 +46,12 @@ public sealed class SwarmServiceCreateInputParserTests
 
         Assert.Equal("web-api", result.Spec.Name);
         Assert.Equal(3UL, result.Spec.Replicas);
-        Assert.Equal(new[] { "/app/start" }, result.Spec.Command);
-        Assert.Equal(new[] { "--listen", "8080" }, result.Spec.Arguments);
+        Assert.Equal(ParseFullReplicatedFormMapsEverySectionExpectedValues1, result.Spec.Command);
+        Assert.Equal(ParseFullReplicatedFormMapsEverySectionExpectedValues2, result.Spec.Arguments);
         Assert.Equal("platform", result.Spec.Labels["team"]);
         Assert.Equal(SwarmPortProtocol.Udp, result.Spec.PublishedPorts[1].Protocol);
         Assert.Equal(SwarmPublishMode.Host, result.Spec.PublishedPorts[1].PublishMode);
-        Assert.Equal(new[] { "web", "public" }, result.Spec.Networks[0].Aliases);
+        Assert.Equal(ParseFullReplicatedFormMapsEverySectionExpectedValues3, result.Spec.Networks[0].Aliases);
         Assert.True(result.Spec.Mounts[1].ReadOnly);
         Assert.Equal(TimeSpan.FromSeconds(2.5), result.Spec.RestartPolicy.Delay);
         Assert.Equal(SwarmUpdateFailureAction.Rollback, result.Spec.UpdatePolicy.FailureAction);
@@ -54,7 +59,7 @@ public sealed class SwarmServiceCreateInputParserTests
     }
 
     [Fact]
-    public void Parse_GlobalMode_DiscardsReplicaInput()
+    public void ParseGlobalModeDiscardsReplicaInput()
     {
         SwarmServiceCreateOptions result = SwarmServiceCreateInputParser.Parse(ValidInput(mode: "global"));
 
@@ -67,25 +72,25 @@ public sealed class SwarmServiceCreateInputParserTests
     [InlineData("8080:70000/tcp")]
     [InlineData("8080:80/http")]
     [InlineData("8080:80/tcp@mesh")]
-    public void Parse_InvalidPort_Throws(string value) =>
+    public void ParseInvalidPortThrows(string value) =>
         Assert.Throws<ArgumentException>(() => SwarmServiceCreateInputParser.Parse(ValidInput(publishedPorts: value)));
 
     [Theory]
     [InlineData("bind||/data|rw")]
     [InlineData("volume|data|/data|invalid")]
     [InlineData("volume|data")]
-    public void Parse_InvalidMount_Throws(string value) =>
+    public void ParseInvalidMountThrows(string value) =>
         Assert.Throws<ArgumentException>(() => SwarmServiceCreateInputParser.Parse(ValidInput(mounts: value)));
 
     [Theory]
     [InlineData("-0.1")]
     [InlineData("1.1")]
     [InlineData("not-a-number")]
-    public void Parse_InvalidFailureRatio_Throws(string value) =>
+    public void ParseInvalidFailureRatioThrows(string value) =>
         Assert.Throws<ArgumentException>(() => SwarmServiceCreateInputParser.Parse(ValidInput(updateRatio: value)));
 
     [Fact]
-    public void Parse_DuplicateLabel_Throws() =>
+    public void ParseDuplicateLabelThrows() =>
         Assert.Throws<ArgumentException>(() => SwarmServiceCreateInputParser.Parse(ValidInput(labels: "team=one\nteam=two")));
 
     private static SwarmServiceCreateFormInput ValidInput(

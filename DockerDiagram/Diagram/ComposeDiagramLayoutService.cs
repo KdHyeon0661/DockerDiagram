@@ -1,9 +1,9 @@
-using DockerDiagram.Models;
-using DockerDiagram.ViewModels;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
+using DockerDiagram.Models;
+using DockerDiagram.ViewModels;
 
 namespace DockerDiagram.Diagram
 {
@@ -49,7 +49,7 @@ namespace DockerDiagram.Diagram
             if (serviceNodes.Count == 0)
             {
                 IReadOnlyCollection<NodeViewModel> volumesWithoutServices =
-                    scopedVolumes ?? sheet.Nodes.Where(node => node.Type == NodeType.Volume).ToList();
+                    scopedVolumes ?? sheet.Nodes.Where(IsStorageNode).ToList();
                 IReadOnlyCollection<GroupViewModel> groupsWithoutServices = scopedGroups ?? sheet.Groups.ToList();
                 ArrangeVolumes(sheet, volumesWithoutServices, originX, originY, isHorizontal ? originY : originX, isHorizontal, horizontalGap, verticalGap);
                 AvoidExistingNodeCollisions(sheet, volumesWithoutServices, isHorizontal);
@@ -284,7 +284,7 @@ namespace DockerDiagram.Diagram
             }
         }
 
-        private static IReadOnlyDictionary<string, IReadOnlySet<string>> BuildDescendantMap(
+        private static Dictionary<string, IReadOnlySet<string>> BuildDescendantMap(
             ComposeGraphTopology topology)
         {
             var result = new Dictionary<string, IReadOnlySet<string>>(
@@ -350,7 +350,7 @@ namespace DockerDiagram.Diagram
 
         private static IReadOnlyDictionary<string, int> GetServiceRanks(
             ComposeGraphTopology topology,
-            IReadOnlyDictionary<string, NodeViewModel> nodes,
+            Dictionary<string, NodeViewModel> nodes,
             double depthOrigin,
             double siblingOrigin,
             double depthGap,
@@ -385,7 +385,7 @@ namespace DockerDiagram.Diagram
 
         private static double ArrangeTidyTreeServices(
             ComposeGraphTopology topology,
-            IReadOnlyDictionary<string, NodeViewModel> nodes,
+            Dictionary<string, NodeViewModel> nodes,
             double depthOrigin,
             double siblingOrigin,
             double depthGap,
@@ -421,7 +421,7 @@ namespace DockerDiagram.Diagram
 
         private static double ArrangeSugiyamaServices(
             ComposeGraphTopology topology,
-            IReadOnlyDictionary<string, NodeViewModel> nodes,
+            Dictionary<string, NodeViewModel> nodes,
             double depthOrigin,
             double siblingOrigin,
             double depthGap,
@@ -457,7 +457,7 @@ namespace DockerDiagram.Diagram
         private static double ArrangeLegacyServices(
             IReadOnlyList<string> orderedServices,
             IReadOnlyDictionary<string, List<string>> dependsOnByService,
-            IReadOnlyDictionary<string, NodeViewModel> nodes,
+            Dictionary<string, NodeViewModel> nodes,
             double depthOrigin,
             double siblingOrigin,
             double depthGap,
@@ -672,7 +672,7 @@ namespace DockerDiagram.Diagram
         private static bool WouldCreateCycle(
             string service,
             string candidateParent,
-            IReadOnlyDictionary<string, string?> parentMap)
+            Dictionary<string, string?> parentMap)
         {
             string? current = candidateParent;
             var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -702,7 +702,7 @@ namespace DockerDiagram.Diagram
                 .Select(ToRect)
                 .ToList();
             var volumes = volumesToArrange
-                .Where(node => node.Type == NodeType.Volume)
+                .Where(IsStorageNode)
                 .OrderBy(node => node.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -759,7 +759,7 @@ namespace DockerDiagram.Diagram
             double verticalGap)
         {
             var volumes = volumesToArrange
-                .Where(node => node.Type == NodeType.Volume)
+                .Where(IsStorageNode)
                 .OrderBy(node => node.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
             if (volumes.Count == 0) return;
@@ -809,6 +809,9 @@ namespace DockerDiagram.Diagram
             if (ReferenceEquals(connector.Target, node)) return connector.Source as NodeViewModel;
             return null;
         }
+
+        private static bool IsStorageNode(NodeViewModel node) =>
+            node.Type is NodeType.Volume or NodeType.HostPath;
 
         private static bool IntersectsWithSpacing(Rect left, Rect right, double spacing)
         {
@@ -1068,8 +1071,8 @@ namespace DockerDiagram.Diagram
 
             using IDisposable layoutUpdate = sheet.BeginLayoutUpdate();
             Rect projectBounds = Union(bounds);
-            double deltaX = Math.Round((centerX - projectBounds.Left - (projectBounds.Width / 2.0)) / 10.0) * 10.0;
-            double deltaY = Math.Round((centerY - projectBounds.Top - (projectBounds.Height / 2.0)) / 10.0) * 10.0;
+            double deltaX = DiagramMetrics.SnapToGrid(centerX - projectBounds.Left - (projectBounds.Width / 2.0));
+            double deltaY = DiagramMetrics.SnapToGrid(centerY - projectBounds.Top - (projectBounds.Height / 2.0));
 
             foreach (NodeViewModel node in nodes)
             {
@@ -1120,7 +1123,7 @@ namespace DockerDiagram.Diagram
             sheet.UpdateGroupLayering();
         }
 
-        private static Rect Union(IReadOnlyList<Rect> bounds)
+        private static Rect Union(List<Rect> bounds)
         {
             if (bounds.Count == 0) return Rect.Empty;
             Rect result = bounds[0];

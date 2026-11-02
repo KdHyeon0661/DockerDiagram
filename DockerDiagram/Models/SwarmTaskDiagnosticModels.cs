@@ -1,3 +1,5 @@
+using DockerDiagram.Common;
+
 namespace DockerDiagram.Models
 {
     public enum SwarmTaskFailureCategory
@@ -38,10 +40,12 @@ namespace DockerDiagram.Models
         public int AttemptNumber { get; set; } = 1;
         public bool IsHistorical { get; set; }
         public SwarmTaskFailureCategory Category { get; set; } = SwarmTaskFailureCategory.Unknown;
-        public string StatusColor { get; set; } = "#808080";
-        public string ShortTaskId => TaskId.Length > 12 ? TaskId[..12] : TaskId;
-        public string ShortContainerId => ContainerId.Length > 12 ? ContainerId[..12] : ContainerId;
-        public string SlotLabel => Slot == 0 ? "global" : Slot.ToString();
+        public string StatusColor { get; set; } = StatusColors.Unknown;
+        public string ShortTaskId => DockerIdFormatter.Shorten(TaskId);
+        public string ShortContainerId => DockerIdFormatter.Shorten(ContainerId);
+        public string SlotLabel => Slot == 0
+            ? "global"
+            : Slot.ToString(System.Globalization.CultureInfo.InvariantCulture);
         public string AttemptLabel => $"#{AttemptNumber}" + (IsHistorical ? " old" : string.Empty);
         public string CategoryLabel => Category switch
         {

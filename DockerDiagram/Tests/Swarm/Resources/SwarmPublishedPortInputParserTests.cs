@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmPublishedPortInputParserTests
 {
     [Fact]
-    public void Parse_AcceptsAutomaticPublishedPortAndHostUdp()
+    public void ParseAcceptsAutomaticPublishedPortAndHostUdp()
     {
         SwarmPublishedPortOptions result =
             SwarmPublishedPortInputParser.Parse("", "53", "udp", "host");
@@ -24,7 +24,7 @@ public sealed class SwarmPublishedPortInputParserTests
     [InlineData("8080", "70000", "tcp", "ingress", "Target Port")]
     [InlineData("8080", "80", "icmp", "ingress", "Protocol")]
     [InlineData("8080", "80", "tcp", "invalid", "Publish Mode")]
-    public void TryParse_RejectsInvalidInput(
+    public void TryParseRejectsInvalidInput(
         string published,
         string target,
         string protocol,

@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using DockerDiagram.Common;
 
 namespace DockerDiagram.ApplicationServices
 {
     public static class VolumeUndoBackupStore
     {
         private static readonly HashSet<string> ActiveBackupFiles = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly object Sync = new();
         public static string BackupDirectory => Path.Combine(Path.GetTempPath(), "DockerDiagramVolumeUndo");
 
         public static string CreateBackupPath(string volumeName)
@@ -14,14 +16,16 @@ namespace DockerDiagram.ApplicationServices
             Directory.CreateDirectory(BackupDirectory);
             string safeName = string.Join("_", volumeName.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
             string path = Path.Combine(BackupDirectory, $"{safeName}_{DateTime.Now:yyyyMMddHHmmss}_{Guid.NewGuid():N}.tar");
-            ActiveBackupFiles.Add(path);
+            lock (Sync)
+                ActiveBackupFiles.Add(path);
             return path;
         }
 
         public static void Forget(string? path)
         {
             if (string.IsNullOrWhiteSpace(path)) return;
-            ActiveBackupFiles.Remove(path);
+            lock (Sync)
+                ActiveBackupFiles.Remove(path);
         }
 
         public static void DeleteFile(string? path)
@@ -31,19 +35,24 @@ namespace DockerDiagram.ApplicationServices
             {
                 if (File.Exists(path)) File.Delete(path);
             }
-            catch
+            catch (Exception cleanupException)
             {
-                // Cleanup must never block app shutdown.
+                AppLog.Warning($"볼륨 실행 취소 백업 파일 정리 실패: {path}", cleanupException);
             }
             finally
             {
-                ActiveBackupFiles.Remove(path);
+                lock (Sync)
+                    ActiveBackupFiles.Remove(path);
             }
         }
 
         public static void CleanupActiveBackups()
         {
-            foreach (var path in ActiveBackupFiles.ToArray())
+            string[] paths;
+            lock (Sync)
+                paths = ActiveBackupFiles.ToArray();
+
+            foreach (var path in paths)
                 DeleteFile(path);
 
             DeleteDirectoryIfEmpty();
@@ -56,9 +65,9 @@ namespace DockerDiagram.ApplicationServices
                 if (Directory.Exists(BackupDirectory))
                     Directory.Delete(BackupDirectory, recursive: true);
             }
-            catch
+            catch (Exception cleanupException)
             {
-                // A previous crash may leave files locked briefly; ignore and try again on next startup.
+                AppLog.Warning("이전 실행의 볼륨 백업 폴더 정리 실패", cleanupException);
             }
         }
 
@@ -69,8 +78,9 @@ namespace DockerDiagram.ApplicationServices
                 if (Directory.Exists(BackupDirectory) && Directory.GetFiles(BackupDirectory).Length == 0)
                     Directory.Delete(BackupDirectory);
             }
-            catch
+            catch (Exception cleanupException)
             {
+                AppLog.Warning("빈 볼륨 백업 폴더 정리 실패", cleanupException);
             }
         }
     }

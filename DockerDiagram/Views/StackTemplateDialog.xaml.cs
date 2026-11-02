@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.Views
@@ -8,15 +10,20 @@ namespace DockerDiagram.Views
     public partial class StackTemplateDialog : Window
     {
         private readonly StackTemplateDefinition _template;
+        private readonly IDialogService _dialogService;
         private readonly Dictionary<string, FrameworkElement> _inputs =
             new(StringComparer.OrdinalIgnoreCase);
 
         public StackTemplateDeploymentOptions DeploymentOptions { get; private set; } = new();
 
-        public StackTemplateDialog(StackTemplateDefinition template, string? suggestedProjectName = null)
+        public StackTemplateDialog(
+            IDialogService dialogService,
+            StackTemplateDefinition template,
+            string? suggestedProjectName = null)
         {
+            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
+            _template = template ?? throw new ArgumentNullException(nameof(template));
             InitializeComponent();
-            _template = template;
 
             TemplateNameText.Text = template.Name;
             TemplateDescriptionText.Text = template.Description;
@@ -30,8 +37,9 @@ namespace DockerDiagram.Views
                 AccentBar.Background = new SolidColorBrush(
                     (Color)ColorConverter.ConvertFromString(template.AccentColor));
             }
-            catch
+            catch (Exception ex)
             {
+                AppLog.Warning($"Stack template 강조 색상을 해석하지 못했습니다: {template.AccentColor}", ex);
                 AccentBar.Background = new SolidColorBrush(Color.FromRgb(40, 123, 174));
             }
 
@@ -97,7 +105,7 @@ namespace DockerDiagram.Views
             string projectName = ProjectNameBox.Text.Trim();
             if (string.IsNullOrWhiteSpace(projectName))
             {
-                MessageBox.Show(this, "프로젝트 이름을 입력해 주세요.", "Stack Template", MessageBoxButton.OK, MessageBoxImage.Warning);
+                _dialogService.ShowInfo("프로젝트 이름을 입력해 주세요.", "Stack Template");
                 ProjectNameBox.Focus();
                 return;
             }
@@ -108,7 +116,7 @@ namespace DockerDiagram.Views
                 string value = ReadValue(_inputs[variable.Key]);
                 if (variable.Required && string.IsNullOrWhiteSpace(value))
                 {
-                    MessageBox.Show(this, $"'{variable.Label}' 값을 입력해 주세요.", "Stack Template", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    _dialogService.ShowInfo($"'{variable.Label}' 값을 입력해 주세요.", "Stack Template");
                     _inputs[variable.Key].Focus();
                     return;
                 }
@@ -116,7 +124,7 @@ namespace DockerDiagram.Views
                 if (variable.Type.Equals("port", StringComparison.OrdinalIgnoreCase) &&
                     (!int.TryParse(value, out int port) || port is < 1 or > 65535))
                 {
-                    MessageBox.Show(this, $"'{variable.Label}' 포트는 1~65535 사이여야 합니다.", "Stack Template", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    _dialogService.ShowInfo($"'{variable.Label}' 포트는 1~65535 사이여야 합니다.", "Stack Template");
                     _inputs[variable.Key].Focus();
                     return;
                 }

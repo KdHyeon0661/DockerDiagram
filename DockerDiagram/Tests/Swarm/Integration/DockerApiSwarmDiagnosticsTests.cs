@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerApiSwarmDiagnosticsTests
 {
     [Fact]
-    public async Task Diagnostics_CombinesTasksServiceNodesAndLocalClusterState()
+    public async Task DiagnosticsCombinesTasksServiceNodesAndLocalClusterState()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""
@@ -65,7 +65,7 @@ public sealed class DockerApiSwarmDiagnosticsTests
     }
 
     [Fact]
-    public async Task Diagnostics_RejectsEmptyServiceIdWithoutNetworkCall()
+    public async Task DiagnosticsRejectsEmptyServiceIdWithoutNetworkCall()
     {
         await using var server = new ScriptedDockerApiServer();
         using var service = CreateService(server);

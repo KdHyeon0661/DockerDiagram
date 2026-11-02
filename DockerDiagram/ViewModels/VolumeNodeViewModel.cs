@@ -1,14 +1,13 @@
-using DockerDiagram.Contracts;
-using DockerDiagram.Common;
-using DockerDiagram.Models;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
@@ -23,10 +22,14 @@ namespace DockerDiagram.ViewModels
         private readonly IDialogService _dialogService;
         private string _dockerVolumeName = string.Empty;
         private bool _external;
-        private Dictionary<string, string> _labels = new();
-        private Dictionary<string, string> _driverOptions = new();
-        private string _labelsText = "None";
-        private string _driverOptionsText = "None";
+        private Dictionary<string, string> _labels = [];
+        private Dictionary<string, string> _driverOptions = [];
+        private string _labelsText = "없음";
+        private string _driverOptionsText = "없음";
+        private string _scope = "확인 불가";
+        private string _driverStatusText = string.Empty;
+        private bool _hasDriverStatus;
+        private bool _usageLoadFailed;
         private string _sizeText = "Unknown";
         private long _refCount;
         private int _usedContainerCount;
@@ -44,12 +47,14 @@ namespace DockerDiagram.ViewModels
             RestoreCommand = new AsyncRelayCommand(ExecuteRestoreAsync, _ => _node.Type == NodeType.Volume);
             RecreateCommand = new AsyncRelayCommand(ExecuteRecreateAsync, _ => _node.Type == NodeType.Volume);
             OpenDetailCommand = new AsyncRelayCommand(OpenDetailAsync, _ => _node.Type == NodeType.Volume && _node.IsDockerConnected);
+            CopyNameCommand = new RelayCommand(_ => CopyVolumeName(), _ => _node.Type == NodeType.Volume);
         }
 
         public ICommand BackupCommand { get; }
         public ICommand RestoreCommand { get; }
         public ICommand RecreateCommand { get; }
         public ICommand OpenDetailCommand { get; }
+        public ICommand CopyNameCommand { get; }
 
         public string DockerVolumeName
         {
@@ -67,19 +72,23 @@ namespace DockerDiagram.ViewModels
             set
             {
                 if (SetProperty(ref _external, value))
+                {
                     OnPropertyChanged(nameof(ExternalText));
+                    OnPropertyChanged(nameof(ManagementText));
+                }
             }
         }
 
         public string ExternalText => External ? "Yes" : "No";
+        public string ManagementText => External ? "기존/외부 참조" : "앱에서 생성";
 
         public Dictionary<string, string> Labels
         {
             get => _labels;
             set
             {
-                if (SetProperty(ref _labels, value ?? new Dictionary<string, string>()))
-                    LabelsText = FormatKeyValueMap(_labels);
+                if (SetProperty(ref _labels, value ?? []))
+                    LabelsText = FormatVolumeLabels(_labels);
             }
         }
 
@@ -88,7 +97,7 @@ namespace DockerDiagram.ViewModels
             get => _driverOptions;
             set
             {
-                if (SetProperty(ref _driverOptions, value ?? new Dictionary<string, string>()))
+                if (SetProperty(ref _driverOptions, value ?? []))
                     DriverOptionsText = FormatKeyValueMap(_driverOptions);
             }
         }
@@ -105,6 +114,43 @@ namespace DockerDiagram.ViewModels
             private set => SetProperty(ref _driverOptionsText, value);
         }
 
+        public string Scope
+        {
+            get => _scope;
+            private set
+            {
+                if (SetProperty(ref _scope, value))
+                    OnPropertyChanged(nameof(ShowScopeInSidebar));
+            }
+        }
+
+        public bool ShowScopeInSidebar =>
+            !string.IsNullOrWhiteSpace(Scope) &&
+            !string.Equals(Scope, "local", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(Scope, "확인 불가", StringComparison.OrdinalIgnoreCase);
+
+        public string DriverStatusText
+        {
+            get => _driverStatusText;
+            private set => SetProperty(ref _driverStatusText, value);
+        }
+
+        public bool HasDriverStatus
+        {
+            get => _hasDriverStatus;
+            private set => SetProperty(ref _hasDriverStatus, value);
+        }
+
+        public bool UsageLoadFailed
+        {
+            get => _usageLoadFailed;
+            private set
+            {
+                if (SetProperty(ref _usageLoadFailed, value))
+                    OnPropertyChanged(nameof(UsedContainerCountText));
+            }
+        }
+
         public string SizeText
         {
             get => _sizeText;
@@ -117,7 +163,7 @@ namespace DockerDiagram.ViewModels
 
         public string DisplaySizeText =>
             string.Equals(SizeText, "Unknown", StringComparison.OrdinalIgnoreCase)
-                ? "Not available"
+                ? "확인 불가"
                 : SizeText;
 
         public long RefCount
@@ -141,17 +187,17 @@ namespace DockerDiagram.ViewModels
         }
 
         public string UsedContainerCountText =>
-            $"{UsedContainerCount} container{(UsedContainerCount == 1 ? string.Empty : "s")}";
+            UsageLoadFailed ? "조회 실패" : $"컨테이너 {UsedContainerCount}개";
 
         public bool HasVolumeUsage => UsedContainerCount > 0;
         public bool HasSidebarUsageOverflow => UsedContainerCount > SidebarUsageLimit;
-        public string SidebarUsageOverflowText => $"+{Math.Max(0, UsedContainerCount - SidebarUsageLimit)} more";
+        public string SidebarUsageOverflowText => $"외 {Math.Max(0, UsedContainerCount - SidebarUsageLimit)}개";
 
         public string EffectiveVolumeName =>
             string.IsNullOrWhiteSpace(DockerVolumeName) ? _node.Name : DockerVolumeName;
 
-        public ObservableCollection<string> UsedByContainers { get; } = new();
-        public ObservableCollection<VolumeUsageInfo> UsageDetails { get; } = new();
+        public ObservableCollection<string> UsedByContainers { get; } = [];
+        public ObservableCollection<VolumeUsageInfo> UsageDetails { get; } = [];
         public IReadOnlyList<VolumeUsageInfo> SidebarUsageDetails => UsageDetails
             .GroupBy(usage => usage.ContainerName, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
@@ -166,33 +212,56 @@ namespace DockerDiagram.ViewModels
                 _dialogService.ShowVolumeDetail(_node);
         }
 
+        private void CopyVolumeName()
+        {
+            if (string.IsNullOrWhiteSpace(EffectiveVolumeName)) return;
+
+            _dialogService.SetClipboardText(EffectiveVolumeName);
+        }
+
         public async Task RefreshDetailsAsync()
         {
             var volumeName = EffectiveVolumeName;
             var volume = await _volumeService.InspectVolumeAsync(volumeName);
 
-            _node.IsDockerConnected = true;
+            _node.SetDockerConnection(true);
             _node.DetailStatus = "Created";
             _node.Driver = volume.Driver;
-            _node.Mountpoint = volume.Mountpoint;
             Labels = volume.Labels?.ToDictionary(kv => kv.Key, kv => kv.Value ?? string.Empty)
-                     ?? new Dictionary<string, string>();
+                     ?? [];
             DriverOptions = volume.Options?.ToDictionary(kv => kv.Key, kv => kv.Value ?? string.Empty)
-                            ?? new Dictionary<string, string>();
+                            ?? [];
+            Scope = string.IsNullOrWhiteSpace(volume.Scope) ? "확인 불가" : volume.Scope;
+            ApplyDriverStatus(volume.Status);
             _node.CreatedDate = DateTime.TryParse(volume.CreatedAt, out var created)
-                ? created.ToString("yyyy-MM-dd HH:mm:ss")
+                ? created.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)
                 : volume.CreatedAt;
 
             List<VolumeUsageInfo> usageDetails;
+            UsageLoadFailed = false;
             try
             {
                 usageDetails = await _volumeService.GetVolumeUsageDetailsAsync(volumeName);
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[VolumeDetails] Usage lookup failed for '{volumeName}': {ex.Message}");
-                usageDetails = new List<VolumeUsageInfo>();
+                AppLog.WarningThrottled(
+                    $"volume-usage-{volumeName}",
+                    $"볼륨 사용 정보 조회 실패: {volumeName}",
+                    ex);
+                usageDetails = [];
+                UsageLoadFailed = true;
             }
+
+            string resolvedMountpoint = volume.Mountpoint ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(resolvedMountpoint))
+            {
+                resolvedMountpoint = usageDetails
+                    .Select(usage => usage.Source)
+                    .FirstOrDefault(source => !string.IsNullOrWhiteSpace(source))
+                    ?? string.Empty;
+            }
+            _node.Mountpoint = resolvedMountpoint;
 
             var users = usageDetails
                 .Select(usage => usage.ContainerName)
@@ -221,23 +290,24 @@ namespace DockerDiagram.ViewModels
                     var volumeUsage = diskUsage.Volumes.FirstOrDefault(item =>
                         string.Equals(item.Name, volumeName, StringComparison.OrdinalIgnoreCase));
                     SizeText = volumeUsage?.FormattedSize ?? "Unknown";
-                    RefCount = volumeUsage?.RefCount ?? usageDetails.Count;
+                    RefCount = Math.Max(volumeUsage?.RefCount ?? 0, users.Count);
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[VolumeDetails] Disk usage lookup failed for '{volumeName}': {ex.Message}");
+                    AppLog.WarningThrottled(
+                        $"volume-disk-usage-{volumeName}",
+                        $"볼륨 디스크 사용량 조회 실패: {volumeName}",
+                        ex);
                     SizeText = "Unknown";
-                    RefCount = usageDetails.Count;
+                    RefCount = users.Count;
                 }
             }
             else
             {
                 SizeText = "Unknown";
-                RefCount = usageDetails.Count;
+                RefCount = users.Count;
             }
 
-            _node.IsRunning = false;
-            _node.IsPaused = false;
             _node.StatusColor = "#E67E22";
         }
 
@@ -257,12 +327,12 @@ namespace DockerDiagram.ViewModels
                 _dialogService.ShowInfo(
                     $"Docker에서 '{EffectiveVolumeName}' 볼륨을 찾지 못했습니다.",
                     "Reconnect");
-                _node.IsDockerConnected = false;
+                _node.SetDockerConnection(false);
                 return false;
             }
 
             DockerVolumeName = match.Name;
-            _node.IsDockerConnected = true;
+            _node.SetDockerConnection(true);
             await _node.RefreshDetailsAsync();
             return true;
         }
@@ -477,8 +547,51 @@ namespace DockerDiagram.ViewModels
 
         private static string FormatKeyValueMap(Dictionary<string, string>? values)
         {
-            if (values == null || values.Count == 0) return "None";
+            if (values == null || values.Count == 0) return "없음";
             return string.Join("\n", values.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}={kv.Value}"));
+        }
+
+        private void ApplyDriverStatus(IDictionary<string, object>? status)
+        {
+            if (status == null || status.Count == 0)
+            {
+                DriverStatusText = string.Empty;
+                HasDriverStatus = false;
+                return;
+            }
+
+            DriverStatusText = string.Join(
+                "\n",
+                status
+                    .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(kv => $"{kv.Key}={FormatDriverStatusValue(kv.Value)}"));
+            HasDriverStatus = true;
+        }
+
+        private static string FormatDriverStatusValue(object? value)
+        {
+            if (value == null) return "null";
+            if (value is string text) return text;
+            if (value is IFormattable formattable)
+                return formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture);
+
+            return value.ToString() ?? string.Empty;
+        }
+
+        private static string FormatVolumeLabels(Dictionary<string, string>? values)
+        {
+            if (values == null || values.Count == 0) return "없음";
+
+            var visibleLabels = values
+                .Where(kv => !string.Equals(
+                    kv.Key,
+                    "com.docker.volume.anonymous",
+                    StringComparison.OrdinalIgnoreCase))
+                .OrderBy(kv => kv.Key)
+                .Select(kv => $"{kv.Key}={kv.Value}")
+                .ToList();
+
+            return visibleLabels.Count == 0 ? "없음" : string.Join("\n", visibleLabels);
         }
     }
 }

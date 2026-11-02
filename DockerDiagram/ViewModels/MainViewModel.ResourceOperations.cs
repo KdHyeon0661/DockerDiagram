@@ -1,15 +1,16 @@
-﻿using DockerDiagram.Diagram;
-using Docker.DotNet.Models;
-using DockerDiagram.Models;
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.Contracts;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Docker.DotNet.Models;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
+using DockerDiagram.Infrastructure;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
@@ -194,7 +195,7 @@ namespace DockerDiagram.ViewModels
             };
         }
 
-        private bool IsValidConnection(IConnectableItem t1, IConnectableItem t2)
+        private static bool IsValidConnection(IConnectableItem t1, IConnectableItem t2)
         {
             bool isT1Volume = t1 is NodeViewModel n1 && n1.Type == NodeType.Volume;
             bool isT2Volume = t2 is NodeViewModel n2 && n2.Type == NodeType.Volume;
@@ -254,7 +255,7 @@ namespace DockerDiagram.ViewModels
                             foreach (var netKvp in info.NetworkSettings.Networks)
                             {
                                 string netName = netKvp.Key;
-                                if (netName == "bridge") continue;
+                                if (DockerNetworkSafety.IsProtected(netName)) continue;
 
                                 var existingGroup = creationSheet.Groups.FirstOrDefault(g => g.Type == GroupType.Network && g.Title == netName);
 
@@ -278,54 +279,14 @@ namespace DockerDiagram.ViewModels
                             }
                         }
 
-                        // 볼륨 복구
-                        if (info.Mounts != null)
+                        // 저장소 복구: Named volume과 Bind mount를 동일한 inspect 모델에서 동기화합니다.
+                        NodeViewModel? inspectedNode = creationSheet.Nodes.LastOrDefault(n => n.ContainerId == container.Id);
+                        if (inspectedNode != null)
                         {
-                            int volIndex = 0;
-                            foreach (var mount in info.Mounts)
-                            {
-                                if (mount.Type == "volume")
-                                {
-                                    string volName = mount.Name;
-                                    string destination = mount.Destination;
-
-                                    var existingVolNode = creationSheet.Nodes.FirstOrDefault(n =>
-                                        n.Type == NodeType.Volume &&
-                                        (string.Equals(n.Name, volName, StringComparison.OrdinalIgnoreCase) ||
-                                         string.Equals(n.EffectiveVolumeName, volName, StringComparison.OrdinalIgnoreCase)));
-                                    NodeViewModel targetVolNode;
-
-                                    if (existingVolNode != null)
-                                    {
-                                        targetVolNode = existingVolNode;
-                                    }
-                                    else
-                                    {
-                                        var volModel = new DockerVolume { Name = volName };
-                                        creationSheet.CreateNodeAt(volModel, x + 250, y + (volIndex * 120));
-                                        targetVolNode = creationSheet.Nodes.Last();
-                                    }
-
-                                    var newNode = creationSheet.Nodes.LastOrDefault(n => n.ContainerId == container.Id);
-                                    if (newNode != null)
-                                    {
-                                        bool connExists = creationSheet.Connectors.Any(c =>
-                                            (c.Source == newNode && c.Target == targetVolNode) ||
-                                            (c.Source == targetVolNode && c.Target == newNode));
-
-                                        if (!connExists)
-                                        {
-                                            var conn = new ConnectorViewModel(newNode, targetVolNode, PortDirection.Right, PortDirection.Left, _dialogService)
-                                            {
-                                                RelationType = RelationType.VolumeMount,
-                                                MountPath = destination
-                                            };
-                                            creationSheet.Connectors.Add(conn);
-                                        }
-                                    }
-                                    volIndex++;
-                                }
-                            }
+                            List<ContainerMountSpec> mounts = ContainerMountMapper.FromInspect(
+                                info.Mounts,
+                                info.HostConfig?.Mounts);
+                            creationSheet.SynchronizeContainerMounts(inspectedNode, mounts);
                         }
                     }
                     catch (Exception ex)
@@ -436,34 +397,34 @@ namespace DockerDiagram.ViewModels
 
             var historyBefore = CaptureDiagramState(ActiveSheet);
             int ordinal = ActiveSheet.Nodes.Count(node => node.ResourceKind == kind) + 1;
-            var (name, type, image, isService) = kind switch
+            var (name, image, isService) = kind switch
             {
-                RuntimeResourceKind.SwarmService => ($"Service {ordinal}", NodeType.Container, "swarm-service", true),
-                RuntimeResourceKind.SwarmVolume => ($"Volume {ordinal}", NodeType.Volume, "local", false),
-                RuntimeResourceKind.SwarmExternalTraffic => ($"External Traffic {ordinal}", NodeType.Internet, "external", false),
-                RuntimeResourceKind.SwarmSecret => ($"Secret {ordinal}", NodeType.Container, "swarm-secret", false),
-                RuntimeResourceKind.SwarmConfig => ($"Config {ordinal}", NodeType.Container, "swarm-config", false),
+                RuntimeResourceKind.SwarmService => ($"Service {ordinal}", "swarm-service", true),
+                RuntimeResourceKind.SwarmVolume => ($"Volume {ordinal}", "local", false),
+                RuntimeResourceKind.SwarmExternalTraffic => ($"External Traffic {ordinal}", "external", false),
+                RuntimeResourceKind.SwarmSecret => ($"Secret {ordinal}", "swarm-secret", false),
+                RuntimeResourceKind.SwarmConfig => ($"Config {ordinal}", "swarm-config", false),
                 _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "지원하지 않는 Swarm 노드 종류입니다.")
             };
 
-            var node = new NodeViewModel(_containerService, _volumeService, _dialogService)
-            {
-                Name = name,
-                ImageName = image,
-                Type = type,
-                X = x,
-                Y = y,
-                RuntimeKind = RuntimeKind.DockerSwarm,
-                ResourceKind = kind,
-                BindingState = RuntimeBindingState.Draft,
-                IsSwarmService = isService,
-                SwarmMode = isService ? "replicated" : string.Empty,
-                SwarmDesiredReplicas = isService ? 1UL : 0UL,
-                TargetSwarmReplicas = isService ? 1UL : 0UL,
-                DetailStatus = "Draft",
-                StatusColor = "#7652A8",
-                IsDockerConnected = false
-            };
+            NodeViewModel node = DiagramNodeFactory.CreateSwarmNode(
+                _containerService,
+                _volumeService,
+                _dialogService,
+                new SwarmNodeSpec(
+                    kind,
+                    name,
+                    image,
+                    x,
+                    y,
+                    ActiveSheet,
+                    RuntimeBindingState.Draft,
+                    IsConnected: false));
+            node.SwarmMode = isService ? "replicated" : string.Empty;
+            node.SwarmDesiredReplicas = isService ? 1UL : 0UL;
+            node.TargetSwarmReplicas = isService ? 1UL : 0UL;
+            node.DetailStatus = "Draft";
+            node.StatusColor = "#7652A8";
 
             ActiveSheet.Nodes.Add(node);
             IsModified = true;
@@ -483,27 +444,28 @@ namespace DockerDiagram.ViewModels
             string sourceName = options.EffectiveDockerVolumeName.Trim();
             string driver = string.IsNullOrWhiteSpace(options.Driver) ? "local" : options.Driver.Trim();
             var historyBefore = CaptureDiagramState(ActiveSheet);
-            var node = new NodeViewModel(_containerService, _volumeService, _dialogService)
-            {
-                Name = displayName,
-                DockerVolumeName = sourceName,
-                Driver = driver,
-                ImageName = driver,
-                Type = NodeType.Volume,
-                X = x,
-                Y = y,
-                RuntimeKind = RuntimeKind.DockerSwarm,
-                ResourceKind = RuntimeResourceKind.SwarmVolume,
-                BindingState = RuntimeBindingState.Draft,
-                VolumeExternal = options.External,
-                VolumeLabels = new Dictionary<string, string>(options.Labels),
-                VolumeDriverOptions = new Dictionary<string, string>(options.DriverOptions),
-                DetailStatus = options.External
-                    ? $"Draft · existing {sourceName}"
-                    : $"Draft · {driver}",
-                StatusColor = "#7652A8",
-                IsDockerConnected = false
-            };
+            var node = DiagramNodeFactory.CreateSwarmNode(
+                _containerService,
+                _volumeService,
+                _dialogService,
+                new SwarmNodeSpec(
+                    RuntimeResourceKind.SwarmVolume,
+                    displayName,
+                    driver,
+                    x,
+                    y,
+                    ActiveSheet,
+                    RuntimeBindingState.Draft,
+                    IsConnected: false));
+            node.DockerVolumeName = sourceName;
+            node.Driver = driver;
+            node.VolumeExternal = options.External;
+            node.VolumeLabels = new Dictionary<string, string>(options.Labels);
+            node.VolumeDriverOptions = new Dictionary<string, string>(options.DriverOptions);
+            node.DetailStatus = options.External
+                ? $"Draft · existing {sourceName}"
+                : $"Draft · {driver}";
+            node.StatusColor = "#7652A8";
 
             ActiveSheet.Nodes.Add(node);
             IsModified = true;
@@ -650,7 +612,7 @@ namespace DockerDiagram.ViewModels
             INetworkService networkService = creationSheet.DockerService;
 
             string requestedNetworkName = options.Name.Trim();
-            if (requestedNetworkName.Equals("ingress", StringComparison.OrdinalIgnoreCase))
+            if (DockerNetworkSafety.IsIngress(requestedNetworkName))
             {
                 _dialogService.ShowError(
                     "'ingress' is the Swarm routing-mesh network and cannot be created or managed here.",
@@ -794,16 +756,16 @@ namespace DockerDiagram.ViewModels
             options.Name = displayName;
             options.DockerVolumeName = dockerVolumeName;
 
-            var node = new NodeViewModel(containerService, volumeService, _dialogService)
-            {
-                Name = $"{displayName} (Creating...)",
-                ImageName = driver,
-                Type = NodeType.Volume,
-                X = x,
-                Y = y,
-                IsCreating = true,
-                StatusColor = "#FFC107"
-            };
+            NodeViewModel node = DiagramNodeFactory.CreateVolume(
+                containerService,
+                volumeService,
+                _dialogService,
+                $"{displayName} (Creating...)",
+                x,
+                y,
+                isConnected: false);
+            node.ImageName = driver;
+            node.SetLifecycleState(RuntimeLifecycleState.Creating);
             creationSheet.Nodes.Add(node);
             Func<Task> retryVolumeCreation = async () =>
             {
@@ -830,12 +792,11 @@ namespace DockerDiagram.ViewModels
                 node.ContainerId = "";
                 node.Driver = driver;
                 node.ImageName = driver;
-                node.IsDockerConnected = true;
+                node.SetDockerConnection(true);
 
                 node.ClearCreationFailure();
-                node.IsCreating = false;
+                node.EndCreating();
                 node.StatusColor = "#E67E22";
-                node.IsDockerConnected = true;
                 RecordAdditionsFromSnapshot(
                     creationSheet,
                     historyBefore,
@@ -871,8 +832,28 @@ namespace DockerDiagram.ViewModels
             try
             {
                 inspect = await containerService.InspectContainerAsync(containerId);
+                if (inspect.HostConfig?.AutoRemove == true)
+                {
+                    throw new InvalidOperationException(
+                        "--rm(AutoRemove) 컨테이너는 중지 시 즉시 삭제되므로 안전한 볼륨 연결을 지원하지 않습니다.");
+                }
+
+                MountPoint? existingTarget = inspect.Mounts?.FirstOrDefault(mount =>
+                    string.Equals(mount.Destination, mountPath, StringComparison.Ordinal));
+                if (existingTarget != null)
+                {
+                    bool sameVolume = ContainerMountMapper.ParseKind(existingTarget.Type) == MountKind.Volume &&
+                                      (string.Equals(existingTarget.Name, volumeName, StringComparison.OrdinalIgnoreCase) ||
+                                       string.Equals(existingTarget.Source, volumeName, StringComparison.OrdinalIgnoreCase));
+                    if (sameVolume)
+                        return true;
+
+                    throw new InvalidOperationException(
+                        $"컨테이너 경로 '{mountPath}'에는 이미 다른 마운트가 연결되어 있습니다.");
+                }
+
                 wasRunning = inspect.State?.Running == true;
-                if (wasRunning && inspect.HostConfig?.AutoRemove != true)
+                if (wasRunning)
                 {
                     await containerService.StopContainerAsync(containerId);
                 }
@@ -882,13 +863,17 @@ namespace DockerDiagram.ViewModels
 
                 try
                 {
-                    await containerService.CopyFromContainerAsync(containerId, mountPath, tempHostPath);
+                    await containerService.CopyFromContainerAsync(
+                        containerId,
+                        mountPath,
+                        tempHostPath,
+                        LifetimeToken);
                 }
                 catch (Exception ex)
                 {
-                    if (ex.Message.Contains("No such") || ex.Message.Contains("NotFound") || ex.Message.Contains("404"))
+                    if (DockerErrorClassifier.IsNotFound(ex))
                     {
-                        Debug.WriteLine($"[Backup Skip] '{mountPath}' 경로가 컨테이너에 아직 존재하지 않아 백업을 생략합니다.");
+                        AppLog.Info($"'{mountPath}' 경로가 컨테이너에 아직 없어 마운트 백업을 생략했습니다.");
                     }
                     else
                     {
@@ -902,14 +887,14 @@ namespace DockerDiagram.ViewModels
 
                         if (!proceed)
                         {
-                            if (wasRunning && inspect.HostConfig?.AutoRemove != true)
+                            if (wasRunning)
                                 await containerService.StartContainerAsync(containerId);
                             return false;
                         }
                     }
                 }
 
-                var volumes = inspect.HostConfig?.Binds?.ToList() ?? new List<string>();
+                var volumes = inspect.HostConfig?.Binds?.ToList() ?? [];
                 volumes.RemoveAll(bind => bind.StartsWith(volumeName + ":", StringComparison.OrdinalIgnoreCase));
                 volumes.Add($"{volumeName}:{mountPath}");
 
@@ -920,18 +905,26 @@ namespace DockerDiagram.ViewModels
                     inspect.Name,
                     inspect,
                     volumes,
-                    startContainer: true);
+                    startContainer: wasRunning || !string.IsNullOrWhiteSpace(owner));
 
                 string folderName = System.IO.Path.GetFileName(mountPath.TrimEnd('/'));
                 string actualSourcePath = System.IO.Path.Combine(tempHostPath, folderName);
 
                 if (System.IO.Directory.Exists(actualSourcePath))
                 {
-                    await containerService.CopyToContainerAsync(replacementId, actualSourcePath, mountPath);
+                    await containerService.CopyToContainerAsync(
+                        replacementId,
+                        actualSourcePath,
+                        mountPath,
+                        LifetimeToken);
                 }
                 else
                 {
-                    await containerService.CopyToContainerAsync(replacementId, tempHostPath, mountPath);
+                    await containerService.CopyToContainerAsync(
+                        replacementId,
+                        tempHostPath,
+                        mountPath,
+                        LifetimeToken);
                 }
 
                 if (!string.IsNullOrWhiteSpace(owner))
@@ -939,12 +932,13 @@ namespace DockerDiagram.ViewModels
                     string quotedPath = "'" + mountPath.Replace("'", "'\"'\"'") + "'";
                     ExecCommandResult result = await containerService.ExecuteCommandWithOutputAsync(
                         replacementId,
-                        $"chown -R {owner} {quotedPath}");
+                        $"chown -R {owner} {quotedPath}",
+                        LifetimeToken);
                     if (result.ExitCode != 0)
                         throw new InvalidOperationException($"볼륨 소유권 변경 실패: {result.Stderr}");
                 }
 
-                if (!wasRunning)
+                if (!wasRunning && !string.IsNullOrWhiteSpace(owner))
                     await containerService.StopContainerAsync(replacementId);
 
                 containerNode.ContainerId = replacementId;
@@ -955,45 +949,26 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                keepBackup = true;
-                string recoveryMessage = string.Empty;
-                if (originalRemoved && inspect != null)
-                {
-                    try
-                    {
-                        if (!string.IsNullOrWhiteSpace(replacementId))
-                        {
-                            try { await containerService.RemoveContainerAsync(replacementId); } catch { }
-                        }
-
-                        string restoredId = await containerService.RecreateContainerFromInspectAsync(
-                            inspect.Name,
-                            inspect,
-                            inspect.HostConfig?.Binds?.ToList() ?? new List<string>(),
-                            wasRunning);
-                        containerNode.ContainerId = restoredId;
-                        await containerNode.RefreshDetailsAsync();
-                        keepBackup = false;
-                        recoveryMessage = "\n원본 컨테이너 설정은 복구했습니다.";
-                    }
-                    catch (Exception recoveryEx)
-                    {
-                        recoveryMessage = $"\n원본 컨테이너 자동 복구도 실패했습니다: {recoveryEx.GetBaseException().Message}";
-                    }
-                }
-                else if (wasRunning)
-                {
-                    try { await containerService.StartContainerAsync(containerId); } catch { }
-                }
+                ContainerRecoveryResult recovery = await ContainerReplacementRecovery.RecoverAsync(
+                    containerNode,
+                    containerService,
+                    containerId,
+                    inspect,
+                    originalRemoved,
+                    wasRunning,
+                    replacementId);
+                keepBackup = recovery.KeepBackup;
 
                 string backupMessage = keepBackup ? $"\n\n백업: {tempHostPath}" : string.Empty;
-                _dialogService.ShowMessage($"오류 발생: {ex.GetBaseException().Message}{recoveryMessage}{backupMessage}");
+                _dialogService.ShowMessage(
+                    $"오류 발생: {ex.GetBaseException().Message}{recovery.UserMessage}{backupMessage}");
                 return false;
             }
             finally
             {
                 _dialogService.SetBusyCursor(false);
-                if (!keepBackup && Directory.Exists(tempHostPath)) Directory.Delete(tempHostPath, true);
+                if (!keepBackup)
+                    ContainerReplacementRecovery.DeleteTemporaryDirectory(tempHostPath);
             }
         }
     }

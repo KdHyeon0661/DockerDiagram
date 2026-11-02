@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmLeavePolicyTests
 {
     [Fact]
-    public void Evaluate_WorkerLeavesWithoutForce()
+    public void EvaluateWorkerLeavesWithoutForce()
     {
         SwarmClusterState state = SwarmClusterState.Create("active", false, nodeId: "worker-1");
 
@@ -17,7 +17,7 @@ public sealed class SwarmLeavePolicyTests
     }
 
     [Fact]
-    public void Evaluate_SingleManagerUsesForce()
+    public void EvaluateSingleManagerUsesForce()
     {
         SwarmClusterState state = SwarmClusterState.Create("active", true, nodeId: "manager-1");
         var nodes = new[] { new DockerSwarmNode { Id = "manager-1", Role = "manager" } };
@@ -28,7 +28,7 @@ public sealed class SwarmLeavePolicyTests
     }
 
     [Fact]
-    public void Evaluate_RejectsManagerInMultiNodeCluster()
+    public void EvaluateRejectsManagerInMultiNodeCluster()
     {
         SwarmClusterState state = SwarmClusterState.Create("active", true, nodeId: "manager-1");
         var nodes = new[]

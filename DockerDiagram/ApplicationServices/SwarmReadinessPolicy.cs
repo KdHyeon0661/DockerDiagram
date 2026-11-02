@@ -1,3 +1,4 @@
+using DockerDiagram.Common;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ApplicationServices
@@ -11,7 +12,9 @@ namespace DockerDiagram.ApplicationServices
             IReadOnlyList<DockerSwarmNode>? nodes,
             int? serviceCount,
             string nodeQueryError = "",
-            string serviceQueryError = "")
+            string serviceQueryError = "",
+            bool? ingressNetworkAvailable = null,
+            string networkQueryError = "")
         {
             var checks = new List<SwarmReadinessCheck>
             {
@@ -39,7 +42,7 @@ namespace DockerDiagram.ApplicationServices
 
             checks.Add(string.IsNullOrWhiteSpace(cluster.NodeId)
                 ? Warning("Cluster", "Local Node ID", "The local Node ID is empty.")
-                : Pass("Cluster", "Local Node ID", ShortId(cluster.NodeId)));
+                : Pass("Cluster", "Local Node ID", DockerIdFormatter.Shorten(cluster.NodeId)));
 
             if (!cluster.IsManager)
                 return checks;
@@ -60,11 +63,25 @@ namespace DockerDiagram.ApplicationServices
                 : Warning("Services", "Service inventory", string.IsNullOrWhiteSpace(serviceQueryError)
                     ? "Service inventory is unavailable."
                     : serviceQueryError));
+
+            if (ingressNetworkAvailable.HasValue)
+            {
+                checks.Add(ingressNetworkAvailable.Value
+                    ? Pass("Networking", "Routing mesh ingress", "Docker-managed ingress network is available.")
+                    : Warning(
+                        "Networking",
+                        "Routing mesh ingress",
+                        "The Docker-managed ingress network is missing. Services can still use host publishing, but ingress publishing must be repaired first."));
+            }
+            else if (!string.IsNullOrWhiteSpace(networkQueryError))
+            {
+                checks.Add(Warning("Networking", "Network inventory", networkQueryError));
+            }
             return checks;
         }
 
         private static void AddNodeChecks(
-            ICollection<SwarmReadinessCheck> checks,
+            List<SwarmReadinessCheck> checks,
             IReadOnlyList<DockerSwarmNode> nodes)
         {
             List<DockerSwarmNode> managers = nodes
@@ -73,6 +90,8 @@ namespace DockerDiagram.ApplicationServices
             int managerCount = managers.Count;
             checks.Add(managerCount == 0
                 ? Blocked("Managers", "Manager count", "No Manager is visible.")
+                : managerCount == 1
+                    ? Warning("Managers", "Manager count", "1 Manager; the cluster can run but has no Manager failover.")
                 : managerCount % 2 == 1
                     ? Pass("Managers", "Manager count", $"{managerCount} Manager(s); odd-sized quorum configuration.")
                     : Warning("Managers", "Manager count", $"{managerCount} Managers; an odd count is recommended."));
@@ -110,6 +129,19 @@ namespace DockerDiagram.ApplicationServices
                 : unavailable == 0
                     ? Pass("Nodes", "Scheduling", $"All {nodes.Count} node(s) are ready and schedulable.")
                     : Warning("Nodes", "Scheduling", $"{unavailable}/{nodes.Count} node(s) are not ready or are drained."));
+
+            checks.Add(nodes.Count switch
+            {
+                0 => Blocked("Nodes", "Failure recovery", "No nodes are available for a failover drill."),
+                1 => Warning(
+                    "Nodes",
+                    "Failure recovery",
+                    "Single-node Swarm: service rescheduling, cross-node overlay traffic, and node failure cannot be verified here."),
+                _ => Pass(
+                    "Nodes",
+                    "Failure recovery topology",
+                    $"{nodes.Count} nodes are visible. Actual recovery still requires a controlled live fault drill.")
+            });
         }
 
         private static bool IsReachableManager(DockerSwarmNode node) =>
@@ -126,7 +158,6 @@ namespace DockerDiagram.ApplicationServices
         private static SwarmReadinessCheck Blocked(string category, string name, string detail) =>
             new(category, name, SwarmReadinessSeverity.Blocked, detail);
 
-        private static string ShortId(string id) => id.Length <= 12 ? id : id[..12];
     }
 }
 

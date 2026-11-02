@@ -50,11 +50,9 @@ namespace DockerDiagram.Models
         public string Summary => $"{Services.Count} services · {RunningTasks}/{DesiredTasks} running";
     }
 
-    public static class SwarmStackNamePolicy
+    public static partial class SwarmStackNamePolicy
     {
-        private static readonly Regex ValidName = new(
-            "^[a-z0-9][a-z0-9_.-]{0,62}$",
-            RegexOptions.CultureInvariant);
+        private static readonly Regex ValidName = MyRegex();
 
         public static void Validate(string value)
         {
@@ -69,9 +67,9 @@ namespace DockerDiagram.Models
 
         public static string Suggest(string title, int fallbackOrdinal = 1)
         {
-            string normalized = Regex.Replace(
+            string normalized = InvalidStackNameCharacterRegex()
+                .Replace(
                     (title ?? string.Empty).Trim().ToLowerInvariant(),
-                    "[^a-z0-9_.-]+",
                     "-")
                 .Trim('-', '.', '_');
             if (normalized.Length == 0 || !char.IsLetterOrDigit(normalized[0]))
@@ -79,6 +77,12 @@ namespace DockerDiagram.Models
             if (normalized.Length > 63) normalized = normalized[..63].TrimEnd('-', '.', '_');
             return normalized;
         }
+
+        [GeneratedRegex("^[a-z0-9][a-z0-9_.-]{0,62}$", RegexOptions.CultureInvariant)]
+        private static partial Regex MyRegex();
+
+        [GeneratedRegex("[^a-z0-9_.-]+", RegexOptions.CultureInvariant)]
+        private static partial Regex InvalidStackNameCharacterRegex();
     }
 
     public static class SwarmStackServiceSelector

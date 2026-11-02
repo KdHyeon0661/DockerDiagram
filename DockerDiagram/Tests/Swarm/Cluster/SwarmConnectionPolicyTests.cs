@@ -11,7 +11,7 @@ public sealed class SwarmConnectionPolicyTests
     [InlineData(RuntimeResourceKind.SwarmExternalTraffic, RuntimeResourceKind.SwarmService, RelationType.SwarmPublishedPort, false)]
     [InlineData(RuntimeResourceKind.SwarmSecret, RuntimeResourceKind.SwarmService, RelationType.SwarmSecretReference, true)]
     [InlineData(RuntimeResourceKind.SwarmService, RuntimeResourceKind.SwarmConfig, RelationType.SwarmConfigReference, false)]
-    public void Resolve_AllowsSupportedPairs(
+    public void ResolveAllowsSupportedPairs(
         RuntimeResourceKind source,
         RuntimeResourceKind target,
         RelationType relation,
@@ -25,7 +25,7 @@ public sealed class SwarmConnectionPolicyTests
     }
 
     [Fact]
-    public void Resolve_DeniesOverlayNetworkConnectors()
+    public void ResolveDeniesOverlayNetworkConnectors()
     {
         SwarmConnectionDecision decision = SwarmConnectionPolicy.Resolve(
             RuntimeResourceKind.SwarmService,
@@ -38,7 +38,7 @@ public sealed class SwarmConnectionPolicyTests
     [Theory]
     [InlineData(RuntimeResourceKind.SwarmService, RuntimeResourceKind.SwarmService)]
     [InlineData(RuntimeResourceKind.SwarmService, RuntimeResourceKind.SwarmVisualGroup)]
-    public void Resolve_DeniesRelationshipsThatCannotBeAppliedToServiceSpec(
+    public void ResolveDeniesRelationshipsThatCannotBeAppliedToServiceSpec(
         RuntimeResourceKind source,
         RuntimeResourceKind target)
     {

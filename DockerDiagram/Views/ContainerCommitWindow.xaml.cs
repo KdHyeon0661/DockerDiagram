@@ -5,14 +5,16 @@ namespace DockerDiagram.Views
 {
     public partial class ContainerCommitWindow : Window
     {
+        private readonly DockerDiagram.Contracts.IDialogService _dialogService;
         public string Repository => RepositoryBox.Text.Trim();
         public string ImageTag => ImageTagBox.Text.Trim();
         public string Message => CommitMessageBox.Text.Trim();
         public string Author => AuthorBox.Text.Trim();
         public bool Pause => PauseBox.IsChecked == true;
 
-        public ContainerCommitWindow(string containerName)
+        public ContainerCommitWindow(DockerDiagram.Contracts.IDialogService dialogService, string containerName)
         {
+            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
             InitializeComponent();
             ContainerText.Text = containerName;
             RepositoryBox.Text = MakeDefaultRepository(containerName);
@@ -25,13 +27,13 @@ namespace DockerDiagram.Views
         {
             if (string.IsNullOrWhiteSpace(Repository))
             {
-                MessageBox.Show(this, "Repository is required.", "Commit Container", MessageBoxButton.OK, MessageBoxImage.Information);
+                _dialogService.ShowInfo("Repository is required.", "Commit Container");
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(ImageTag))
             {
-                MessageBox.Show(this, "Tag is required.", "Commit Container", MessageBoxButton.OK, MessageBoxImage.Information);
+                _dialogService.ShowInfo("Tag is required.", "Commit Container");
                 return;
             }
 
@@ -43,8 +45,11 @@ namespace DockerDiagram.Views
         private static string MakeDefaultRepository(string value)
         {
             value = value.Trim().TrimStart('/').ToLowerInvariant();
-            value = Regex.Replace(value, @"[^a-z0-9_.\-\/]", "-");
+            value = MyRegex().Replace(value, "-");
             return string.IsNullOrWhiteSpace(value) ? "container-snapshot" : value;
         }
+
+        [GeneratedRegex(@"[^a-z0-9_.\-\/]")]
+        private static partial Regex MyRegex();
     }
 }

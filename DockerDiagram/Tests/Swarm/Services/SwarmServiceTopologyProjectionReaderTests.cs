@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmServiceTopologyProjectionReaderTests
 {
     [Fact]
-    public void Read_ProjectsSecretAndConfigFileReferencesWithoutPayloads()
+    public void ReadProjectsSecretAndConfigFileReferencesWithoutPayloads()
     {
         const string raw = """
         {

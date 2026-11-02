@@ -1,7 +1,7 @@
-using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text.Json;
+using DockerDiagram.Common;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ApplicationServices
@@ -47,7 +47,7 @@ namespace DockerDiagram.ApplicationServices
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[StackTemplate] Failed to load '{path}': {ex.Message}");
+                    AppLog.Warning($"Stack template 파일 로드 실패: {path}", ex);
                 }
             }
         }
@@ -78,8 +78,7 @@ namespace DockerDiagram.ApplicationServices
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine(
-                        $"[StackTemplate] Failed to load embedded resource '{resourceName}': {ex.Message}");
+                    AppLog.Warning($"내장 Stack template 로드 실패: {resourceName}", ex);
                 }
             }
         }

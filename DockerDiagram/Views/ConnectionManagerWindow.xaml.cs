@@ -1,9 +1,9 @@
-using DockerDiagram.Infrastructure;
-using DockerDiagram.Contracts;
+using System;
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
-using System.Collections.ObjectModel;
-using System;
+using DockerDiagram.Contracts;
+using DockerDiagram.Infrastructure;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
@@ -14,7 +14,7 @@ namespace DockerDiagram.Views
         private readonly MainViewModel _mainVm;
         private readonly IDialogService _dialogService;
         private readonly DockerContextService _dockerContextService = new();
-        private readonly ObservableCollection<DockerContextInfo> _dockerContexts = new();
+        private readonly ObservableCollection<DockerContextInfo> _dockerContexts = [];
 
         public ConnectionManagerWindow(MainViewModel mainVm, IDialogService dialogService)
         {
@@ -59,7 +59,7 @@ namespace DockerDiagram.Views
                 return;
             }
 
-            if (!_dialogService.ShowConfirm($"'{workspace.DisplayName}' 연결을 삭제하시겠습니까?\n이 연결 안의 시트도 목록에서 제거됩니다.", "Connection Delete"))
+            if (!_dialogService.ShowConfirm($"'{workspace.DisplayName}' 연결을 삭제하시겠습니까?\n이 연결 안의 시트도 목록에서 제거됩니다.", "연결 삭제"))
                 return;
 
             if (_mainVm.SheetManager.RemoveWorkspace(workspace))
@@ -91,7 +91,7 @@ namespace DockerDiagram.Views
 
             try
             {
-                await _dockerContextService.UseContextAsync(context.Name);
+                await DockerContextService.UseContextAsync(context.Name);
                 await RefreshDockerContextsAsync();
                 _dialogService.ShowInfo($"현재 Docker context를 '{context.Name}'(으)로 변경했습니다.", "Docker Context");
             }
@@ -103,12 +103,12 @@ namespace DockerDiagram.Views
 
         private async void CreateContext_Click(object sender, RoutedEventArgs e)
         {
-            var dialog = new DockerContextCreateDialog { Owner = this };
+            var dialog = new DockerContextCreateDialog(_dialogService) { Owner = this };
             if (dialog.ShowDialog() != true) return;
 
             try
             {
-                await _dockerContextService.CreateContextAsync(dialog.ContextName, dialog.DockerEndpoint);
+                await DockerContextService.CreateContextAsync(dialog.ContextName, dialog.DockerEndpoint);
                 await RefreshDockerContextsAsync();
                 _dialogService.ShowInfo($"Docker context '{dialog.ContextName}'을(를) 생성했습니다.", "Docker Context");
             }
@@ -146,7 +146,7 @@ namespace DockerDiagram.Views
 
             try
             {
-                await _dockerContextService.RemoveContextAsync(context.Name);
+                await DockerContextService.RemoveContextAsync(context.Name);
                 await RefreshDockerContextsAsync();
                 _dialogService.ShowInfo($"Docker context '{context.Name}'을(를) 삭제했습니다.", "Docker Context");
             }
@@ -177,7 +177,7 @@ namespace DockerDiagram.Views
 
             try
             {
-                DockerContextStatusText.Text = $"Opening workspace for {context.Name}...";
+                DockerContextStatusText.Text = $"{context.Name} 작업 공간을 여는 중...";
                 profile = await CreateProfileFromContextAsync(context);
                 service = _mainVm.DockerServiceFactory.Create(profile);
 
@@ -190,12 +190,12 @@ namespace DockerDiagram.Views
                 _mainVm.SheetManager.AddWorkspace(profile, service, activate: true, createInitialSheet: true);
                 connectionHandled = true;
                 ConnectionGrid.Items.Refresh();
-                DockerContextStatusText.Text = $"Workspace opened: {context.Name}";
+                DockerContextStatusText.Text = $"작업 공간을 열었습니다: {context.Name}";
                 _dialogService.ShowInfo($"'{context.Name}' context를 앱 워크스페이스로 열었습니다.", "Docker Context");
             }
             catch (Exception ex)
             {
-                DockerContextStatusText.Text = "Open workspace failed.";
+                DockerContextStatusText.Text = "작업 공간 열기에 실패했습니다.";
                 _dialogService.ShowError($"Docker context 워크스페이스 열기 실패:\n{ex.Message}", "Docker Context");
             }
             finally
@@ -211,8 +211,8 @@ namespace DockerDiagram.Views
         {
             try
             {
-                DockerContextStatusText.Text = "Loading Docker contexts...";
-                var contexts = await _dockerContextService.ListContextsAsync();
+                DockerContextStatusText.Text = "Docker Context 목록을 불러오는 중...";
+                var contexts = await DockerContextService.ListContextsAsync();
 
                 _dockerContexts.Clear();
                 foreach (var context in contexts)
@@ -220,19 +220,22 @@ namespace DockerDiagram.Views
                     _dockerContexts.Add(context);
                 }
 
-                DockerContextStatusText.Text = $"{_dockerContexts.Count} Docker context(s) loaded.";
+                DockerContextStatusText.Text = $"Docker Context {_dockerContexts.Count}개를 불러왔습니다.";
             }
             catch (System.Exception ex)
             {
                 _dockerContexts.Clear();
-                DockerContextStatusText.Text = "Docker context list failed.";
+                DockerContextStatusText.Text = "Docker Context 목록을 불러오지 못했습니다.";
                 _dialogService.ShowError($"Docker context 목록 조회 실패:\n{ex.Message}", "Docker Context");
             }
         }
 
         private async System.Threading.Tasks.Task<ConnectionProfile> CreateProfileFromContextAsync(DockerContextInfo context)
         {
+            context = await DockerContextService.InspectContextAsync(context.Name);
             var endpoint = context.DockerEndpoint.Trim();
+            if (string.IsNullOrWhiteSpace(endpoint))
+                throw new InvalidOperationException($"'{context.Name}' context에 Docker endpoint가 없습니다.");
             var endpointUri = new Uri(endpoint);
 
             if (endpointUri.Scheme.Equals("ssh", StringComparison.OrdinalIgnoreCase))
@@ -278,7 +281,13 @@ namespace DockerDiagram.Views
                 {
                     Name = $"Context: {context.Name}",
                     Type = EndpointType.DockerContext,
-                    DockerEndpoint = endpoint
+                    DockerContextName = context.Name,
+                    DockerEndpoint = endpoint,
+                    DockerTlsEnabled = context.TlsEnabled,
+                    DockerTlsSkipVerify = context.TlsSkipVerify,
+                    DockerTlsCaPath = DockerContextService.ResolveTlsFilePath(context, "ca.pem"),
+                    DockerTlsCertPath = DockerContextService.ResolveTlsFilePath(context, "cert.pem"),
+                    DockerTlsKeyPath = DockerContextService.ResolveTlsFilePath(context, "key.pem")
                 };
             }
 

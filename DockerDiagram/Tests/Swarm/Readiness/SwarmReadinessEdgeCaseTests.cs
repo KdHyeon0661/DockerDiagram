@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmReadinessEdgeCaseTests
 {
     [Fact]
-    public void PausedNode_IsReportedAsNotSchedulable()
+    public void PausedNodeIsReportedAsNotSchedulable()
     {
         IReadOnlyList<SwarmReadinessCheck> checks = Evaluate(
             Manager("one", "leader"),
@@ -26,7 +26,7 @@ public sealed class SwarmReadinessEdgeCaseTests
     }
 
     [Fact]
-    public void UnknownManagerStatus_DoesNotCountTowardQuorum()
+    public void UnknownManagerStatusDoesNotCountTowardQuorum()
     {
         IReadOnlyList<SwarmReadinessCheck> checks = Evaluate(
             Manager("one", "leader"),

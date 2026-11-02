@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerApiResourceQueryTests
 {
     [Fact]
-    public async Task Containers_MapPortsStateAndComposeIdentity()
+    public async Task ContainersMapPortsStateAndComposeIdentity()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""
@@ -47,7 +47,7 @@ public sealed class DockerApiResourceQueryTests
     }
 
     [Fact]
-    public async Task Images_SplitTaggedAndDanglingRows()
+    public async Task ImagesSplitTaggedAndDanglingRows()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""
@@ -79,7 +79,7 @@ public sealed class DockerApiResourceQueryTests
     }
 
     [Fact]
-    public async Task Volumes_MapComposeAndTemplateLabels()
+    public async Task VolumesMapComposeAndTemplateLabels()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""
@@ -119,7 +119,7 @@ public sealed class DockerApiResourceQueryTests
     }
 
     [Fact]
-    public async Task Networks_MapDriverScopeAndComposeLabels()
+    public async Task NetworksMapDriverScopeAndComposeLabels()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""

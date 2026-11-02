@@ -5,11 +5,9 @@ namespace DockerDiagram.Models
 {
     public enum SwarmDataResourceKind { Secret, Config }
 
-    public sealed class SwarmDataResourceCreateOptions
+    public sealed partial class SwarmDataResourceCreateOptions
     {
-        private static readonly Regex ValidName = new(
-            "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
-            RegexOptions.CultureInvariant);
+        private static readonly Regex ValidName = MyRegex();
 
         public SwarmDataResourceKind Kind { get; init; }
         public string Name { get; init; } = string.Empty;
@@ -28,6 +26,9 @@ namespace DockerDiagram.Models
             if (Labels.Any(label => string.IsNullOrWhiteSpace(label.Key)))
                 throw new ArgumentException("Label key가 비어 있습니다.", nameof(Labels));
         }
+
+        [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9_.-]*$", RegexOptions.CultureInvariant)]
+        private static partial Regex MyRegex();
     }
 
     public sealed record SwarmDataResourceMutationResult(

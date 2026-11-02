@@ -4,8 +4,11 @@ namespace DockerDiagram.Tests;
 
 public sealed class SwarmLifecycleValidationTests
 {
+
+    private static readonly string[] JoinOptionsNormalizesAndDeduplicatesManagerAddressesExpectedValues = new[] { "10.0.0.1:2377", "10.0.0.2:2377" };
+
     [Fact]
-    public void InitializeOptions_RejectInvalidDataPathPort()
+    public void InitializeOptionsRejectInvalidDataPathPort()
     {
         var options = new SwarmInitializeOptions
         {
@@ -17,7 +20,7 @@ public sealed class SwarmLifecycleValidationTests
     }
 
     [Fact]
-    public void JoinOptions_NormalizesAndDeduplicatesManagerAddresses()
+    public void JoinOptionsNormalizesAndDeduplicatesManagerAddresses()
     {
         var options = new SwarmJoinOptions
         {
@@ -27,12 +30,12 @@ public sealed class SwarmLifecycleValidationTests
 
         options.Validate();
 
-        Assert.Equal(new[] { "10.0.0.1:2377", "10.0.0.2:2377" }, options.GetNormalizedManagerAddresses());
+        Assert.Equal(JoinOptionsNormalizesAndDeduplicatesManagerAddressesExpectedValues, options.GetNormalizedManagerAddresses());
         Assert.DoesNotContain("secret", options.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void JoinTokens_DoNotExposeSecretsFromToString()
+    public void JoinTokensDoNotExposeSecretsFromToString()
     {
         var tokens = new SwarmJoinTokens("worker-secret", "manager-secret");
 

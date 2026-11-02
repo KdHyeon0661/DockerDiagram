@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmDiagramTopologyCompilerTests
 {
     [Fact]
-    public void Apply_ReplacesDiagramOwnedTopologyAndPreservesServiceSettings()
+    public void ApplyReplacesDiagramOwnedTopologyAndPreservesServiceSettings()
     {
         SwarmServiceSpecOptions baseline = Baseline();
         var topology = new SwarmDiagramTopologyInput
@@ -30,7 +30,7 @@ public sealed class SwarmDiagramTopologyCompilerTests
     }
 
     [Fact]
-    public void Apply_EmptyDiagramCategories_DoNotEraseExistingRuntimeSettings()
+    public void ApplyEmptyDiagramCategoriesDoNotEraseExistingRuntimeSettings()
     {
         SwarmServiceSpecOptions baseline = Baseline();
 
@@ -44,7 +44,7 @@ public sealed class SwarmDiagramTopologyCompilerTests
     }
 
     [Fact]
-    public void Apply_ManagedEmptyCategories_ClearExistingRuntimeSettings()
+    public void ApplyManagedEmptyCategoriesClearExistingRuntimeSettings()
     {
         SwarmServiceSpecOptions baseline = Baseline();
         var topology = new SwarmDiagramTopologyInput
@@ -62,7 +62,7 @@ public sealed class SwarmDiagramTopologyCompilerTests
     }
 
     [Fact]
-    public void Apply_OnlyPorts_PreservesMountsAndNetworks()
+    public void ApplyOnlyPortsPreservesMountsAndNetworks()
     {
         SwarmServiceSpecOptions baseline = Baseline();
         var topology = new SwarmDiagramTopologyInput
@@ -79,7 +79,7 @@ public sealed class SwarmDiagramTopologyCompilerTests
     }
 
     [Fact]
-    public void Apply_DuplicatePublishedPort_IsRejected()
+    public void ApplyDuplicatePublishedPortIsRejected()
     {
         var topology = new SwarmDiagramTopologyInput
         {
@@ -95,7 +95,7 @@ public sealed class SwarmDiagramTopologyCompilerTests
     }
 
     [Fact]
-    public void Apply_DuplicateMountTarget_IsRejected()
+    public void ApplyDuplicateMountTargetIsRejected()
     {
         var topology = new SwarmDiagramTopologyInput
         {

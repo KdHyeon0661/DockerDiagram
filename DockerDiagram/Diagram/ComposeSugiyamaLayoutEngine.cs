@@ -201,7 +201,7 @@ namespace DockerDiagram.Diagram
 
         private static NormalizedGraph NormalizeCycles(
             ComposeGraphTopology topology,
-            IReadOnlyDictionary<string, int> orderIndex)
+            Dictionary<string, int> orderIndex)
         {
             var normalizedEdges = new List<ComposeLayoutEdge>();
             var reversedEdges = new List<ComposeLayoutEdge>();
@@ -238,7 +238,7 @@ namespace DockerDiagram.Diagram
         private static Dictionary<string, int> AssignLayers(
             IReadOnlyList<string> orderedNodeIds,
             IReadOnlyList<ComposeLayoutEdge> edges,
-            IReadOnlyDictionary<string, int> orderIndex)
+            Dictionary<string, int> orderIndex)
         {
             var children = orderedNodeIds.ToDictionary(
                 nodeId => nodeId,
@@ -290,10 +290,10 @@ namespace DockerDiagram.Diagram
 
         private static LayeredGraph CreateLayeredGraph(
             IReadOnlyList<string> orderedNodeIds,
-            IReadOnlyDictionary<string, ComposeSugiyamaNode> nodes,
+            Dictionary<string, ComposeSugiyamaNode> nodes,
             IReadOnlyList<ComposeLayoutEdge> edges,
             IReadOnlyDictionary<string, int> layerByNode,
-            IReadOnlyDictionary<string, int> orderIndex)
+            Dictionary<string, int> orderIndex)
         {
             int maximumLayer = layerByNode.Values.DefaultIfEmpty(0).Max();
             var layers = Enumerable.Range(0, maximumLayer + 1)
@@ -400,7 +400,7 @@ namespace DockerDiagram.Diagram
                         item => item.Id,
                         item => item.index,
                         StringComparer.OrdinalIgnoreCase);
-                IReadOnlyDictionary<string, string[]> neighbors = downward ? incoming : outgoing;
+                Dictionary<string, string[]> neighbors = downward ? incoming : outgoing;
 
                 layers[layerIndex] = layers[layerIndex]
                     .Select(vertex =>
@@ -526,7 +526,7 @@ namespace DockerDiagram.Diagram
 
         private static void AlignLayerFirstRows(
             IReadOnlyList<List<LayerVertex>> layers,
-            IDictionary<string, double> centers)
+            Dictionary<string, double> centers)
         {
             foreach (IReadOnlyList<LayerVertex> layer in layers)
             {
@@ -542,8 +542,8 @@ namespace DockerDiagram.Diagram
 
         private static void PlaceLayer(
             IReadOnlyList<LayerVertex> layer,
-            IReadOnlyDictionary<string, string[]> neighbors,
-            IDictionary<string, double> centers,
+            Dictionary<string, string[]> neighbors,
+            Dictionary<string, double> centers,
             double siblingGap)
         {
             if (layer.Count == 0) return;

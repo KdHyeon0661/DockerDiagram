@@ -1,6 +1,4 @@
-using DockerDiagram.Diagram;
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.Infrastructure;
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Windows;
 using System.Windows.Controls;
@@ -8,7 +6,10 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using System.Diagnostics;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Diagram;
+using DockerDiagram.Infrastructure;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
@@ -118,8 +119,8 @@ namespace DockerDiagram
                         {
                             container = new DockerContainer
                             {
-                                Name = "New Container",
-                                Image = "New Container",
+                                Name = "새 컨테이너",
+                                Image = "새 컨테이너",
                                 Id = ""
                             };
                         }
@@ -128,7 +129,7 @@ namespace DockerDiagram
                             // Canvas_Drop에서 DockerContainer로 캐스팅해서 받으므로 타입을 맞춰줍니다.
                             container = new DockerVolume
                             {
-                                Name = "New Volume",
+                                Name = "새 볼륨",
                                 Id = ""
                             };
                         }
@@ -178,7 +179,9 @@ namespace DockerDiagram
 
                 if (TryGetSwarmDraftNodeKind(typeStr, out var swarmKind))
                 {
-                    Point placement = GetViewportCenteredPlacement(160, 80);
+                    Point placement = GetViewportCenteredPlacement(
+                        NodeViewModel.StandardWidth,
+                        NodeViewModel.StandardHeight);
                     if (swarmKind == RuntimeResourceKind.SwarmService)
                         await ShowSwarmServiceDialogAndCreateAsync(vm, placement.X, placement.Y);
                     else if (swarmKind is RuntimeResourceKind.SwarmSecret or RuntimeResourceKind.SwarmConfig)
@@ -194,13 +197,15 @@ namespace DockerDiagram
                 {
                     if (vm != null)
                     {
-                        Point placement = GetViewportCenteredPlacement(160, 80);
+                        Point placement = GetViewportCenteredPlacement(
+                            NodeViewModel.StandardWidth,
+                            NodeViewModel.StandardHeight);
                         double defaultX = placement.X;
                         double defaultY = placement.Y;
 
                         if (type == NodeType.Container)
                         {
-                            var dlg = new Views.ContainerDialog(_dialogService, vm.ActiveSheet?.DockerService);
+                            var dlg = new Views.ContainerDialog(_dialogService, vm.ActiveSheet?.DockerService, vm.ActiveSheet?.Profile);
                             dlg.Owner = this;
 
                             if (dlg.ShowDialog() == true)
@@ -218,7 +223,7 @@ namespace DockerDiagram
                                         await vm.CreateNewContainerNodeAsync(
                                             dlg.ContainerName, imageReference.Repository, imageReference.Tag,
                                             dlg.Ports, dlg.EnvVars,
-                                            dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount, defaultX, defaultY,
+                                            dlg.Mounts, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount, defaultX, defaultY,
                                             dlg.SelectedNetwork, dlg.Command, dlg.IsInteractive,
                                             dlg.RegUser, dlg.RegPass, dlg.RegServer);
                                     }
@@ -273,8 +278,8 @@ namespace DockerDiagram
             // 마우스 드롭 좌표를 캔버스 내부 좌표로 변환 및 10단위 스냅(Snap) 처리
             Point mouseOnScreen = e.GetPosition((UIElement)ZoomPanGrid.Parent);
             Point worldPos = ZoomPanGrid.RenderTransform.Inverse.Transform(mouseOnScreen);
-            double snapX = Math.Round((worldPos.X - 80) / 10) * 10;
-            double snapY = Math.Round((worldPos.Y - 40) / 10) * 10;
+            double snapX = DiagramMetrics.SnapToGrid(worldPos.X - (NodeViewModel.StandardWidth / 2));
+            double snapY = DiagramMetrics.SnapToGrid(worldPos.Y - (NodeViewModel.StandardHeight / 2));
 
             bool needsLayerUpdate = false; // 레이어 업데이트 필요 여부 체크
 
@@ -324,9 +329,9 @@ namespace DockerDiagram
                 {
                     if (d is DockerContainer container)
                     {
-                        var dlg = new Views.ContainerDialog(_dialogService, vm.ActiveSheet?.DockerService);
+                        var dlg = new Views.ContainerDialog(_dialogService, vm.ActiveSheet?.DockerService, vm.ActiveSheet?.Profile);
                         dlg.Owner = this;
-                        if (container.Image != "New Container") dlg.ImageName = container.Image;
+                        if (container.Image != "새 컨테이너") dlg.ImageName = container.Image;
 
                         if (dlg.ShowDialog() == true)
                         {
@@ -340,7 +345,7 @@ namespace DockerDiagram
                                     var imageReference = DockerImageReferenceParser.Split(dlg.ImageName);
 
                                     await vm.CreateNewContainerNodeAsync(dlg.ContainerName, imageReference.Repository, imageReference.Tag,
-                                        dlg.Ports, dlg.EnvVars, dlg.Volumes, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount, snapX, snapY,
+                                        dlg.Ports, dlg.EnvVars, dlg.Mounts, dlg.RestartPolicy, dlg.MemoryMb, dlg.CpuCount, snapX, snapY,
                                         dlg.SelectedNetwork, dlg.Command, dlg.IsInteractive,
                                         dlg.RegUser, dlg.RegPass, dlg.RegServer);
                                 }
@@ -363,7 +368,7 @@ namespace DockerDiagram
                     }
                     else if (d is DockerVolume volume)
                     {
-                        if (volume.Name == "New Volume")
+                        if (volume.Name == "새 볼륨")
                         {
                             var dlg = new Views.VolumeDialog(_dialogService);
                             dlg.Owner = this;
@@ -387,9 +392,9 @@ namespace DockerDiagram
                     if (d is DockerContainer existingContainer)
                     {
                         // 도커 상태값에 맞춰 노드 상태 색상을 갱신
-                        if (string.Equals(existingContainer.State, "running", StringComparison.OrdinalIgnoreCase)) existingContainer.StateColor = "#28a745";
-                        else if (string.Equals(existingContainer.State, "exited", StringComparison.OrdinalIgnoreCase) || string.Equals(existingContainer.State, "dead", StringComparison.OrdinalIgnoreCase)) existingContainer.StateColor = "#dc3545";
-                        else existingContainer.StateColor = "#808080";
+                        if (string.Equals(existingContainer.State, "running", StringComparison.OrdinalIgnoreCase)) existingContainer.StateColor = StatusColors.Running;
+                        else if (string.Equals(existingContainer.State, "exited", StringComparison.OrdinalIgnoreCase) || string.Equals(existingContainer.State, "dead", StringComparison.OrdinalIgnoreCase)) existingContainer.StateColor = StatusColors.Failed;
+                        else existingContainer.StateColor = StatusColors.Unknown;
                     }
                     await vm.CreateNodeAtAsync(d, snapX, snapY);
                 }
@@ -413,12 +418,12 @@ namespace DockerDiagram
             RefreshKubernetesRelationships(vm.ActiveSheet);
         }
 
-        private void RefreshKubernetesRelationships(SheetViewModel? sheet)
+        private static void RefreshKubernetesRelationships(SheetViewModel? sheet)
         {
             if (sheet?.RuntimeKind != RuntimeKind.Kubernetes)
                 return;
 
-            new KubernetesRelationshipService().RefreshRelationships(sheet);
+            KubernetesRelationshipService.RefreshRelationships(sheet);
         }
 
         /// <summary>
@@ -519,14 +524,18 @@ namespace DockerDiagram
 
             if (element.DataContext is DockerContainer container)
             {
-                Point placement = GetViewportCenteredPlacement(160, 80);
+                Point placement = GetViewportCenteredPlacement(
+                    NodeViewModel.StandardWidth,
+                    NodeViewModel.StandardHeight);
                 await vm.CreateNodeAtAsync(container, placement.X, placement.Y);
                 vm.Explorer.UpdateAvailableItems();
                 e.Handled = true;
             }
             else if (element.DataContext is DockerVolume volume)
             {
-                Point placement = GetViewportCenteredPlacement(160, 80);
+                Point placement = GetViewportCenteredPlacement(
+                    NodeViewModel.StandardWidth,
+                    NodeViewModel.StandardHeight);
                 await vm.CreateNodeAtAsync(volume, placement.X, placement.Y);
                 vm.Explorer.UpdateAvailableItems();
                 e.Handled = true;
@@ -543,7 +552,9 @@ namespace DockerDiagram
             else if (element.DataContext is SwarmDataResourceSnapshot dataResource &&
                      vm.ActiveSheet?.RuntimeKind == RuntimeKind.DockerSwarm)
             {
-                Point placement = GetViewportCenteredPlacement(160, 80);
+                Point placement = GetViewportCenteredPlacement(
+                    NodeViewModel.StandardWidth,
+                    NodeViewModel.StandardHeight);
                 await vm.PlaceExistingSwarmDataResourceNodeAsync(dataResource, placement.X, placement.Y);
                 vm.Explorer.UpdateAvailableItems();
                 e.Handled = true;
@@ -706,7 +717,7 @@ namespace DockerDiagram
                     ViewModel.ActiveSheet.DockerService);
             }
 
-            var dialog = new Views.StackTemplateDialog(template, suggestedProjectName)
+            var dialog = new Views.StackTemplateDialog(_dialogService, template, suggestedProjectName)
             {
                 Owner = this
             };

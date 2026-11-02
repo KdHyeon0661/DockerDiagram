@@ -12,6 +12,7 @@ namespace DockerDiagram.Models
         public bool Internal { get; set; }
         public bool Attachable { get; set; }
         public bool EnableIPv6 { get; set; }
+        public bool Ingress { get; set; }
         public bool External { get; set; }
         public string ComposeNetworkName { get; set; } = "";
         public string ComposeRawNetworkYaml { get; set; } = "";

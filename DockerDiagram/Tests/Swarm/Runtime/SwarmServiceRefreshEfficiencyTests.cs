@@ -8,9 +8,9 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmServiceRefreshEfficiencyTests
 {
     [Fact]
-    public async Task RefreshService_UsesCombinedTaskSnapshotWithoutSecondNodeQuery()
+    public async Task RefreshServiceUsesCombinedTaskSnapshotWithoutSecondNodeQuery()
     {
-        IDockerService dockerService = DispatchProxy.Create<IDockerService, RefreshDockerServiceProxy>();
+        using IDockerService dockerService = DispatchProxy.Create<IDockerService, RefreshDockerServiceProxy>();
         var tracker = (RefreshDockerServiceProxy)(object)dockerService;
         IDialogService dialogService = DispatchProxy.Create<IDialogService, UnexpectedDialogServiceProxy>();
         var sheet = new SheetViewModel(

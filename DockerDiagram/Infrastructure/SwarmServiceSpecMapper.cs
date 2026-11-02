@@ -138,7 +138,7 @@ namespace DockerDiagram.Infrastructure
                     ["Replicated"] = new JObject { ["Replicas"] = options.Replicas!.Value }
                 },
                 SwarmServiceModeKind.Global => new JObject { ["Global"] = new JObject() },
-                _ => throw new ArgumentOutOfRangeException(nameof(options.Mode), options.Mode, "지원하지 않는 Swarm service mode입니다.")
+                _ => throw new ArgumentOutOfRangeException(nameof(options), options.Mode, "지원하지 않는 Swarm service mode입니다.")
             };
 
         private static JObject BuildRestartPolicy(SwarmRestartPolicyOptions policy)
@@ -329,7 +329,7 @@ namespace DockerDiagram.Infrastructure
             return ReadWarnings(JObject.Parse(responseBody));
         }
 
-        private static IReadOnlyList<string> ReadWarnings(JObject response)
+        private static string[] ReadWarnings(JObject response)
         {
             if (response["Warnings"] is not JArray warnings)
                 return Array.Empty<string>();

@@ -1,10 +1,10 @@
+using System.Net;
+using System.Net.Http;
 using Docker.DotNet;
 using DockerDiagram.ApplicationServices;
 using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 using Newtonsoft.Json.Linq;
-using System.Net;
-using System.Net.Http;
 
 namespace DockerDiagram.Infrastructure
 {
@@ -123,7 +123,7 @@ namespace DockerDiagram.Infrastructure
                 JObject updated = await MakeRawDockerRequestAsync<JObject>(
                     HttpMethod.Get,
                     $"nodes/{Uri.EscapeDataString(nodeId)}",
-                    cancellationToken: CancellationToken.None);
+                    cancellationToken: cancellationToken);
                 newVersion = ReadNodeVersion(updated, nodeId);
             }
             catch (Exception ex)

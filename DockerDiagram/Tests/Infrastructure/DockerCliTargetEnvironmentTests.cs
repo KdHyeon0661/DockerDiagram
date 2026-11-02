@@ -8,7 +8,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerCliTargetEnvironmentTests
 {
     [Fact]
-    public void LocalProfile_ReplacesInheritedTarget()
+    public void LocalProfileReplacesInheritedTarget()
     {
         var startInfo = new ProcessStartInfo();
         startInfo.Environment["DOCKER_CONTEXT"] = "production";
@@ -21,13 +21,13 @@ public sealed class DockerCliTargetEnvironmentTests
         Assert.False(startInfo.Environment.ContainsKey("DOCKER_CONTEXT"));
         Assert.Equal(
             RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                ? "npipe://./pipe/docker_engine"
+                ? "npipe:////./pipe/docker_engine"
                 : "unix:///var/run/docker.sock",
             startInfo.Environment["DOCKER_HOST"]);
     }
 
     [Fact]
-    public void RemoteProfiles_ReplaceInheritedContext()
+    public void RemoteProfilesReplaceInheritedContext()
     {
         var tunnelStartInfo = new ProcessStartInfo();
         tunnelStartInfo.Environment["DOCKER_CONTEXT"] = "production";
@@ -54,5 +54,27 @@ public sealed class DockerCliTargetEnvironmentTests
 
         Assert.False(contextStartInfo.Environment.ContainsKey("DOCKER_CONTEXT"));
         Assert.Equal("tcp://manager.example:2376", contextStartInfo.Environment["DOCKER_HOST"]);
+    }
+
+    [Fact]
+    public void NamedDockerContextUsesContextSoCliKeepsItsTlsConfiguration()
+    {
+        var startInfo = new ProcessStartInfo();
+        startInfo.Environment["DOCKER_HOST"] = "tcp://wrong-cluster:2375";
+        startInfo.Environment["DOCKER_TLS_VERIFY"] = "1";
+
+        DockerCliTargetEnvironment.Apply(
+            startInfo,
+            new ConnectionProfile
+            {
+                Type = EndpointType.DockerContext,
+                DockerContextName = "production",
+                DockerEndpoint = "tcp://manager.example:2376",
+                DockerTlsEnabled = true
+            });
+
+        Assert.Equal("production", startInfo.Environment["DOCKER_CONTEXT"]);
+        Assert.False(startInfo.Environment.ContainsKey("DOCKER_HOST"));
+        Assert.False(startInfo.Environment.ContainsKey("DOCKER_TLS_VERIFY"));
     }
 }

@@ -1,15 +1,15 @@
-using DockerDiagram.Contracts;
-using DockerDiagram.Common;
-using Docker.DotNet.Models;
-using DockerDiagram.Models;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
 using System.Windows;
+using Docker.DotNet.Models;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Infrastructure;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
@@ -22,6 +22,12 @@ namespace DockerDiagram.ViewModels
         private string _ipv4 = "-";
         private string _ipv6 = "-";
         private bool _isAdvancedExpanded;
+        private bool _hasPendingChanges;
+        private bool _suppressChangeTracking;
+        private string _actualStaticIPv4 = string.Empty;
+        private string _actualStaticIPv6 = string.Empty;
+        private string _actualAliasesText = string.Empty;
+        private string _actualDriverOptionsText = string.Empty;
 
         public string NetworkName { get; set; } = string.Empty;
         public string IPv4
@@ -41,6 +47,12 @@ namespace DockerDiagram.ViewModels
         }
         public Action<ContainerNetworkDetailViewModel>? OptionsChanged { get; set; }
         public AsyncRelayCommand? ApplyCommand { get; set; }
+        public RelayCommand? ResetCommand { get; set; }
+        public bool HasPendingChanges
+        {
+            get => _hasPendingChanges;
+            private set => SetProperty(ref _hasPendingChanges, value);
+        }
 
         public string StaticIPv4
         {
@@ -48,7 +60,7 @@ namespace DockerDiagram.ViewModels
             set
             {
                 if (SetProperty(ref _staticIPv4, value))
-                    OptionsChanged?.Invoke(this);
+                    TrackChange();
             }
         }
 
@@ -58,7 +70,7 @@ namespace DockerDiagram.ViewModels
             set
             {
                 if (SetProperty(ref _staticIPv6, value))
-                    OptionsChanged?.Invoke(this);
+                    TrackChange();
             }
         }
 
@@ -68,7 +80,7 @@ namespace DockerDiagram.ViewModels
             set
             {
                 if (SetProperty(ref _aliasesText, value))
-                    OptionsChanged?.Invoke(this);
+                    TrackChange();
             }
         }
 
@@ -78,8 +90,53 @@ namespace DockerDiagram.ViewModels
             set
             {
                 if (SetProperty(ref _driverOptionsText, value))
-                    OptionsChanged?.Invoke(this);
+                    TrackChange();
             }
+        }
+
+        public void SetActualOptions(
+            string staticIPv4,
+            string staticIPv6,
+            IEnumerable<string>? aliases,
+            IDictionary<string, string>? driverOptions,
+            bool resetEditor)
+        {
+            _actualStaticIPv4 = staticIPv4 ?? string.Empty;
+            _actualStaticIPv6 = staticIPv6 ?? string.Empty;
+            _actualAliasesText = string.Join(", ", aliases ?? []);
+            _actualDriverOptionsText = string.Join(
+                ", ",
+                (driverOptions ?? new Dictionary<string, string>())
+                    .Select(kv => $"{kv.Key}={kv.Value}"));
+
+            if (resetEditor && !HasPendingChanges)
+                ResetToActual();
+        }
+
+        public void ResetToActual()
+        {
+            _suppressChangeTracking = true;
+            try
+            {
+                StaticIPv4 = _actualStaticIPv4;
+                StaticIPv6 = _actualStaticIPv6;
+                AliasesText = _actualAliasesText;
+                DriverOptionsText = _actualDriverOptionsText;
+                HasPendingChanges = false;
+            }
+            finally
+            {
+                _suppressChangeTracking = false;
+            }
+        }
+
+        public void MarkApplied() => HasPendingChanges = false;
+
+        private void TrackChange()
+        {
+            if (_suppressChangeTracking) return;
+            HasPendingChanges = true;
+            OptionsChanged?.Invoke(this);
         }
     }
 
@@ -90,16 +147,36 @@ namespace DockerDiagram.ViewModels
     {
         private readonly NodeViewModel _node;
         private readonly IDialogService _dialogService;
-        private Dictionary<string, string> _ipMap = new();
-        private Dictionary<string, ContainerNetworkOptions> _optionsMap = new();
+        private Dictionary<string, string> _ipMap = [];
+        private Dictionary<string, ContainerNetworkOptions> _optionsMap = [];
+        private string? _selectedNetworkToConnect;
+        private DateTimeOffset _availableNetworksRefreshedAt = DateTimeOffset.MinValue;
 
         public ContainerNetworkViewModel(NodeViewModel node, IDialogService dialogService)
         {
             _node = node;
             _dialogService = dialogService;
+            ConnectSelectedNetworkCommand = new AsyncRelayCommand(
+                _ => ConnectSelectedNetworkAsync(),
+                _ => !string.IsNullOrWhiteSpace(SelectedNetworkToConnect));
+            DisconnectNetworkCommand = new AsyncRelayCommand(
+                item => DisconnectNetworkAsync(item as ContainerNetworkDetailViewModel),
+                item => item is ContainerNetworkDetailViewModel);
         }
 
-        public ObservableCollection<ContainerNetworkDetailViewModel> Details { get; } = new();
+        public ObservableCollection<ContainerNetworkDetailViewModel> Details { get; } = [];
+        public ObservableCollection<string> AvailableNetworks { get; } = [];
+        public string? SelectedNetworkToConnect
+        {
+            get => _selectedNetworkToConnect;
+            set
+            {
+                if (SetProperty(ref _selectedNetworkToConnect, value))
+                    ConnectSelectedNetworkCommand.RaiseCanExecuteChanged();
+            }
+        }
+        public AsyncRelayCommand ConnectSelectedNetworkCommand { get; }
+        public AsyncRelayCommand DisconnectNetworkCommand { get; }
 
         public string NetworkSummary => FormatSummary(Details.Select(detail => detail.NetworkName), 28);
         public string IPv4Summary => FormatSummary(Details.Select(detail => detail.IPv4), 28);
@@ -138,14 +215,16 @@ namespace DockerDiagram.ViewModels
         public Dictionary<string, string> IpMap
         {
             get => _ipMap;
-            set => SetProperty(ref _ipMap, value ?? new Dictionary<string, string>());
+            set => SetProperty(ref _ipMap, value ?? []);
         }
 
         public Dictionary<string, ContainerNetworkOptions> OptionsMap
         {
             get => _optionsMap;
-            set => SetProperty(ref _optionsMap, value ?? new Dictionary<string, ContainerNetworkOptions>());
+            set => SetProperty(ref _optionsMap, value ?? []);
         }
+
+        private static readonly char[] separator = new[] { ',', ';', '\r', '\n' };
 
         public ContainerNetworkOptions? GetOptions(string networkName)
         {
@@ -202,22 +281,22 @@ namespace DockerDiagram.ViewModels
 
                 if (detail == null)
                 {
-                    var options = GetOptions(network.Key) ?? new ContainerNetworkOptions();
                     string networkName = network.Key;
                     detail = new ContainerNetworkDetailViewModel
                     {
                         NetworkName = networkName,
                         IPv4 = string.IsNullOrEmpty(ipv4) ? "-" : ipv4,
                         IPv6 = string.IsNullOrEmpty(ipv6) ? "-" : ipv6,
-                        StaticIPv4 = options.StaticIPv4,
-                        StaticIPv6 = options.StaticIPv6,
-                        AliasesText = string.Join(", ", options.Aliases),
-                        DriverOptionsText = string.Join(
-                            ", ",
-                            options.DriverOptions.Select(kv => $"{kv.Key}={kv.Value}")),
-                        OptionsChanged = SetOptions,
+                        OptionsChanged = MarkOptionsPending,
                         ApplyCommand = new AsyncRelayCommand(_ => ApplyOptionsAsync(networkName))
                     };
+                    detail.ResetCommand = new RelayCommand(_ => detail.ResetToActual());
+                    detail.SetActualOptions(
+                        network.Value.IPAMConfig?.IPv4Address ?? string.Empty,
+                        network.Value.IPAMConfig?.IPv6Address ?? string.Empty,
+                        network.Value.Aliases,
+                        network.Value.DriverOpts,
+                        resetEditor: true);
                     Details.Insert(targetIndex, detail);
                 }
                 else
@@ -228,6 +307,12 @@ namespace DockerDiagram.ViewModels
 
                     detail.IPv4 = string.IsNullOrEmpty(ipv4) ? "-" : ipv4;
                     detail.IPv6 = string.IsNullOrEmpty(ipv6) ? "-" : ipv6;
+                    detail.SetActualOptions(
+                        network.Value.IPAMConfig?.IPv4Address ?? string.Empty,
+                        network.Value.IPAMConfig?.IPv6Address ?? string.Empty,
+                        network.Value.Aliases,
+                        network.Value.DriverOpts,
+                        resetEditor: true);
                 }
             }
 
@@ -249,12 +334,76 @@ namespace DockerDiagram.ViewModels
             OnPropertyChanged(nameof(IPv6Details));
         }
 
+        public async Task RefreshAvailableNetworksAsync(bool force = false)
+        {
+            if (!force && DateTimeOffset.UtcNow - _availableNetworksRefreshedAt < RuntimeSyncTiming.ResourceCacheTtl)
+                return;
+            if (_node.ParentSheet?.DockerService is not INetworkService networkService)
+                return;
+
+            var connected = new HashSet<string>(Details.Select(item => item.NetworkName), StringComparer.OrdinalIgnoreCase);
+            var networks = await networkService.GetNetworksAsync();
+            var candidates = networks
+                .Select(network => string.IsNullOrWhiteSpace(network.Name) ? network.Id : network.Name)
+                .Where(name => DockerNetworkSafety.IsUserSelectable(name) && !connected.Contains(name))
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            AvailableNetworks.Clear();
+            foreach (string network in candidates)
+                AvailableNetworks.Add(network);
+            if (SelectedNetworkToConnect == null || !AvailableNetworks.Contains(SelectedNetworkToConnect))
+                SelectedNetworkToConnect = AvailableNetworks.FirstOrDefault();
+            _availableNetworksRefreshedAt = DateTimeOffset.UtcNow;
+        }
+
+        private async Task ConnectSelectedNetworkAsync()
+        {
+            if (_node.ParentSheet?.DockerService is not INetworkService networkService ||
+                string.IsNullOrWhiteSpace(SelectedNetworkToConnect) ||
+                string.IsNullOrWhiteSpace(_node.ContainerId)) return;
+
+            string networkName = SelectedNetworkToConnect;
+            try
+            {
+                await networkService.ConnectNetworkAsync(networkName, _node.ContainerId);
+                await _node.RefreshDetailsAsync(refreshMonitoring: false);
+                await RefreshAvailableNetworksAsync(force: true);
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"'{networkName}' 네트워크 연결 실패:\n{ex.GetBaseException().Message}", "네트워크 연결");
+            }
+        }
+
+        private async Task DisconnectNetworkAsync(ContainerNetworkDetailViewModel? detail)
+        {
+            if (detail == null ||
+                _node.ParentSheet?.DockerService is not INetworkService networkService ||
+                string.IsNullOrWhiteSpace(_node.ContainerId)) return;
+            if (!_dialogService.ShowConfirm(
+                    $"'{detail.NetworkName}' 네트워크 연결을 해제하시겠습니까?\n통신이 즉시 중단됩니다.",
+                    "네트워크 연결 해제")) return;
+
+            try
+            {
+                await networkService.DisconnectNetworkAsync(detail.NetworkName, _node.ContainerId);
+                await _node.RefreshDetailsAsync(refreshMonitoring: false);
+                await RefreshAvailableNetworksAsync(force: true);
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError($"'{detail.NetworkName}' 네트워크 연결 해제 실패:\n{ex.GetBaseException().Message}", "네트워크 연결 해제");
+            }
+        }
+
         public async Task<bool> ValidateBeforeConnectAsync(
             INetworkService networkService,
             string networkName,
-            string? dockerNetworkName = null)
+            string? dockerNetworkName = null,
+            ContainerNetworkOptions? pendingOptions = null)
         {
-            var options = GetOptions(networkName);
+            var options = pendingOptions ?? GetOptions(networkName);
             if (options == null || !options.HasAnyOption) return true;
 
             string inspectName = string.IsNullOrWhiteSpace(dockerNetworkName)
@@ -335,28 +484,35 @@ namespace DockerDiagram.ViewModels
             return true;
         }
 
-        private void SetOptions(ContainerNetworkDetailViewModel detail)
+        private void MarkOptionsPending(ContainerNetworkDetailViewModel detail)
         {
-            if (string.IsNullOrWhiteSpace(detail.NetworkName)) return;
+            // 편집 중인 값은 Docker에 적용되기 전까지 다이어그램 저장 상태를 변경하지 않습니다.
+        }
 
-            string optionKey = ResolveDiagramNetworkName(detail.NetworkName) ?? detail.NetworkName;
-            var options = new ContainerNetworkOptions
+        private static ContainerNetworkOptions BuildOptions(ContainerNetworkDetailViewModel detail)
+        {
+            return new ContainerNetworkOptions
             {
                 StaticIPv4 = detail.StaticIPv4.Trim(),
                 StaticIPv6 = detail.StaticIPv6.Trim(),
                 Aliases = ParseList(detail.AliasesText),
                 DriverOptions = ParseKeyValueText(detail.DriverOptionsText)
             };
+        }
+
+        private void SaveOptions(string networkName, ContainerNetworkOptions options)
+        {
+            string optionKey = ResolveDiagramNetworkName(networkName) ?? networkName;
 
             if (options.HasAnyOption)
-                OptionsMap[optionKey] = options;
+                OptionsMap[optionKey] = options.Clone();
             else
                 OptionsMap.Remove(optionKey);
 
-            if (!string.Equals(optionKey, detail.NetworkName, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(optionKey, networkName, StringComparison.OrdinalIgnoreCase))
             {
-                OptionsMap.Remove(detail.NetworkName);
-                IpMap.Remove(detail.NetworkName);
+                OptionsMap.Remove(networkName);
+                IpMap.Remove(networkName);
             }
 
             if (string.IsNullOrWhiteSpace(options.StaticIPv4))
@@ -390,7 +546,13 @@ namespace DockerDiagram.ViewModels
             try
             {
                 if (!ValidateDriverOptionsText(networkName)) return;
-                if (!await ValidateBeforeConnectAsync(networkService, networkName)) return;
+                var detail = Details.FirstOrDefault(item => item.NetworkName == networkName);
+                if (detail == null) return;
+                ContainerNetworkOptions pendingOptions = BuildOptions(detail);
+                if (!await ValidateBeforeConnectAsync(
+                        networkService,
+                        networkName,
+                        pendingOptions: pendingOptions)) return;
 
                 var result = _dialogService.ShowYesNoCancel(
                     $"'{networkName}' 네트워크 옵션을 적용하려면 컨테이너 네트워크 연결을 재생성해야 합니다.\n" +
@@ -402,11 +564,9 @@ namespace DockerDiagram.ViewModels
                 {
                     await networkService.DisconnectNetworkAsync(networkName, _node.ContainerId);
                 }
-                catch (Exception ex) when (
-                    ex.Message.Contains("is not connected") ||
-                    ex.Message.Contains("연결되어 있지"))
+                catch (Exception ex) when (DockerErrorClassifier.IsNotConnected(ex))
                 {
-                    Debug.WriteLine($"[DockerDiscovery] Apply network options skipped disconnect: {ex.Message}");
+                    AppLog.Info($"네트워크 옵션 적용 전 연결 해제를 건너뜁니다: {ex.Message}");
                 }
 
                 try
@@ -414,7 +574,7 @@ namespace DockerDiagram.ViewModels
                     await networkService.ConnectNetworkAsync(
                         networkName,
                         _node.ContainerId,
-                        GetOptions(networkName));
+                        pendingOptions.HasAnyOption ? pendingOptions : null);
                 }
                 catch
                 {
@@ -424,13 +584,14 @@ namespace DockerDiagram.ViewModels
                     }
                     catch (Exception rollbackException)
                     {
-                        Debug.WriteLine(
-                            $"[DockerDiscovery] Network option rollback failed: {rollbackException.Message}");
+                        AppLog.Warning("컨테이너 네트워크 옵션 롤백 실패", rollbackException);
                     }
 
                     throw;
                 }
 
+                SaveOptions(networkName, pendingOptions);
+                detail.MarkApplied();
                 await _node.RefreshDetailsAsync();
             }
             catch (Exception ex)
@@ -447,9 +608,9 @@ namespace DockerDiagram.ViewModels
             if (detail == null || string.IsNullOrWhiteSpace(detail.DriverOptionsText)) return true;
 
             var invalid = detail.DriverOptionsText
-                .Split(new[] { ',', ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Split(separator, StringSplitOptions.RemoveEmptyEntries)
                 .Select(item => item.Trim())
-                .FirstOrDefault(item => !item.Contains('=') || item.StartsWith("="));
+                .FirstOrDefault(item => !item.Contains('=') || item.StartsWith('='));
             if (invalid == null) return true;
 
             _dialogService.ShowError(
@@ -514,7 +675,7 @@ namespace DockerDiagram.ViewModels
             var subnets = network.IPAM?.Config?
                 .Select(config => config.Subnet)
                 .Where(subnet => !string.IsNullOrWhiteSpace(subnet) && IsCidrFamily(subnet!, isIPv6))
-                .ToList() ?? new List<string>();
+                .ToList() ?? [];
 
             if (subnets.Count == 0)
             {
@@ -536,8 +697,7 @@ namespace DockerDiagram.ViewModels
 
         private static bool IsEndpointDriverOptionsDefinitelyUnsupported(string? driver)
         {
-            return string.Equals(driver, "host", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(driver, "none", StringComparison.OrdinalIgnoreCase);
+            return DockerNetworkSafety.DisallowsEndpointOptions(driver);
         }
 
         private static string NormalizeEndpointIp(string? endpointIp)
@@ -591,7 +751,7 @@ namespace DockerDiagram.ViewModels
         private static List<string> ParseList(string text)
         {
             return (text ?? string.Empty)
-                .Split(new[] { ',', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Split(separator, StringSplitOptions.RemoveEmptyEntries)
                 .Select(item => item.Trim())
                 .Where(item => !string.IsNullOrWhiteSpace(item))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -600,16 +760,14 @@ namespace DockerDiagram.ViewModels
 
         private static Dictionary<string, string> ParseKeyValueText(string text)
         {
-            return (text ?? string.Empty)
-                .Split(new[] { ',', ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(item => item.Trim())
-                .Where(item => item.Contains('=') && !item.StartsWith("="))
-                .Select(item => item.Split(new[] { '=' }, 2))
-                .GroupBy(parts => parts[0].Trim(), StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    group => group.Key,
-                    group => group.Last()[1].Trim(),
-                    StringComparer.OrdinalIgnoreCase);
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string entry in KeyValueTextParser.ReadEntries(text, separator))
+            {
+                if (KeyValueTextParser.TrySplitEntry(entry, out string key, out string value))
+                    result[key] = value;
+            }
+
+            return result;
         }
     }
 }

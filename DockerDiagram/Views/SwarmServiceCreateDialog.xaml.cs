@@ -1,7 +1,7 @@
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.Models;
 using System.Windows;
 using System.Windows.Controls;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.Views
 {
@@ -86,13 +86,15 @@ namespace DockerDiagram.Views
         private static string SelectedTag(ComboBox comboBox) =>
             (comboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? string.Empty;
 
-        private static IReadOnlyList<string> ParseLines(string text) =>
+        private static readonly string[] separator = new[] { "\r\n", "\n" };
+
+        private static string[] ParseLines(string text) =>
             (text ?? string.Empty)
-                .Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Split(separator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
 
-        private static IReadOnlyList<SwarmServiceResourceReferenceOptions> ParseReferences(
+        private static List<SwarmServiceResourceReferenceOptions> ParseReferences(
             string text,
             SwarmDataResourceKind kind,
             IReadOnlyList<SwarmDataResourceSnapshot> available)

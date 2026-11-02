@@ -51,7 +51,7 @@ namespace DockerDiagram.Infrastructure
             IReadOnlyList<string> candidates = hostCandidates ?? SwarmAdvertiseAddressDiscovery.GetIpv4Candidates();
             return new SwarmInitializationDefaults(
                 candidates,
-                candidates.FirstOrDefault() ?? string.Empty,
+                candidates.Count > 0 ? candidates[0] : string.Empty,
                 "0.0.0.0:2377",
                 IsDockerDesktopLocalDemo: false);
         }

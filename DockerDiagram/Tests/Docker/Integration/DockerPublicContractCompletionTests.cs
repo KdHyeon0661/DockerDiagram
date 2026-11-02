@@ -7,7 +7,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerPublicContractCompletionTests
 {
     [Fact]
-    public async Task ComposeUp_RejectsMissingFileBeforeStartingDockerCli()
+    public async Task ComposeUpRejectsMissingFileBeforeStartingDockerCli()
     {
         string missing = Path.Combine(Path.GetTempPath(), $"missing-compose-{Guid.NewGuid():N}.yml");
         var compose = new DockerComposeCliService();
@@ -17,7 +17,7 @@ public sealed class DockerPublicContractCompletionTests
     }
 
     [Fact]
-    public async Task PullWithProgress_ForwardsProgressObjectAndDefaultsBlankTag()
+    public async Task PullWithProgressForwardsProgressObjectAndDefaultsBlankTag()
     {
         await using var server = new ScriptedDockerApiServer(
             new ScriptedDockerApiServer.Response(
@@ -39,7 +39,7 @@ public sealed class DockerPublicContractCompletionTests
     }
 
     [Fact]
-    public async Task FireAndForgetExecuteCommand_ContainsDockerFailureAtWrapperBoundary()
+    public async Task FireAndForgetExecuteCommandContainsDockerFailureAtWrapperBoundary()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""{"Id":"container-1","Platform":"linux"}"""),

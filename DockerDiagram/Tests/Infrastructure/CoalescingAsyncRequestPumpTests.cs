@@ -5,7 +5,7 @@ namespace DockerDiagram.Tests;
 public sealed class CoalescingAsyncRequestPumpTests
 {
     [Fact]
-    public async Task RequestPump_AllowsSequentialRequestsAfterSynchronousCompletion()
+    public async Task RequestPumpAllowsSequentialRequestsAfterSynchronousCompletion()
     {
         int runs = 0;
         using var pump = new CoalescingAsyncRequestPump(() =>
@@ -22,7 +22,7 @@ public sealed class CoalescingAsyncRequestPumpTests
     }
 
     [Fact]
-    public async Task RequestPump_RecoversAfterOperationFailure()
+    public async Task RequestPumpRecoversAfterOperationFailure()
     {
         int runs = 0;
         using var pump = new CoalescingAsyncRequestPump(() =>
@@ -40,7 +40,7 @@ public sealed class CoalescingAsyncRequestPumpTests
     }
 
     [Fact]
-    public async Task RequestPump_CompletesEachRequestAfterItsOwnCoalescedRun()
+    public async Task RequestPumpCompletesEachRequestAfterItsOwnCoalescedRun()
     {
         var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerSystemDiskUsageTests
 {
     [Fact]
-    public async Task DiskUsage_AggregatesCoreResourcesAndCachesResult()
+    public async Task DiskUsageAggregatesCoreResourcesAndCachesResult()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""

@@ -1,9 +1,9 @@
-using DockerDiagram.Common;
-using DockerDiagram.Models;
-using DockerDiagram.ViewModels;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using DockerDiagram.Common;
+using DockerDiagram.Models;
+using DockerDiagram.ViewModels;
 
 namespace DockerDiagram.ApplicationServices
 {
@@ -16,6 +16,8 @@ namespace DockerDiagram.ApplicationServices
         private DateTimeOffset? _lastDeployedAt;
         private string _lastError = string.Empty;
         private string _runtimeSummary = "Draft stack";
+        private bool _prune = true;
+        private bool _withRegistryAuth;
 
         public string StackName { get => _stackName; set => SetProperty(ref _stackName, value ?? string.Empty); }
         public string SourcePath { get => _sourcePath; set => SetProperty(ref _sourcePath, value ?? string.Empty); }
@@ -24,11 +26,14 @@ namespace DockerDiagram.ApplicationServices
         public DateTimeOffset? LastDeployedAt { get => _lastDeployedAt; set => SetProperty(ref _lastDeployedAt, value); }
         public string LastError { get => _lastError; set => SetProperty(ref _lastError, value ?? string.Empty); }
         public string RuntimeSummary { get => _runtimeSummary; set => SetProperty(ref _runtimeSummary, value ?? string.Empty); }
+        public bool Prune { get => _prune; set => SetProperty(ref _prune, value); }
+        public bool WithRegistryAuth { get => _withRegistryAuth; set => SetProperty(ref _withRegistryAuth, value); }
     }
 
     public static class SwarmStackSheetRegistry
     {
-        private static readonly ConditionalWeakTable<SheetViewModel, SwarmStackSheetState> States = new();
+        private static readonly ConditionalWeakTable<SheetViewModel, SwarmStackSheetState> States = [];
+        private static readonly char[] separator = new[] { '\r', '\n' };
 
         public static bool IsStackSheet(SheetViewModel? sheet) =>
             sheet?.RuntimeKind == RuntimeKind.DockerSwarm &&
@@ -56,6 +61,8 @@ namespace DockerDiagram.ApplicationServices
                     DeployState = document.Metadata.DeployState,
                     LastDeployedAt = document.Metadata.LastDeployedAt,
                     LastError = document.Metadata.LastError,
+                    Prune = document.Metadata.Prune,
+                    WithRegistryAuth = document.Metadata.WithRegistryAuth,
                     RuntimeSummary = document.Metadata.DeployState == SwarmStackDeployState.Draft
                         ? "Draft stack"
                         : document.Metadata.DeployState.ToString()
@@ -74,26 +81,52 @@ namespace DockerDiagram.ApplicationServices
                     state.SourcePath,
                     state.DeployState,
                     state.LastDeployedAt,
-                    SummarizeError(state.LastError)));
+                    SummarizeError(state.LastError),
+                    state.Prune,
+                    state.WithRegistryAuth));
         }
 
         private static string SummarizeError(string value)
         {
             string oneLine = string.Join(" ", (value ?? string.Empty)
-                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+                .Split(separator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
             return oneLine.Length <= 300 ? oneLine : oneLine[..300];
         }
     }
 
-    public sealed record SwarmStackDocumentMetadata(
-        string StackName,
-        string SourcePath,
-        SwarmStackDeployState DeployState,
-        DateTimeOffset? LastDeployedAt,
-        string LastError)
+    public sealed record SwarmStackDocumentMetadata
     {
-        public static SwarmStackDocumentMetadata Empty { get; } =
-            new(string.Empty, string.Empty, SwarmStackDeployState.Draft, null, string.Empty);
+        public SwarmStackDocumentMetadata()
+        {
+        }
+
+        public SwarmStackDocumentMetadata(
+            string stackName,
+            string sourcePath,
+            SwarmStackDeployState deployState,
+            DateTimeOffset? lastDeployedAt,
+            string lastError,
+            bool prune = true,
+            bool withRegistryAuth = false)
+        {
+            StackName = stackName ?? string.Empty;
+            SourcePath = sourcePath ?? string.Empty;
+            DeployState = deployState;
+            LastDeployedAt = lastDeployedAt;
+            LastError = lastError ?? string.Empty;
+            Prune = prune;
+            WithRegistryAuth = withRegistryAuth;
+        }
+
+        public string StackName { get; init; } = string.Empty;
+        public string SourcePath { get; init; } = string.Empty;
+        public SwarmStackDeployState DeployState { get; init; } = SwarmStackDeployState.Draft;
+        public DateTimeOffset? LastDeployedAt { get; init; }
+        public string LastError { get; init; } = string.Empty;
+        public bool Prune { get; init; } = true;
+        public bool WithRegistryAuth { get; init; }
+
+        public static SwarmStackDocumentMetadata Empty { get; } = new();
     }
 
     public sealed record SwarmStackDocumentData(string Yaml, SwarmStackDocumentMetadata Metadata);
@@ -129,9 +162,10 @@ namespace DockerDiagram.ApplicationServices
                 SwarmStackDocumentMetadata? metadata = JsonSerializer.Deserialize<SwarmStackDocumentMetadata>(json);
                 return new SwarmStackDocumentData(yaml, metadata ?? SwarmStackDocumentMetadata.Empty);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // 손상된 앱 메타데이터는 실행 YAML에 섞지 않고 Draft로 복구합니다.
+                AppLog.Warning("Swarm stack 시트 메타데이터 복원 실패", ex);
                 return new SwarmStackDocumentData(yaml, SwarmStackDocumentMetadata.Empty);
             }
         }

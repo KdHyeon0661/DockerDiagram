@@ -1,14 +1,29 @@
-﻿using DockerDiagram.Contracts;
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.Win32;
 using System.Runtime.Versioning;
+using System.Threading;
+using System.Threading.Tasks;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using Microsoft.Win32;
 
 namespace DockerDiagram.Infrastructure
 {
+    public enum DockerStartupPhase
+    {
+        Checking,
+        Launching,
+        ProcessRunning,
+        WaitingForEngine,
+        Ready
+    }
+
+    public sealed record DockerStartupProgress(
+        DockerStartupPhase Phase,
+        TimeSpan Elapsed,
+        string Message);
+
     /// <summary>
     /// 윈도우(Windows) 환경에서 도커 데스크톱(Docker Desktop) 프로세스의 실행 상태를 확인하고,
     /// 필요시 직접 실행하거나 준비 상태를 대기하는 유틸리티 클래스입니다.
@@ -18,143 +33,196 @@ namespace DockerDiagram.Infrastructure
     {
         private const string DOCKER_PROCESS_NAME = "Docker Desktop"; // 작업 관리자에 표시되는 프로세스 이름
         private const string DOCKER_EXE_NAME = "Docker Desktop.exe"; // 도커 실제 실행 파일명
-        private const string DOCKER_REGISTRY_KEY = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Docker Desktop"; // 설치 경로를 찾기 위한 레지스트리 경로
-        private const int DOCKER_TIMEOUT_SECONDS = 60; // 도커 실행 후 응답을 기다릴 최대 시간 (초)
-
+        private const string DOCKER_APP_PATH_KEY = @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\" + DOCKER_EXE_NAME;
+        private const string DOCKER_UNINSTALL_KEY = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Docker Desktop";
         /// <summary>
         /// 현재 PC에서 도커 데스크톱 프로세스가 이미 실행 중인지 확인합니다.
         /// </summary>
         public static bool IsDockerRunning()
         {
             var processes = Process.GetProcessesByName(DOCKER_PROCESS_NAME);
-            return processes.Length > 0;
+            try
+            {
+                return processes.Length > 0;
+            }
+            finally
+            {
+                foreach (Process process in processes)
+                    process.Dispose();
+            }
         }
 
         /// <summary>
-        /// 도커 데스크톱을 백그라운드에서 실행하고, 도커 엔진과 통신이 가능해질 때까지 대기합니다.
-        /// 실행 파일을 자동으로 찾지 못하면 사용자에게 직접 파일을 선택하도록 다이얼로그를 띄웁니다.
+        /// Windows 설치 정보에 등록된 Docker Desktop을 실행하고,
+        /// 도커 엔진과 통신이 가능해질 때까지 대기합니다.
         /// </summary>
-        public static async Task StartDockerAsync(ISystemService systemService, IDialogService dialogService)
+        public static async Task StartDockerAsync(
+            ISystemService systemService,
+            IProgress<DockerStartupProgress>? progress = null,
+            CancellationToken cancellationToken = default)
         {
-            if (IsDockerRunning()) return; // 이미 실행 중이면 무시
+            ArgumentNullException.ThrowIfNull(systemService);
+            cancellationToken.ThrowIfCancellationRequested();
 
-            string? dockerPath = GetDockerExecutablePath(); // 실행 파일 경로 찾기
+            var stopwatch = Stopwatch.StartNew();
+            progress?.Report(new DockerStartupProgress(
+                DockerStartupPhase.Checking,
+                stopwatch.Elapsed,
+                "Docker 엔진 연결을 확인하는 중입니다."));
 
-            // 경로를 못 찾으면 사용자에게 직접 선택할지 묻기
-            if (string.IsNullOrEmpty(dockerPath) || !File.Exists(dockerPath))
+            if (await systemService.PingAsync().WaitAsync(cancellationToken))
             {
-                bool userWantsToSelect = dialogService.ShowConfirm(
-                    "Docker Desktop 실행 파일을 자동으로 찾을 수 없습니다.\n직접 지정하시겠습니까?",
-                    "경로 확인 필요");
-
-                if (userWantsToSelect)
-                {
-                    dockerPath = dialogService.ShowOpenFileDialog(
-                        "Executable Files (*.exe)|*.exe",
-                        "Docker Desktop.exe 파일을 선택해주세요",
-                        DOCKER_EXE_NAME);
-
-                    if (string.IsNullOrWhiteSpace(dockerPath))
-                        return; // 파일 선택 취소 시 프로세스 중단
-                }
-                else
-                {
-                    return; // 경로 지정 거부 시 프로세스 중단
-                }
+                progress?.Report(new DockerStartupProgress(
+                    DockerStartupPhase.Ready,
+                    stopwatch.Elapsed,
+                    "Docker 엔진이 준비되었습니다."));
+                return;
             }
 
-            // 실행 시도
-            try
+            Process? launchedProcess = null;
+            if (!IsDockerRunning())
             {
-                Process.Start(new ProcessStartInfo
+                progress?.Report(new DockerStartupProgress(
+                    DockerStartupPhase.Launching,
+                    stopwatch.Elapsed,
+                    "Docker Desktop 실행 파일을 찾는 중입니다."));
+
+                string dockerPath = GetRegisteredDockerExecutablePath()
+                    ?? throw new FileNotFoundException(
+                        "Windows 설치 정보에 등록된 Docker Desktop 실행 파일을 찾을 수 없습니다.");
+
+                launchedProcess = Process.Start(new ProcessStartInfo
                 {
                     FileName = dockerPath,
+                    WorkingDirectory = Path.GetDirectoryName(dockerPath) ?? string.Empty,
                     UseShellExecute = true
                 });
 
-                await WaitForDockerReadyAsync(systemService); // 도커 엔진이 켜질 때까지 대기
+                if (launchedProcess == null)
+                    throw new InvalidOperationException("Windows에서 Docker Desktop 실행 요청을 처리하지 못했습니다.");
+
+                progress?.Report(new DockerStartupProgress(
+                    DockerStartupPhase.Launching,
+                    stopwatch.Elapsed,
+                    "Docker Desktop 실행을 요청했습니다."));
             }
-            catch (Exception ex)
+            else
             {
-                // 권한 부족이나 타임아웃 발생 시 에러 메시지 팝업
-                dialogService.ShowMessage($"도커 실행 실패: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 도커 엔진이 정상적으로 응답(Ping)할 때까지 최대 지정된 시간(기본 60초) 동안 1초 간격으로 확인합니다.
-        /// </summary>
-        private static async Task WaitForDockerReadyAsync(ISystemService systemService)
-        {
-            for (int i = 0; i < DOCKER_TIMEOUT_SECONDS; i++)
-            {
-                if (await systemService.PingAsync())
-                {
-                    return; // 연결 성공!
-                }
-
-                await Task.Delay(1000); // 1초 대기 후 재시도
+                progress?.Report(new DockerStartupProgress(
+                    DockerStartupPhase.ProcessRunning,
+                    stopwatch.Elapsed,
+                    "Docker Desktop 프로세스가 실행 중입니다."));
             }
 
-            throw new TimeoutException($"Docker Desktop 실행 시간이 초과되었습니다. ({DOCKER_TIMEOUT_SECONDS}초)");
-        }
-
-        /// <summary>
-        /// 레지스트리, 환경변수, 하드코딩된 기본 경로를 순차적으로 탐색하여 도커 데스크톱 실행 파일(.exe)의 위치를 찾아 반환합니다.
-        /// </summary>
-        private static string? GetDockerExecutablePath()
-        {
-            string? path = null;
-
-            // 1. 레지스트리 조회 (64비트 뷰 명시적 사용)
             try
             {
-                using (var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
-                using (var key = baseKey.OpenSubKey(DOCKER_REGISTRY_KEY))
+                await WaitForDockerReadyAsync(
+                    systemService,
+                    launchedProcess,
+                    stopwatch,
+                    progress,
+                    cancellationToken);
+            }
+            finally
+            {
+                launchedProcess?.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// 고정 시간 제한 없이 도커 엔진이 정상적으로 응답(Ping)할 때까지 상태를 확인합니다.
+        /// 사용자가 대기를 취소하거나 실제 Docker Desktop 프로세스가 종료된 경우에만 중단합니다.
+        /// </summary>
+        private static async Task WaitForDockerReadyAsync(
+            ISystemService systemService,
+            Process? launchedProcess,
+            Stopwatch stopwatch,
+            IProgress<DockerStartupProgress>? progress,
+            CancellationToken cancellationToken)
+        {
+            bool processObserved = IsDockerRunning();
+            int consecutiveMissingProcessChecks = 0;
+
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (await systemService.PingAsync().WaitAsync(cancellationToken))
                 {
-                    if (key != null)
+                    progress?.Report(new DockerStartupProgress(
+                        DockerStartupPhase.Ready,
+                        stopwatch.Elapsed,
+                        "Docker 엔진 연결이 완료되었습니다."));
+                    return;
+                }
+
+                bool processRunning = IsDockerRunning();
+                if (processRunning)
+                {
+                    processObserved = true;
+                    consecutiveMissingProcessChecks = 0;
+                }
+                else if (processObserved || launchedProcess?.HasExited == true)
+                {
+                    consecutiveMissingProcessChecks++;
+                    if (consecutiveMissingProcessChecks >= 3)
                     {
-                        object? installLoc = key.GetValue("InstallLocation");
-                        if (installLoc != null)
-                        {
-                            path = Path.Combine(installLoc.ToString()!, DOCKER_EXE_NAME);
-                            if (File.Exists(path)) return path;
-                        }
+                        throw new InvalidOperationException(
+                            "Docker Desktop 프로세스가 엔진 준비 전에 종료되었습니다.");
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[DockerDiscovery] 레지스트리 접근 실패: {ex.Message}");
-            }
 
-            // 2. 환경변수 경로 찾기 (Program Files 등 교차 검증)
-            try
-            {
-                foreach (var root in new[]
-                {
-                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                    Environment.GetEnvironmentVariable("ProgramW6432")
-                }
-                .Where(p => !string.IsNullOrWhiteSpace(p))
-                .Distinct(StringComparer.OrdinalIgnoreCase))
-                {
-                    var candidate = Path.Combine(root!, "Docker", "Docker", DOCKER_EXE_NAME);
-                    if (File.Exists(candidate))
-                        return candidate;
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[DockerDiscovery] 환경변수 경로 찾기 실패: {ex.Message}");
-            }
+                progress?.Report(new DockerStartupProgress(
+                    processRunning ? DockerStartupPhase.WaitingForEngine : DockerStartupPhase.Launching,
+                    stopwatch.Elapsed,
+                    processRunning
+                        ? "Docker Desktop은 실행 중이며 엔진이 준비되기를 기다리고 있습니다."
+                        : "Docker Desktop 프로세스가 시작되기를 기다리고 있습니다."));
 
-            // 3. 최후의 수단: 기본 설치 경로 하드코딩 확인
-            path = @"C:\Program Files\Docker\Docker\Docker Desktop.exe";
-            if (File.Exists(path)) return path;
-
-            return null; // 모든 방법 실패 시 null 반환
+                await Task.Delay(DockerConnectionTiming.ServiceStartupPollInterval, cancellationToken);
+            }
         }
+
+        /// <summary>
+        /// Docker Desktop 설치 프로그램이 등록한 사용자/시스템 설치 정보에서
+        /// 실제 실행 파일의 절대 경로를 가져옵니다.
+        /// </summary>
+        private static string? GetRegisteredDockerExecutablePath()
+        {
+            (string KeyPath, string? ValueName, bool IsInstallDirectory)[] registrations =
+            {
+                ($@"HKEY_CURRENT_USER\{DOCKER_APP_PATH_KEY}", null, false),
+                ($@"HKEY_LOCAL_MACHINE\{DOCKER_APP_PATH_KEY}", null, false),
+                ($@"HKEY_CURRENT_USER\{DOCKER_UNINSTALL_KEY}", "InstallLocation", true),
+                ($@"HKEY_LOCAL_MACHINE\{DOCKER_UNINSTALL_KEY}", "InstallLocation", true)
+            };
+
+            foreach ((string keyPath, string? valueName, bool isInstallDirectory) in registrations)
+            {
+                try
+                {
+                    string? registeredPath = Registry.GetValue(keyPath, valueName, null) as string;
+                    if (string.IsNullOrWhiteSpace(registeredPath)) continue;
+
+                    string resolvedPath = Environment
+                        .ExpandEnvironmentVariables(registeredPath)
+                        .Trim()
+                        .Trim('"');
+                    string candidate = isInstallDirectory
+                        ? Path.Combine(resolvedPath, DOCKER_EXE_NAME)
+                        : resolvedPath;
+
+                    if (File.Exists(candidate))
+                        return Path.GetFullPath(candidate);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warning($"Docker 설치 정보 조회 실패: {keyPath}", ex);
+                }
+            }
+
+            return null;
+        }
+
     }
 }

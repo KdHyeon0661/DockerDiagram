@@ -1,10 +1,11 @@
-﻿using DockerDiagram.Diagram;
-using DockerDiagram.Contracts;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 using YamlDotNet.Serialization;
@@ -27,7 +28,8 @@ namespace DockerDiagram.ApplicationServices
             IVolumeService volumeService,
             INetworkService networkService,
             IDialogService dialogService,
-            IComposeService composeService)
+            IComposeService composeService,
+            CancellationToken cancellationToken = default)
         {
             string? selectedFileName = dialogService.ShowOpenFileDialog(
                 "Docker Compose File (*.yml;*.yaml)|*.yml;*.yaml|All Files (*.*)|*.*",
@@ -35,9 +37,11 @@ namespace DockerDiagram.ApplicationServices
 
             if (string.IsNullOrEmpty(selectedFileName)) return;
 
+            SheetViewModel? pendingSheet = null;
+            bool sheetTransferred = false;
             try
             {
-                string yamlContent = File.ReadAllText(selectedFileName);
+                string yamlContent = await File.ReadAllTextAsync(selectedFileName, cancellationToken);
 
                 // YamlDotNet을 사용하여 YAML 문자열을 C# 객체(ComposeFileModel)로 역직렬화(Deserialize)
                 var deserializer = new DeserializerBuilder()
@@ -74,10 +78,11 @@ namespace DockerDiagram.ApplicationServices
                     targetDockerService = (IDockerService)containerService; // 주입받은 기본 로컬 서비스
                 }
 
-                var newSheet = new SheetViewModel(sheetName, targetProfile, targetDockerService, dialogService)
+                pendingSheet = new SheetViewModel(sheetName, targetProfile, targetDockerService, dialogService)
                 {
                     ComposeRawYaml = yamlContent
                 };
+                SheetViewModel newSheet = pendingSheet;
                 string layoutInstanceId = Guid.NewGuid().ToString("N");
                 // =================================================================
 
@@ -93,17 +98,26 @@ namespace DockerDiagram.ApplicationServices
                 {
                     foreach (var vol in composeData.Volumes)
                     {
-                        nodeMap[vol.Key] = new NodeViewModel(currentContainerSvc, currentVolumeSvc, dialogService)
-                        {
-                            Id = Guid.NewGuid().ToString(),
-                            Name = vol.Key,
-                            Type = NodeType.Volume,
-                            Width = 160,
-                            Height = 80,
-                            ComposeLayoutInstanceId = layoutInstanceId
-                        };
+                        nodeMap[vol.Key] = AddOwnedNode(
+                            newSheet,
+                            () =>
+                            {
+                                NodeViewModel node = DiagramNodeFactory.CreateVolume(
+                                    currentContainerSvc,
+                                    currentVolumeSvc,
+                                    dialogService,
+                                    vol.Key,
+                                    0,
+                                    0,
+                                    isConnected: false);
+                                node.Id = Guid.NewGuid().ToString();
+                                node.Name = vol.Key;
+                                node.Width = NodeViewModel.StandardWidth;
+                                node.Height = NodeViewModel.StandardHeight;
+                                node.ComposeLayoutInstanceId = layoutInstanceId;
+                                return node;
+                            });
                         ApplyComposeVolumeSettings(nodeMap[vol.Key], rawComposeRoot, vol.Key);
-                        newSheet.Nodes.Add(nodeMap[vol.Key]);
                     }
                 }
 
@@ -112,22 +126,27 @@ namespace DockerDiagram.ApplicationServices
                     var portBindings = ComposeYamlHelper.ToPortBindingList(svc.Value.Ports);
                     var envVars = ComposeYamlHelper.ToEnvironmentList(svc.Value.Environment);
 
-                    nodeMap[svc.Key] = new NodeViewModel(currentContainerSvc, currentVolumeSvc, dialogService)
-                    {
-                        Id = Guid.NewGuid().ToString(),
-                        Name = !string.IsNullOrEmpty(svc.Value.ContainerName) ? svc.Value.ContainerName : svc.Key,
-                        ImageName = svc.Value.Image ?? ComposeYamlHelper.GetBuildLabel(svc.Value.Build) ?? "unknown-image",
-                        Type = NodeType.Container,
-                        Width = 160,
-                        Height = 80,
-                        RestartPolicy = svc.Value.Restart ?? "no",
-                        PortBindings = portBindings,
-                        EnvironmentVariables = envVars,
-                        ComposeLayoutInstanceId = layoutInstanceId,
-                        ComposeServiceName = svc.Key,
-                        ComposeRawServiceYaml = ComposeYamlHelper.GetServiceYaml(rawComposeRoot, svc.Key)
-                    };
-                    newSheet.Nodes.Add(nodeMap[svc.Key]);
+                    nodeMap[svc.Key] = AddOwnedNode(
+                        newSheet,
+                        () =>
+                        {
+                            NodeViewModel node = DiagramNodeFactory.CreateContainer(
+                                currentContainerSvc,
+                                currentVolumeSvc,
+                                dialogService);
+                            node.Id = Guid.NewGuid().ToString();
+                            node.Name = !string.IsNullOrEmpty(svc.Value.ContainerName) ? svc.Value.ContainerName : svc.Key;
+                            node.ImageName = svc.Value.Image ?? ComposeYamlHelper.GetBuildLabel(svc.Value.Build) ?? "unknown-image";
+                            node.Width = NodeViewModel.StandardWidth;
+                            node.Height = NodeViewModel.StandardHeight;
+                            node.RestartPolicy = svc.Value.Restart ?? "no";
+                            node.PortBindings = portBindings;
+                            node.EnvironmentVariables = envVars;
+                            node.ComposeLayoutInstanceId = layoutInstanceId;
+                            node.ComposeServiceName = svc.Key;
+                            node.ComposeRawServiceYaml = ComposeYamlHelper.GetServiceYaml(rawComposeRoot, svc.Key);
+                            return node;
+                        });
                 }
 
                 // =================================================================
@@ -139,7 +158,7 @@ namespace DockerDiagram.ApplicationServices
                 if (composeData.Networks != null)
                 {
                     foreach (var net in composeData.Networks.Keys)
-                        visualGroupMap[net] = new List<NodeViewModel>();
+                        visualGroupMap[net] = [];
                 }
 
                 foreach (var svc in composeData.Services)
@@ -152,7 +171,7 @@ namespace DockerDiagram.ApplicationServices
                     {
                         foreach (var netName in serviceNetworks)
                         {
-                            if (!visualGroupMap.ContainsKey(netName)) visualGroupMap[netName] = new List<NodeViewModel>();
+                            if (!visualGroupMap.ContainsKey(netName)) visualGroupMap[netName] = [];
                             if (!visualGroupMap[netName].Contains(sourceContainer)) visualGroupMap[netName].Add(sourceContainer);
 
                             var networkOptions = ComposeYamlHelper.GetNetworkOptions(svc.Value.Networks, netName);
@@ -166,44 +185,25 @@ namespace DockerDiagram.ApplicationServices
                     {
                         const string defaultNetworkName = "default";
                         if (!visualGroupMap.ContainsKey(defaultNetworkName))
-                            visualGroupMap[defaultNetworkName] = new List<NodeViewModel>();
+                            visualGroupMap[defaultNetworkName] = [];
                         visualGroupMap[defaultNetworkName].Add(sourceContainer);
                     }
                     // 볼륨 마운트 선 연결
-                    var volumeMounts = ComposeYamlHelper.ToVolumeMounts(svc.Value.Volumes);
-                    if (volumeMounts.Count > 0)
-                    {
-                        foreach (var mount in volumeMounts)
+                    var composeMounts = ComposeYamlHelper.ToVolumeMounts(svc.Value.Volumes)
+                        .Select(mount => new ContainerMountSpec
                         {
-                            string volName = mount.Source;
-                            string mountPath = mount.Target;
-
-                            if (!nodeMap.TryGetValue(volName, out var targetVolume))
-                            {
-                                targetVolume = new NodeViewModel(currentContainerSvc, currentVolumeSvc, dialogService)
-                                {
-                                    Id = Guid.NewGuid().ToString(),
-                                    Name = volName,
-                                    Type = NodeType.Volume,
-                                    Width = 160,
-                                    Height = 80,
-                                    ComposeLayoutInstanceId = layoutInstanceId
-                                };
-                                ApplyComposeVolumeSettings(targetVolume, rawComposeRoot, volName);
-                                nodeMap[volName] = targetVolume;
-                                newSheet.Nodes.Add(targetVolume);
-                            }
-
-                            if (!newSheet.Connectors.Any(c => c.Source == sourceContainer && c.Target == targetVolume))
-                            {
-                                newSheet.Connectors.Add(new ConnectorViewModel(sourceContainer, targetVolume, PortDirection.Right, PortDirection.Left, dialogService)
-                                {
-                                    RelationType = RelationType.VolumeMount,
-                                    MountPath = mountPath
-                                });
-                            }
-                        }
-                    }
+                            Kind = mount.Kind,
+                            Source = mount.Source,
+                            Target = mount.Target,
+                            ReadOnly = mount.ReadOnly,
+                            BindPropagation = mount.BindPropagation,
+                            VolumeNoCopy = mount.VolumeNoCopy,
+                            TmpfsSizeBytes = mount.TmpfsSizeBytes,
+                            TmpfsMode = mount.TmpfsMode
+                        })
+                        .Concat(ComposeYamlHelper.ToTmpfsMounts(svc.Value.Tmpfs))
+                        .ToList();
+                    newSheet.SynchronizeContainerMounts(sourceContainer, composeMounts);
 
                     // 의존성(depends_on) 선 연결
                     var dependsOn = ComposeYamlHelper.ToDependsOnServiceNames(svc.Value.DependsOn);
@@ -251,6 +251,7 @@ namespace DockerDiagram.ApplicationServices
                 ComposeDiagramLayoutService.Arrange(newSheet, serviceNodeMap, dependencyMap, 50, 50);
 
                 mainVm.SheetManager.AddExistingSheet(newSheet);
+                sheetTransferred = true;
 
                 // =================================================================
                 // 4단계: 실제 도커 엔진에 배포(docker compose up)할지 묻는 프로세스
@@ -262,13 +263,16 @@ namespace DockerDiagram.ApplicationServices
                 if (isYes)
                 {
                     var containerNodes = newSheet.Nodes.Where(n => n.Type == NodeType.Container).ToList();
-                    foreach (var node in containerNodes) node.IsCreating = true; // UI에 로딩 스피너 표시용
+                    foreach (var node in containerNodes) node.SetLifecycleState(RuntimeLifecycleState.Creating); // UI에 로딩 스피너 표시용
 
                     try
                     {
-                        var composeResult = await composeService.UpAsync(selectedFileName, targetProfile);
+                        var composeResult = await composeService.UpAsync(
+                            selectedFileName,
+                            targetProfile,
+                            cancellationToken);
 
-                        foreach (var node in containerNodes) node.IsCreating = false;
+                        foreach (var node in containerNodes) node.EndCreating();
 
                         if (composeResult.Success)
                         {
@@ -314,9 +318,14 @@ namespace DockerDiagram.ApplicationServices
                             dialogService.ShowMessage($"도커 배포 중 오류가 발생했습니다:\n{composeResult.CombinedOutput}");
                         }
                     }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        foreach (var node in containerNodes) node.EndCreating();
+                        throw;
+                    }
                     catch (Exception ex)
                     {
-                        foreach (var node in containerNodes) node.IsCreating = false;
+                        foreach (var node in containerNodes) node.EndCreating();
                         dialogService.ShowMessage($"도커 배포 실패 (도커 엔진 상태 및 명령어 확인 필요):\n{ex.Message}");
                     }
                 }
@@ -325,9 +334,38 @@ namespace DockerDiagram.ApplicationServices
                     dialogService.ShowInfo("도커 배포를 취소했습니다. 화면에서 시각적 구성만 확인하실 수 있습니다.", "불러오기 완료");
                 }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                AppLog.Info("Compose 가져오기/배포가 애플리케이션 종료로 취소되었습니다.");
+            }
             catch (Exception ex)
             {
                 dialogService.ShowMessage($"불러오기 실패: {ex.Message}");
+            }
+            finally
+            {
+                if (!sheetTransferred)
+                    pendingSheet?.Dispose();
+            }
+        }
+
+        private static NodeViewModel AddOwnedNode(
+            SheetViewModel owner,
+            Func<NodeViewModel> createNode)
+        {
+            NodeViewModel? pendingNode = null;
+            try
+            {
+                pendingNode = createNode();
+                owner.Nodes.Add(pendingNode);
+
+                NodeViewModel ownedNode = pendingNode;
+                pendingNode = null;
+                return ownedNode;
+            }
+            finally
+            {
+                pendingNode?.Dispose();
             }
         }
 
@@ -386,9 +424,13 @@ namespace DockerDiagram.ApplicationServices
                     if (Path.GetFullPath(candidatePath).Equals(expectedPath, StringComparison.OrdinalIgnoreCase))
                         return true;
                 }
-                catch
+                catch (Exception ex)
                 {
                     // 잘못된 경로 라벨은 다른 매칭 방법으로 폴백합니다.
+                    AppLog.WarningThrottled(
+                        "compose-invalid-config-path",
+                        $"Compose 컨테이너의 config-file 라벨 경로를 해석하지 못했습니다: {candidatePath}",
+                        ex);
                 }
             }
 

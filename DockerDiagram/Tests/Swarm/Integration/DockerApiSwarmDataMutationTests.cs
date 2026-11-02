@@ -7,10 +7,15 @@ namespace DockerDiagram.Tests;
 
 public sealed class DockerApiSwarmDataMutationTests
 {
+
+    private static readonly string[] PlacementLoadAndUpdateMapAndReplaceConstraintsExpectedValues1 = new[] { " node.labels.storage==ssd " };
+    private static readonly string[] PlacementLoadAndUpdateMapAndReplaceConstraintsExpectedValues2 = new[] { "node.role==worker", "node.labels.zone==seoul" };
+    private static readonly string[] PlacementLoadAndUpdateMapAndReplaceConstraintsExpectedValues3 = new[] { "node.labels.storage==ssd" };
+
     [Theory]
     [InlineData(SwarmDataResourceKind.Secret, "/secrets/create")]
     [InlineData(SwarmDataResourceKind.Config, "/configs/create")]
-    public async Task CreateDataResource_EncodesPayloadAndReturnsEngineIdentity(
+    public async Task CreateDataResourceEncodesPayloadAndReturnsEngineIdentity(
         SwarmDataResourceKind kind,
         string expectedTarget)
     {
@@ -41,7 +46,7 @@ public sealed class DockerApiSwarmDataMutationTests
     [Theory]
     [InlineData(SwarmDataResourceKind.Secret, "/secrets/secret%2Fone")]
     [InlineData(SwarmDataResourceKind.Config, "/configs/secret%2Fone")]
-    public async Task RemoveDataResource_UsesKindAndEscapedIdentity(
+    public async Task RemoveDataResourceUsesKindAndEscapedIdentity(
         SwarmDataResourceKind kind,
         string expectedTarget)
     {
@@ -56,7 +61,7 @@ public sealed class DockerApiSwarmDataMutationTests
     }
 
     [Fact]
-    public async Task UpdateTopology_ReplacesRequestedReferencesAndUsesServiceVersion()
+    public async Task UpdateTopologyReplacesRequestedReferencesAndUsesServiceVersion()
     {
         string current = Service(6, """
             "Secrets":[{"SecretID":"old-secret","SecretName":"old","File":{"Name":"old.txt"}}],
@@ -104,7 +109,7 @@ public sealed class DockerApiSwarmDataMutationTests
     }
 
     [Fact]
-    public async Task PlacementLoadAndUpdate_MapAndReplaceConstraints()
+    public async Task PlacementLoadAndUpdateMapAndReplaceConstraints()
     {
         string current = Service(11, string.Empty, "node.role==worker", "node.labels.zone==seoul");
         await using var server = new ScriptedDockerApiServer(
@@ -122,15 +127,15 @@ public sealed class DockerApiSwarmDataMutationTests
             {
                 ServiceId = "service-1",
                 Version = 11,
-                Constraints = new[] { " node.labels.storage==ssd " }
+                Constraints = PlacementLoadAndUpdateMapAndReplaceConstraintsExpectedValues1
             });
 
-        Assert.Equal(new[] { "node.role==worker", "node.labels.zone==seoul" }, loaded.Constraints);
+        Assert.Equal(PlacementLoadAndUpdateMapAndReplaceConstraintsExpectedValues2, loaded.Constraints);
         Assert.Equal(12ul, updated.Version);
         Assert.Equal("/services/service-1/update?version=11", server.Requests[4].Target);
         JObject body = JObject.Parse(server.Requests[4].Body);
         Assert.Equal(
-            new[] { "node.labels.storage==ssd" },
+            PlacementLoadAndUpdateMapAndReplaceConstraintsExpectedValues3,
             body["TaskTemplate"]!["Placement"]!["Constraints"]!.Values<string>());
         Assert.Equal("example/api:2", body["TaskTemplate"]!["ContainerSpec"]!.Value<string>("Image"));
     }

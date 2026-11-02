@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmJoinVerificationTests
 {
     [Fact]
-    public void FindJoinedNode_PrefersNodeId()
+    public void FindJoinedNodePrefersNodeId()
     {
         var nodes = new[]
         {
@@ -26,7 +26,7 @@ public sealed class SwarmJoinVerificationTests
     [Theory]
     [InlineData("10.0.0.10:2377", "10.0.0.10")]
     [InlineData("[2001:db8::10]:2377", "2001:db8::10")]
-    public void FindJoinedNode_FallsBackToNormalizedAdvertiseAddress(string advertiseAddress, string nodeAddress)
+    public void FindJoinedNodeFallsBackToNormalizedAdvertiseAddress(string advertiseAddress, string nodeAddress)
     {
         var nodes = new[] { new DockerSwarmNode { Id = "node-1", Role = "worker", Address = nodeAddress } };
 

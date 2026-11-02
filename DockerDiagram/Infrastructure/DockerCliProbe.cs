@@ -1,6 +1,7 @@
+using System.Diagnostics;
+using DockerDiagram.Common;
 using DockerDiagram.Contracts;
 using DockerDiagram.Models;
-using System.Diagnostics;
 
 namespace DockerDiagram.Infrastructure
 {
@@ -36,7 +37,10 @@ namespace DockerDiagram.Infrastructure
                     {
                         if (!process.HasExited) process.Kill(entireProcessTree: true);
                     }
-                    catch (Exception) { }
+                    catch (Exception killException)
+                    {
+                        AppLog.Warning("취소된 Docker CLI 프로세스 종료 실패", killException);
+                    }
                     throw;
                 }
 

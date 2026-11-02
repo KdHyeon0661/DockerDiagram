@@ -1,8 +1,8 @@
-using DockerDiagram.ApplicationServices;
-using Microsoft.Win32;
 using System;
 using System.IO;
 using System.Windows;
+using DockerDiagram.ApplicationServices;
+using Microsoft.Win32;
 
 namespace DockerDiagram.Views
 {

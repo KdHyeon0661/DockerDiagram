@@ -1,3 +1,5 @@
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
 using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 
@@ -27,22 +29,22 @@ namespace DockerDiagram.ViewModels
             }
 
             var historyBefore = CaptureDiagramState(sheet);
-            var node = new NodeViewModel(sheet.DockerService, sheet.DockerService, _dialogService)
-            {
-                Name = resource.Name,
-                ImageName = resource.Kind == SwarmDataResourceKind.Secret ? "swarm-secret" : "swarm-config",
-                Type = NodeType.Container,
-                ParentSheet = sheet,
-                X = x,
-                Y = y,
-                ContainerId = resource.Id,
-                RuntimeKind = RuntimeKind.DockerSwarm,
-                ResourceKind = resourceKind,
-                BindingState = RuntimeBindingState.Bound,
-                DetailStatus = $"Bound · {ShortId(resource.Id)}",
-                StatusColor = resource.Kind == SwarmDataResourceKind.Secret ? "#C08A00" : "#4D7C6F",
-                IsDockerConnected = true
-            };
+            var node = DiagramNodeFactory.CreateSwarmNode(
+                sheet.DockerService,
+                sheet.DockerService,
+                _dialogService,
+                new SwarmNodeSpec(
+                    resourceKind,
+                    resource.Name,
+                    resource.Kind == SwarmDataResourceKind.Secret ? "swarm-secret" : "swarm-config",
+                    x,
+                    y,
+                    sheet,
+                    RuntimeBindingState.Bound,
+                    IsConnected: true));
+            node.ContainerId = resource.Id;
+            node.DetailStatus = $"Bound · {DockerIdFormatter.Shorten(resource.Id)}";
+            node.StatusColor = resource.Kind == SwarmDataResourceKind.Secret ? "#C08A00" : "#4D7C6F";
             sheet.Nodes.Add(node);
             IsModified = true;
             RecordAdditionsFromSnapshot(sheet, historyBefore, $"Add existing Swarm {resource.Kind}", affectsDocker: false);
@@ -68,54 +70,76 @@ namespace DockerDiagram.ViewModels
             RuntimeResourceKind resourceKind = options.Kind == SwarmDataResourceKind.Secret
                 ? RuntimeResourceKind.SwarmSecret
                 : RuntimeResourceKind.SwarmConfig;
-            var node = new NodeViewModel(sheet.DockerService, sheet.DockerService, _dialogService)
-            {
-                Name = options.Name,
-                ImageName = options.Kind == SwarmDataResourceKind.Secret ? "swarm-secret" : "swarm-config",
-                Type = NodeType.Container,
-                ParentSheet = sheet,
-                X = x,
-                Y = y,
-                RuntimeKind = RuntimeKind.DockerSwarm,
-                ResourceKind = resourceKind,
-                BindingState = RuntimeBindingState.Draft,
-                DetailStatus = "Draft",
-                StatusColor = "#7652A8",
-                IsDockerConnected = false
-            };
+            var node = DiagramNodeFactory.CreateSwarmNode(
+                sheet.DockerService,
+                sheet.DockerService,
+                _dialogService,
+                new SwarmNodeSpec(
+                    resourceKind,
+                    options.Name,
+                    options.Kind == SwarmDataResourceKind.Secret ? "swarm-secret" : "swarm-config",
+                    x,
+                    y,
+                    sheet,
+                    RuntimeBindingState.Draft,
+                    IsConnected: false));
+            node.DetailStatus = "Draft";
+            node.StatusColor = "#7652A8";
             sheet.Nodes.Add(node);
             IsModified = true;
-            node.BindingState = RuntimeBindingState.Applying;
-            node.IsCreating = true;
-            node.SetCreationProgress($"Creating Swarm {options.Kind.ToString().ToLowerInvariant()}...");
 
-            async Task RetryAsync()
+            async Task ApplyCreationAsync()
             {
-                ActiveSheet = sheet;
-                await CreateSwarmDataResourceNodeAsync(options, x, y);
-            }
+                node.BindingState = RuntimeBindingState.Applying;
+                node.ClearCreationFailure();
+                node.SetLifecycleState(RuntimeLifecycleState.Creating);
+                node.SetCreationProgress(
+                    NodeOperationPhase.Creating,
+                    $"Creating Swarm {options.Kind.ToString().ToLowerInvariant()}...");
 
-            try
-            {
-                SwarmDataResourceMutationResult result = await mutationService.CreateSwarmDataResourceAsync(options);
+                SwarmDataResourceMutationResult result;
+                try
+                {
+                    result = await mutationService.CreateSwarmDataResourceAsync(options);
+                }
+                catch (Exception ex)
+                {
+                    node.BindingState = RuntimeBindingState.Error;
+                    string message = $"Swarm {options.Kind} 생성 실패:\n{ex.GetBaseException().Message}";
+                    node.MarkCreationFailed(message, ApplyCreationAsync, removeBeforeRetry: false);
+                    _dialogService.ShowError(message, $"Create Swarm {options.Kind}");
+                    return;
+                }
+
                 node.ContainerId = result.ResourceId;
                 node.BindingState = RuntimeBindingState.Bound;
                 node.ClearCreationFailure();
-                node.IsCreating = false;
-                node.IsDockerConnected = true;
+                node.EndCreating();
+                node.SetDockerConnection(true);
                 node.StatusColor = options.Kind == SwarmDataResourceKind.Secret ? "#C08A00" : "#4D7C6F";
-                node.SetCreationProgress($"Swarm {options.Kind} created", 100);
-                node.DetailStatus = $"Bound · {ShortId(result.ResourceId)}";
+                node.SetCreationProgress(
+                    NodeOperationPhase.Completed,
+                    $"Swarm {options.Kind} created",
+                    100);
+                node.DetailStatus = $"Bound · {DockerIdFormatter.Shorten(result.ResourceId)}";
+
+                if (ReferenceEquals(ActiveSheet, sheet))
+                {
+                    try
+                    {
+                        await RefreshRuntimeResourcesAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        _dialogService.ShowError(
+                            $"Swarm {options.Kind}은 생성되었지만 리소스 목록 동기화에 실패했습니다:\n{ex.GetBaseException().Message}",
+                            "Swarm Sync");
+                    }
+                }
             }
-            catch (Exception ex)
-            {
-                node.BindingState = RuntimeBindingState.Error;
-                string message = $"Swarm {options.Kind} 생성 실패:\n{ex.GetBaseException().Message}";
-                node.MarkCreationFailed(message, RetryAsync);
-                _dialogService.ShowError(message, $"Create Swarm {options.Kind}");
-            }
+
+            await ApplyCreationAsync();
         }
 
-        private static string ShortId(string id) => id.Length <= 12 ? id : id[..12];
     }
 }

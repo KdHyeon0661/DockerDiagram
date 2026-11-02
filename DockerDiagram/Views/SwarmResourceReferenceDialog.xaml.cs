@@ -1,6 +1,6 @@
+using System.Windows;
 using DockerDiagram.ApplicationServices;
 using DockerDiagram.Models;
-using System.Windows;
 
 namespace DockerDiagram.Views
 {

@@ -6,8 +6,12 @@ namespace DockerDiagram.Tests;
 
 public sealed class DockerApiSwarmResourceQueryTests
 {
+
+    private static readonly string[] DataResourcesMapIdentityVersionLabelsAndSortByNameExpectedValues = new[] { "alpha", "zeta" };
+    private static readonly string[] NodesMapManagerFirstAndPreserveRuntimeFactsExpectedValues = new[] { "manager-1", "worker-1" };
+
     [Fact]
-    public async Task Services_MapModeReplicasPortsAndStackIdentity()
+    public async Task ServicesMapModeReplicasPortsAndStackIdentity()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""
@@ -55,7 +59,7 @@ public sealed class DockerApiSwarmResourceQueryTests
     }
 
     [Fact]
-    public async Task Nodes_MapManagerFirstAndPreserveRuntimeFacts()
+    public async Task NodesMapManagerFirstAndPreserveRuntimeFacts()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""
@@ -79,7 +83,7 @@ public sealed class DockerApiSwarmResourceQueryTests
 
         List<DockerSwarmNode> nodes = await service.GetSwarmNodesAsync();
 
-        Assert.Equal(new[] { "manager-1", "worker-1" }, nodes.Select(node => node.Id));
+        Assert.Equal(NodesMapManagerFirstAndPreserveRuntimeFactsExpectedValues, nodes.Select(node => node.Id));
         Assert.Equal("leader", nodes[0].ManagerStatus);
         Assert.Equal("#28a745", nodes[0].StateColor);
         Assert.Equal("drain", nodes[1].Availability);
@@ -88,7 +92,7 @@ public sealed class DockerApiSwarmResourceQueryTests
     }
 
     [Fact]
-    public async Task InspectAndRemoveService_UseEscapedServiceIdentity()
+    public async Task InspectAndRemoveServiceUseEscapedServiceIdentity()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""
@@ -110,7 +114,7 @@ public sealed class DockerApiSwarmResourceQueryTests
     [Theory]
     [InlineData(SwarmDataResourceKind.Secret, "/secrets")]
     [InlineData(SwarmDataResourceKind.Config, "/configs")]
-    public async Task DataResources_MapIdentityVersionLabelsAndSortByName(
+    public async Task DataResourcesMapIdentityVersionLabelsAndSortByName(
         SwarmDataResourceKind kind,
         string expectedTarget)
     {
@@ -136,7 +140,7 @@ public sealed class DockerApiSwarmResourceQueryTests
         IReadOnlyList<SwarmDataResourceSnapshot> resources =
             await service.GetSwarmDataResourcesAsync(kind);
 
-        Assert.Equal(new[] { "alpha", "zeta" }, resources.Select(resource => resource.Name));
+        Assert.Equal(DataResourcesMapIdentityVersionLabelsAndSortByNameExpectedValues, resources.Select(resource => resource.Name));
         Assert.Equal(kind, resources[0].Kind);
         Assert.Equal(8ul, resources[1].Version);
         Assert.Equal("diagram", resources[1].Labels["owner"]);

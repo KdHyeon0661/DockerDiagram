@@ -4,14 +4,19 @@ namespace DockerDiagram.Views
 {
     public partial class ImagePushWindow : Window
     {
+        private readonly DockerDiagram.Contracts.IDialogService _dialogService;
         public string Repository => RepositoryBox.Text.Trim();
         public string ImageTag => ImageTagBox.Text.Trim();
         public string ServerAddress => ServerBox.Text.Trim();
         public string Username => UsernameBox.Text.Trim();
         public string Password => PasswordBox.Password;
 
-        public ImagePushWindow(string repository, string tag)
+        public ImagePushWindow(
+            DockerDiagram.Contracts.IDialogService dialogService,
+            string repository,
+            string tag)
         {
+            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
             InitializeComponent();
             RepositoryBox.Text = repository;
             ImageTagBox.Text = tag;
@@ -23,13 +28,13 @@ namespace DockerDiagram.Views
         {
             if (string.IsNullOrWhiteSpace(Repository))
             {
-                MessageBox.Show(this, "Repository is required.", "Push Image", MessageBoxButton.OK, MessageBoxImage.Information);
+                _dialogService.ShowInfo("Repository is required.", "Push Image");
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(ImageTag))
             {
-                MessageBox.Show(this, "Tag is required.", "Push Image", MessageBoxButton.OK, MessageBoxImage.Information);
+                _dialogService.ShowInfo("Tag is required.", "Push Image");
                 return;
             }
 

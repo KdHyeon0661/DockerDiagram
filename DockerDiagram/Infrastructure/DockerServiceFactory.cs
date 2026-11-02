@@ -1,3 +1,4 @@
+using DockerDiagram.Common;
 using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 
@@ -31,9 +32,18 @@ namespace DockerDiagram.Infrastructure
                 Register(service);
                 return service;
             }
-            catch
+            catch (Exception registrationException)
             {
-                service.Dispose();
+                try
+                {
+                    service.Dispose();
+                }
+                catch (Exception cleanupException)
+                {
+                    AppLog.Warning("등록에 실패한 Docker 서비스 정리 실패", cleanupException);
+                }
+
+                AppLog.Error("Docker 서비스 등록 실패", registrationException);
                 throw;
             }
         }

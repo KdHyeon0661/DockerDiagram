@@ -74,6 +74,11 @@ namespace DockerDiagram.Common
         private readonly Action<Exception>? _onException; // 작업 중 에러가 발생했을 때 처리할 로직
         private int _isExecuting; // 현재 작업이 실행 중인지 여부를 저장 (0: 대기 중, 1: 실행 중 / 스레드 안전성 보장용)
 
+        /// <summary>
+        /// ICommand 진입점에서 처리되지 않은 예외를 애플리케이션 수준에서 보고합니다.
+        /// </summary>
+        public static Action<Exception>? UnhandledExceptionHandler { get; set; }
+
         public event EventHandler? CanExecuteChanged; // 버튼 활성/비활성 상태 변경을 UI에 알리는 이벤트
 
         /// <summary>
@@ -138,7 +143,22 @@ namespace DockerDiagram.Common
         /// </summary>
         public async void Execute(object? parameter)
         {
-            await ExecuteAsync(parameter);
+            try
+            {
+                await ExecuteAsync(parameter);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("비동기 명령 실행 중 처리되지 않은 오류가 발생했습니다.", ex);
+                try
+                {
+                    UnhandledExceptionHandler?.Invoke(ex);
+                }
+                catch (Exception reportingException)
+                {
+                    AppLog.Error("비동기 명령 오류를 사용자에게 보고하지 못했습니다.", reportingException);
+                }
+            }
         }
 
         /// <summary>
@@ -160,8 +180,15 @@ namespace DockerDiagram.Common
             }
             catch (Exception ex)
             {
-                if (_onException != null) _onException(ex);
-                else System.Diagnostics.Debug.WriteLine($"[AsyncRelayCommand] Error: {ex}");
+                if (_onException != null)
+                {
+                    _onException(ex);
+                }
+                else
+                {
+                    // 직접 await하는 호출자는 실패를 관찰할 수 있어야 합니다.
+                    throw;
+                }
             }
             finally
             {

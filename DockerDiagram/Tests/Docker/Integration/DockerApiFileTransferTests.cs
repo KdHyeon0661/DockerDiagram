@@ -8,7 +8,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerApiFileTransferTests
 {
     [Fact]
-    public async Task CopyFromContainer_ExtractsReturnedTarIntoRequestedDirectory()
+    public async Task CopyFromContainerExtractsReturnedTarIntoRequestedDirectory()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Archive(CreateTar("result.txt", "copied from container")));
@@ -31,7 +31,7 @@ public sealed class DockerApiFileTransferTests
     }
 
     [Fact]
-    public async Task CopyToContainer_PackagesHostFileAndTargetsContainerPath()
+    public async Task CopyToContainerPackagesHostFileAndTargetsContainerPath()
     {
         await using var server = new ScriptedDockerApiServer(ScriptedDockerApiServer.Empty(200));
         using var service = CreateService(server);
@@ -59,7 +59,7 @@ public sealed class DockerApiFileTransferTests
     }
 
     [Fact]
-    public async Task ImageImportLoadAndBuild_UseTarUploadEndpoints()
+    public async Task ImageImportLoadAndBuildUseTarUploadEndpoints()
     {
         const string progress = "{\"status\":\"done\"}\n";
         await using var server = new ScriptedDockerApiServer(

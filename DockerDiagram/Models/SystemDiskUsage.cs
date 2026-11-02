@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using DockerDiagram.Common;
 
 namespace DockerDiagram.Models
 {
@@ -18,10 +19,13 @@ namespace DockerDiagram.Models
         public long ContainersSize => Containers.Sum(c => c.SizeRw);
         public long VolumesSize => Volumes.Sum(v => v.UsageData?.Size ?? 0);
         public long BuildCacheSize => BuildCache.Sum(c => c.Size);
+        public bool HasCompleteVolumeSizeData => Volumes.All(volume => volume.HasSizeData);
         public string FormattedLayersSize => HasLayersSize ? DiskUsageFormat.FormatBytes(LayersSize) : "N/A";
         public string FormattedImagesSize => DiskUsageFormat.FormatBytes(ImagesSize);
         public string FormattedContainersSize => DiskUsageFormat.FormatBytes(ContainersSize);
-        public string FormattedVolumesSize => DiskUsageFormat.FormatBytes(VolumesSize);
+        public string FormattedVolumesSize => HasCompleteVolumeSizeData
+            ? DiskUsageFormat.FormatBytes(VolumesSize)
+            : "N/A";
         public string FormattedBuildCacheSize => HasBuildCacheData ? DiskUsageFormat.FormatBytes(BuildCacheSize) : "N/A";
     }
 
@@ -38,7 +42,7 @@ namespace DockerDiagram.Models
         public int Containers { get; set; }
 
         public string Repository => RepoTags == null || RepoTags.Count == 0 ? "<none>" : string.Join(", ", RepoTags);
-        public string ShortId => DiskUsageFormat.ShortenId(Id);
+        public string ShortId => DockerIdFormatter.Shorten(Id);
         public string FormattedSize => DiskUsageFormat.FormatBytes(Size);
         public string FormattedSharedSize => DiskUsageFormat.FormatBytes(SharedSize);
         public string CreatedText => DiskUsageFormat.FormatUnixTime(Created);
@@ -54,7 +58,7 @@ namespace DockerDiagram.Models
         public long SizeRootFs { get; set; }
 
         public string Name => Names == null || Names.Count == 0 ? "<unnamed>" : string.Join(", ", Names.Select(n => n.TrimStart('/')));
-        public string ShortId => DiskUsageFormat.ShortenId(Id);
+        public string ShortId => DockerIdFormatter.Shorten(Id);
         public string FormattedSizeRw => DiskUsageFormat.FormatBytes(SizeRw);
         public string FormattedSizeRootFs => DiskUsageFormat.FormatBytes(SizeRootFs);
     }
@@ -66,9 +70,10 @@ namespace DockerDiagram.Models
         public string? Mountpoint { get; set; }
         public SystemDiskUsageUsageData? UsageData { get; set; }
 
+        public bool HasSizeData => UsageData != null && UsageData.Size >= 0;
         public long Size => UsageData?.Size ?? 0;
         public long RefCount => UsageData?.RefCount ?? 0;
-        public string FormattedSize => DiskUsageFormat.FormatBytes(Size);
+        public string FormattedSize => HasSizeData ? DiskUsageFormat.FormatBytes(Size) : "Unknown";
     }
 
     public class SystemDiskUsageUsageData
@@ -90,7 +95,7 @@ namespace DockerDiagram.Models
         public DateTime? LastUsedAt { get; set; }
         public int UsageCount { get; set; }
 
-        public string ShortId => DiskUsageFormat.ShortenId(ID);
+        public string ShortId => DockerIdFormatter.Shorten(ID);
         public string FormattedSize => DiskUsageFormat.FormatBytes(Size);
         public string CreatedText => DiskUsageFormat.FormatDateTime(CreatedAt);
         public string LastUsedText => DiskUsageFormat.FormatDateTime(LastUsedAt);
@@ -101,29 +106,7 @@ namespace DockerDiagram.Models
         public static string FormatBytes(long bytes)
         {
             if (bytes < 0) return "-";
-
-            string[] units = ["B", "KB", "MB", "GB", "TB"];
-            double value = bytes;
-            int unitIndex = 0;
-
-            while (value >= 1024 && unitIndex < units.Length - 1)
-            {
-                value /= 1024;
-                unitIndex++;
-            }
-
-            return unitIndex == 0 ? $"{value:0} {units[unitIndex]}" : $"{value:0.##} {units[unitIndex]}";
-        }
-
-        public static string ShortenId(string? id)
-        {
-            if (string.IsNullOrWhiteSpace(id)) return "";
-
-            var cleanId = id.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)
-                ? id.Substring("sha256:".Length)
-                : id;
-
-            return cleanId.Length <= 12 ? cleanId : cleanId.Substring(0, 12);
+            return ByteSizeFormatter.FormatMetric(bytes);
         }
 
         public static string FormatUnixTime(long value)
@@ -132,7 +115,9 @@ namespace DockerDiagram.Models
 
             try
             {
-                return DateTimeOffset.FromUnixTimeSeconds(value).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
+                return DateTimeOffset.FromUnixTimeSeconds(value).LocalDateTime.ToString(
+                    "yyyy-MM-dd HH:mm",
+                    System.Globalization.CultureInfo.InvariantCulture);
             }
             catch
             {
@@ -142,7 +127,11 @@ namespace DockerDiagram.Models
 
         public static string FormatDateTime(DateTime? value)
         {
-            return value.HasValue ? value.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "";
+            return value.HasValue
+                ? value.Value.ToLocalTime().ToString(
+                    "yyyy-MM-dd HH:mm",
+                    System.Globalization.CultureInfo.InvariantCulture)
+                : "";
         }
     }
 }

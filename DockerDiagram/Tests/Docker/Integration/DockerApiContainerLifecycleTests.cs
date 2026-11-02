@@ -8,6 +8,9 @@ namespace DockerDiagram.Tests;
 
 public sealed class DockerApiContainerLifecycleTests
 {
+
+    private static readonly string[] CreateAndStartMapsRuntimeOptionsAndReturnsContainerIdExpectedValues = new[] { "dotnet", "Api.dll", "--urls", "http://+:80" };
+
     [Theory]
     [InlineData("start", "POST", "/containers/container-1/start")]
     [InlineData("stop", "POST", "/containers/container-1/stop")]
@@ -17,7 +20,7 @@ public sealed class DockerApiContainerLifecycleTests
     [InlineData("kill", "POST", "/containers/container-1/kill")]
     [InlineData("rename", "POST", "/containers/container-1/rename")]
     [InlineData("remove", "DELETE", "/containers/container-1")]
-    public async Task LifecycleOperation_UsesExpectedDockerEndpoint(
+    public async Task LifecycleOperationUsesExpectedDockerEndpoint(
         string operation,
         string expectedMethod,
         string expectedTarget)
@@ -41,7 +44,7 @@ public sealed class DockerApiContainerLifecycleTests
     }
 
     [Fact]
-    public async Task CreateAndStart_MapsRuntimeOptionsAndReturnsContainerId()
+    public async Task CreateAndStartMapsRuntimeOptionsAndReturnsContainerId()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("{\"Id\":\"created-1\",\"Warnings\":[]}", 201),
@@ -54,7 +57,31 @@ public sealed class DockerApiContainerLifecycleTests
             "ignored",
             new List<string> { "8080:80", "53/udp" },
             new List<string> { "MODE=production" },
-            new List<string> { "data:/data" },
+            new List<ContainerMountSpec>
+            {
+                new()
+                {
+                    Kind = MountKind.Volume,
+                    Source = "data",
+                    Target = "/data",
+                    VolumeNoCopy = true
+                },
+                new()
+                {
+                    Kind = MountKind.Bind,
+                    Source = "C:\\host-data",
+                    Target = "/host-data",
+                    ReadOnly = true,
+                    BindPropagation = "rshared"
+                },
+                new()
+                {
+                    Kind = MountKind.Tmpfs,
+                    Target = "/run/cache",
+                    TmpfsSizeBytes = 32L * 1024 * 1024,
+                    TmpfsMode = Convert.ToUInt32("1770", 8)
+                }
+            },
             "unless-stopped",
             memoryMb: 128,
             cpuCount: 1.5,
@@ -68,7 +95,7 @@ public sealed class DockerApiContainerLifecycleTests
         Assert.Contains("name=web-api", server.Requests[0].Target, StringComparison.OrdinalIgnoreCase);
         JObject body = JObject.Parse(server.Requests[0].Body);
         Assert.Equal("registry.example:5000/team/api:2", body.Value<string>("Image"));
-        Assert.Equal(new[] { "dotnet", "Api.dll", "--urls", "http://+:80" }, body["Cmd"]!.Values<string>());
+        Assert.Equal(CreateAndStartMapsRuntimeOptionsAndReturnsContainerIdExpectedValues, body["Cmd"]!.Values<string>());
         Assert.True(body.Value<bool>("Tty"));
         Assert.True(body.Value<bool>("OpenStdin"));
         Assert.Equal("MODE=production", body["Env"]!.Values<string>().Single());
@@ -80,11 +107,69 @@ public sealed class DockerApiContainerLifecycleTests
             1_500_000_000L,
             hostConfig.GetValue("NanoCpus", StringComparison.OrdinalIgnoreCase)!.Value<long>());
         Assert.Equal("backend", hostConfig.Value<string>("NetworkMode"));
+        JArray mounts = Assert.IsType<JArray>(hostConfig["Mounts"]);
+        Assert.Collection(
+            mounts,
+            volume =>
+            {
+                Assert.Equal("volume", volume.Value<string>("Type"));
+                Assert.Equal("data", volume.Value<string>("Source"));
+                Assert.True(volume["VolumeOptions"]!.Value<bool>("NoCopy"));
+            },
+            bind =>
+            {
+                Assert.Equal("bind", bind.Value<string>("Type"));
+                Assert.Equal("C:\\host-data", bind.Value<string>("Source"));
+                Assert.True(bind.Value<bool>("ReadOnly"));
+                Assert.Equal("rshared", bind["BindOptions"]!.Value<string>("Propagation"));
+            },
+            tmpfs =>
+            {
+                Assert.Equal("tmpfs", tmpfs.Value<string>("Type"));
+                Assert.Equal("/run/cache", tmpfs.Value<string>("Target"));
+                Assert.Equal(32L * 1024 * 1024, tmpfs["TmpfsOptions"]!.Value<long>("SizeBytes"));
+                Assert.Equal(Convert.ToUInt32("1770", 8), tmpfs["TmpfsOptions"]!.Value<uint>("Mode"));
+            });
         Assert.Equal(("POST", "/containers/created-1/start"), RequestIdentity(server.Requests[1]));
     }
 
     [Fact]
-    public async Task StartFailure_RemovesPartiallyCreatedContainer()
+    public async Task LegacyMountStringOverloadStillCreatesStructuredDockerMounts()
+    {
+        await using var server = new ScriptedDockerApiServer(
+            ScriptedDockerApiServer.Json("{\"Id\":\"created-legacy\",\"Warnings\":[]}", 201),
+            ScriptedDockerApiServer.Empty(204));
+        using var service = CreateService(server);
+
+        await service.CreateAndStartContainerAsync(
+            "legacy",
+            "alpine",
+            "latest",
+            new List<string>(),
+            new List<string>(),
+            new List<string> { "data:/data:ro", "C:\\host:/host" },
+            "no",
+            0,
+            0);
+
+        JObject hostConfig = (JObject)JObject.Parse(server.Requests[0].Body)["HostConfig"]!;
+        JArray mounts = Assert.IsType<JArray>(hostConfig["Mounts"]);
+        Assert.Collection(
+            mounts,
+            volume =>
+            {
+                Assert.Equal("volume", volume.Value<string>("Type"));
+                Assert.True(volume.Value<bool>("ReadOnly"));
+            },
+            bind =>
+            {
+                Assert.Equal("bind", bind.Value<string>("Type"));
+                Assert.Equal("C:\\host", bind.Value<string>("Source"));
+            });
+    }
+
+    [Fact]
+    public async Task StartFailureRemovesPartiallyCreatedContainer()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("{\"Id\":\"created-1\",\"Warnings\":[]}", 201),
@@ -96,9 +181,9 @@ public sealed class DockerApiContainerLifecycleTests
             "web",
             "nginx",
             "latest",
-            [],
-            [],
-            [],
+            new List<string>(),
+            new List<string>(),
+            new List<ContainerMountSpec>(),
             "no",
             0,
             0));
@@ -110,7 +195,7 @@ public sealed class DockerApiContainerLifecycleTests
     }
 
     [Fact]
-    public async Task RecreateFromInspect_PreservesContainerAndHostConfiguration()
+    public async Task RecreateFromInspectPreservesContainerAndHostConfiguration()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("{\"Id\":\"recreated-1\",\"Warnings\":[]}", 201));

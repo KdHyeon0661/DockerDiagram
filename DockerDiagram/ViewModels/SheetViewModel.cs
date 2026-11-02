@@ -1,15 +1,20 @@
-using DockerDiagram.Diagram;
-using DockerDiagram.Contracts;
-using DockerDiagram.Common;
-using DockerDiagram.ApplicationServices;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Windows;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
+    internal readonly record struct CanvasPositionUpdate(
+        ConnectableItemViewModel Item,
+        double X,
+        double Y);
+
     internal sealed class ConnectorCollection : ObservableCollection<ConnectorViewModel>
     {
         protected override void InsertItem(int index, ConnectorViewModel item)
@@ -49,7 +54,7 @@ namespace DockerDiagram.ViewModels
     /// 다이어그램이 그려지는 하나의 도화지(시트) 상태를 관리하는 뷰모델입니다.
     /// 노드, 그룹, 연결선 데이터를 관리하고 화면의 줌/팬(이동) 및 선택 상태를 제어합니다.
     /// </summary>
-    public class SheetViewModel : ViewModelBase
+    public class SheetViewModel : ViewModelBase, IDisposable
     {
         private int _layoutUpdateDepth;
         public bool IsLayoutUpdating => _layoutUpdateDepth > 0;
@@ -58,6 +63,77 @@ namespace DockerDiagram.ViewModels
         {
             _layoutUpdateDepth++;
             return new LayoutUpdateScope(this);
+        }
+
+        /// <summary>
+        /// 한 번의 드래그에 포함된 모든 위치를 먼저 적용한 뒤, 영향을 받은 연결선만
+        /// 한 번씩 다시 계산합니다. 일반 레이아웃 갱신의 전체 연결선 새로 고침은 유지합니다.
+        /// </summary>
+        internal void ApplyInteractivePosition(
+            ConnectableItemViewModel item,
+            double x,
+            double y)
+        {
+            ArgumentNullException.ThrowIfNull(item);
+
+            _layoutUpdateDepth++;
+            bool changed;
+            try
+            {
+                changed = item.SetPosition(x, y);
+            }
+            finally
+            {
+                _layoutUpdateDepth--;
+            }
+
+            if (_layoutUpdateDepth > 0 || !changed)
+                return;
+
+            foreach (ConnectorViewModel connector in Connectors)
+            {
+                if (ReferenceEquals(connector.Source, item) ||
+                    ReferenceEquals(connector.Target, item))
+                {
+                    connector.RefreshRoute();
+                }
+            }
+        }
+
+        internal void ApplyInteractivePositions(IEnumerable<CanvasPositionUpdate> updates)
+        {
+            ArgumentNullException.ThrowIfNull(updates);
+
+            var changedItems = new HashSet<ConnectableItemViewModel>(
+                ReferenceEqualityComparer.Instance);
+
+            _layoutUpdateDepth++;
+            try
+            {
+                foreach (CanvasPositionUpdate update in updates)
+                {
+                    if (update.Item.SetPosition(update.X, update.Y))
+                        changedItems.Add(update.Item);
+                }
+            }
+            finally
+            {
+                _layoutUpdateDepth--;
+            }
+
+            // 바깥쪽 레이아웃 갱신이 진행 중이면 해당 범위가 끝날 때 전체 경로를 갱신합니다.
+            if (_layoutUpdateDepth > 0 || changedItems.Count == 0)
+                return;
+
+            foreach (ConnectorViewModel connector in Connectors)
+            {
+                bool sourceMoved = connector.Source is ConnectableItemViewModel source &&
+                                   changedItems.Contains(source);
+                bool targetMoved = connector.Target is ConnectableItemViewModel target &&
+                                   changedItems.Contains(target);
+                if (sourceMoved || targetMoved)
+                    connector.RefreshRoute();
+            }
         }
 
         private void EndLayoutUpdate()
@@ -93,8 +169,8 @@ namespace DockerDiagram.ViewModels
         private double _mapWidth = 5000;
         private double _mapHeight = 3000;
         private double _scale = 1.2;
-        private double _offsetX = 0;
-        private double _offsetY = 0;
+        private double _offsetX;
+        private double _offsetY;
         private bool _hasViewportCenter;
         private double _viewportCenterX;
         private double _viewportCenterY;
@@ -137,9 +213,9 @@ namespace DockerDiagram.ViewModels
         #endregion
 
         #region Map Data (Collections)
-        public ObservableCollection<NodeViewModel> Nodes { get; set; } = new(); // 도화지 위의 모든 노드(컨테이너, 볼륨 등)
+        public ObservableCollection<NodeViewModel> Nodes { get; set; } = []; // 도화지 위의 모든 노드(컨테이너, 볼륨 등)
         public ObservableCollection<ConnectorViewModel> Connectors { get; } = new ConnectorCollection(); // 노드들을 연결하는 모든 선
-        public ObservableCollection<GroupViewModel> Groups { get; set; } = new(); // 노드들을 묶는 모든 그룹(네트워크 등)
+        public ObservableCollection<GroupViewModel> Groups { get; set; } = []; // 노드들을 묶는 모든 그룹(네트워크 등)
         #endregion
 
         private void NotifyRuntimeAvailabilityChanged()
@@ -300,23 +376,25 @@ namespace DockerDiagram.ViewModels
         /// </summary>
         public void CreateNodeAt(DockerNodeBase nodeModel, double x, double y)
         {
-            NodeType determinedType = nodeModel switch
+            NodeViewModel nodeVm = nodeModel switch
             {
-                DockerVolume => NodeType.Volume,
-                DockerInternet => NodeType.Internet,
-                _ => NodeType.Container
+                DockerVolume volume => DiagramNodeFactory.CreateVolume(
+                    _containerService,
+                    _volumeService,
+                    _dialogService,
+                    volume.Name,
+                    x,
+                    y,
+                    isConnected: true),
+                DockerInternet => DiagramNodeFactory.CreateInternet(_containerService, _volumeService, _dialogService),
+                _ => DiagramNodeFactory.CreateContainer(_containerService, _volumeService, _dialogService)
             };
-
-            var nodeVm = new NodeViewModel(_containerService, _volumeService, _dialogService)
-            {
-                Name = nodeModel.Name,
-                Type = determinedType,
-                ParentSheet = this,
-                X = x,
-                Y = y,
-                Width = 160,
-                Height = 80
-            };
+            nodeVm.Name = nodeModel.Name;
+            nodeVm.ParentSheet = this;
+            nodeVm.X = x;
+            nodeVm.Y = y;
+            nodeVm.Width = NodeViewModel.StandardWidth;
+            nodeVm.Height = NodeViewModel.StandardHeight;
 
             if (nodeModel is DockerContainer container)
             {
@@ -348,8 +426,24 @@ namespace DockerDiagram.ViewModels
                 nodeVm.DetailStatus = (container.IsSwarmService || container.IsKubernetesResource) && !string.IsNullOrWhiteSpace(container.Ports)
                     ? container.Ports
                     : container.State;
-                nodeVm.IsRunning = container.IsSwarmService || string.Equals(container.State, "running", System.StringComparison.OrdinalIgnoreCase);
-                nodeVm.IsDockerConnected = !string.IsNullOrWhiteSpace(container.Id);
+                bool isConnected = !string.IsNullOrWhiteSpace(container.Id);
+                if (!container.IsSwarmService && !container.IsKubernetesResource)
+                {
+                    nodeVm.ApplyObservedContainerState(isConnected, container.State);
+                }
+                else
+                {
+                    bool isRunning = container.IsSwarmService ||
+                                     string.Equals(container.State, "running", System.StringComparison.OrdinalIgnoreCase);
+                    nodeVm.ApplyRuntimeState(
+                        isConnected ? RuntimeConnectionState.Connected : RuntimeConnectionState.Disconnected,
+                        !isConnected
+                            ? RuntimeLifecycleState.Unknown
+                            : isRunning
+                                ? RuntimeLifecycleState.Running
+                                : RuntimeLifecycleState.Stopped,
+                        nodeVm.DetailStatus);
+                }
 
                 if (RuntimeKind == RuntimeKind.DockerSwarm && container.IsSwarmService)
                 {
@@ -365,8 +459,11 @@ namespace DockerDiagram.ViewModels
                 nodeVm.StatusColor = "#E67E22";
                 nodeVm.ContainerId = "";
                 nodeVm.DockerVolumeName = volume.Name;
+                nodeVm.Driver = string.IsNullOrWhiteSpace(volume.Driver) ? "local" : volume.Driver;
+                nodeVm.ImageName = nodeVm.Driver;
+                nodeVm.VolumeLabels = new Dictionary<string, string>(volume.Labels, StringComparer.OrdinalIgnoreCase);
                 nodeVm.VolumeExternal = !string.IsNullOrWhiteSpace(volume.Id);
-                nodeVm.IsDockerConnected = true;
+                nodeVm.SetDockerConnection(true);
 
                 if (RuntimeKind == RuntimeKind.DockerSwarm)
                 {
@@ -380,11 +477,175 @@ namespace DockerDiagram.ViewModels
             {
                 nodeVm.StatusColor = "#E67E22";
                 nodeVm.ContainerId = "";
-                nodeVm.IsDockerConnected = true;
+                nodeVm.SetDockerConnection(true);
             }
 
             Nodes.Add(nodeVm);
         }
+
+        /// <summary>
+        /// Docker inspect에서 확인한 마운트를 시트의 저장소 노드와 연결선에 반영합니다.
+        /// Named volume은 Docker 리소스 노드로, bind는 Docker 호스트 경로 참조 노드로 표현합니다.
+        /// </summary>
+        public void SynchronizeContainerMounts(
+            NodeViewModel container,
+            IEnumerable<ContainerMountSpec>? mounts)
+        {
+            if (container.Type != NodeType.Container || container.IsSwarmService || container.IsKubernetesResource)
+                return;
+
+            List<ContainerMountSpec> allMounts = mounts?.Select(mount => mount.Clone()).ToList() ?? [];
+            container.SetMountSpecifications(allMounts);
+            List<ContainerMountSpec> diagramMounts = allMounts
+                .Where(mount => mount.Kind is MountKind.Volume or MountKind.Bind)
+                .Where(mount => !string.IsNullOrWhiteSpace(mount.Source) && !string.IsNullOrWhiteSpace(mount.Target))
+                .ToList();
+
+            List<ConnectorViewModel> existing = Connectors
+                .Where(connector => connector.RelationType == RelationType.VolumeMount &&
+                                    (ReferenceEquals(connector.Source, container) || ReferenceEquals(connector.Target, container)))
+                .Where(connector => GetStorageNode(connector, container)?.Type is NodeType.Volume or NodeType.HostPath)
+                .ToList();
+
+            foreach (ConnectorViewModel connector in existing)
+            {
+                NodeViewModel? storage = GetStorageNode(connector, container);
+                if (storage == null) continue;
+                bool stillExists = diagramMounts.Any(mount =>
+                    mount.Kind == (storage.Type == NodeType.HostPath ? MountKind.Bind : MountKind.Volume) &&
+                    string.Equals(mount.Target, connector.MountPath, StringComparison.Ordinal) &&
+                    StorageSourceEquals(storage, mount.Source));
+                if (!stillExists)
+                    Connectors.Remove(connector);
+            }
+
+            int storageIndex = 0;
+            foreach (ContainerMountSpec mount in diagramMounts)
+            {
+                NodeViewModel storage = mount.Kind == MountKind.Volume
+                    ? GetOrCreateVolumeNode(mount, container, storageIndex)
+                    : GetOrCreateHostPathNode(mount, container, storageIndex);
+
+                ConnectorViewModel? connector = Connectors.FirstOrDefault(candidate =>
+                    candidate.RelationType == RelationType.VolumeMount &&
+                    ((ReferenceEquals(candidate.Source, container) && ReferenceEquals(candidate.Target, storage)) ||
+                     (ReferenceEquals(candidate.Target, container) && ReferenceEquals(candidate.Source, storage))) &&
+                    string.Equals(candidate.MountPath, mount.Target, StringComparison.Ordinal));
+                if (connector == null)
+                {
+                    connector = new ConnectorViewModel(
+                        container,
+                        storage,
+                        PortDirection.Right,
+                        PortDirection.Left,
+                        _dialogService)
+                    {
+                        RelationType = RelationType.VolumeMount
+                    };
+                    Connectors.Add(connector);
+                }
+
+                connector.MountKind = mount.Kind;
+                connector.MountPath = mount.Target;
+                connector.MountReadOnly = mount.ReadOnly;
+                connector.MountOptions = mount.OptionSummary;
+                storageIndex++;
+            }
+
+            foreach (NodeViewModel hostPath in Nodes.Where(node => node.Type == NodeType.HostPath).ToList())
+            {
+                bool referenced = Connectors.Any(connector =>
+                    ReferenceEquals(connector.Source, hostPath) || ReferenceEquals(connector.Target, hostPath));
+                if (!referenced && Nodes.Remove(hostPath))
+                    hostPath.Dispose();
+            }
+        }
+
+        private NodeViewModel GetOrCreateVolumeNode(
+            ContainerMountSpec mount,
+            NodeViewModel container,
+            int index)
+        {
+            NodeViewModel? volume = Nodes.FirstOrDefault(node =>
+                node.Type == NodeType.Volume &&
+                (string.Equals(node.Name, mount.Source, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(node.EffectiveVolumeName, mount.Source, StringComparison.OrdinalIgnoreCase)));
+            if (volume != null)
+                return volume;
+
+            volume = DiagramNodeFactory.CreateVolume(
+                _containerService,
+                _volumeService,
+                _dialogService,
+                mount.Source,
+                container.X + container.Width + 50,
+                container.Y + (index * 100),
+                isConnected: true);
+            volume.DockerVolumeName = mount.Source;
+            volume.ParentSheet = this;
+            volume.ImageName = "local";
+            volume.Driver = "local";
+            volume.StatusColor = "#E67E22";
+            volume.SetDockerConnection(true);
+            // 런타임에서 발견한 볼륨은 기본적으로 외부 참조로 보호합니다.
+            // 컨테이너 생성 흐름만 생성 전 스냅샷을 사용해 새 노드의 소유권을 확정합니다.
+            volume.VolumeExternal = true;
+            Nodes.Add(volume);
+            return volume;
+        }
+
+        private NodeViewModel GetOrCreateHostPathNode(
+            ContainerMountSpec mount,
+            NodeViewModel container,
+            int index)
+        {
+            NodeViewModel? hostPath = Nodes.FirstOrDefault(node =>
+                node.Type == NodeType.HostPath && HostPathEquals(node.HostPath, mount.Source));
+            if (hostPath != null)
+            {
+                if (!string.IsNullOrWhiteSpace(hostPath.ComposeLayoutInstanceId) &&
+                    !string.Equals(hostPath.ComposeLayoutInstanceId, container.ComposeLayoutInstanceId, StringComparison.Ordinal))
+                {
+                    hostPath.ComposeLayoutInstanceId = string.Empty;
+                }
+                return hostPath;
+            }
+
+            string trimmed = mount.Source.TrimEnd('/', '\\');
+            string displayName = trimmed.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries).LastOrDefault()
+                                 ?? mount.Source;
+            hostPath = DiagramNodeFactory.CreateHostPath(_containerService, _volumeService, _dialogService);
+            hostPath.Name = displayName;
+            hostPath.HostPath = mount.Source;
+            hostPath.ParentSheet = this;
+            hostPath.ImageName = "Docker 호스트 경로";
+            hostPath.X = container.X + container.Width + 50;
+            hostPath.Y = container.Y + (index * 100);
+            hostPath.RuntimeKind = RuntimeKind;
+            hostPath.ResourceKind = RuntimeResourceKind.HostPathReference;
+            hostPath.BindingState = RuntimeBindingState.Bound;
+            hostPath.ComposeLayoutInstanceId = container.ComposeLayoutInstanceId;
+            hostPath.StatusColor = "#2563EB";
+            hostPath.SetDockerConnection(true);
+            Nodes.Add(hostPath);
+            return hostPath;
+        }
+
+        private static NodeViewModel? GetStorageNode(ConnectorViewModel connector, NodeViewModel container) =>
+            ReferenceEquals(connector.Source, container)
+                ? connector.Target as NodeViewModel
+                : ReferenceEquals(connector.Target, container)
+                    ? connector.Source as NodeViewModel
+                    : null;
+
+        private static bool StorageSourceEquals(NodeViewModel storage, string source) =>
+            storage.Type == NodeType.HostPath
+                ? HostPathEquals(storage.HostPath, source)
+                : string.Equals(storage.EffectiveVolumeName, source, StringComparison.OrdinalIgnoreCase) ||
+                  string.Equals(storage.Name, source, StringComparison.OrdinalIgnoreCase);
+
+        private static bool HostPathEquals(string left, string right)
+            => ContainerMountParser.HostPathsEqual(left, right);
 
         /// <summary>
         /// 특정 노드를 도화지에서 삭제하고, 연결된 선과 소속된 그룹 정보를 함께 정리합니다.
@@ -409,10 +670,51 @@ namespace DockerDiagram.ViewModels
                 }
             }
 
-            Nodes.Remove(node);
+            if (Nodes.Remove(node))
+                node.Dispose();
+
+            foreach (NodeViewModel orphanHostPath in Nodes.Where(candidate => candidate.Type == NodeType.HostPath).ToList())
+            {
+                bool referenced = Connectors.Any(connector =>
+                    ReferenceEquals(connector.Source, orphanHostPath) ||
+                    ReferenceEquals(connector.Target, orphanHostPath));
+                if (!referenced && Nodes.Remove(orphanHostPath))
+                    orphanHostPath.Dispose();
+            }
 
             foreach (NodeViewModel dependent in autoGeneratedDependents)
                 await RemoveNodeAsync(dependent);
+        }
+
+        public void ClearNodes()
+        {
+            SelectedNode = null;
+            foreach (NodeViewModel node in Nodes.ToList())
+            {
+                if (ReferenceEquals(node.ParentSheet, this))
+                    node.ParentSheet = null;
+                node.Dispose();
+            }
+            Nodes.Clear();
+        }
+
+        public void ClearContents()
+        {
+            SelectedNode = null;
+            SelectedGroup = null;
+            SelectedConnector = null;
+
+            // 연결과 그룹이 노드를 참조하므로 노드를 폐기하기 전에 먼저 제거합니다.
+            Connectors.Clear();
+            Groups.Clear();
+            ClearNodes();
+            ComposeRawYaml = string.Empty;
+        }
+
+        public void Dispose()
+        {
+            ClearContents();
+            GC.SuppressFinalize(this);
         }
         #endregion
 

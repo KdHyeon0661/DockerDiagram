@@ -232,7 +232,7 @@ namespace DockerDiagram.Diagram
 
         private static List<NetworkCluster> BuildIdenticalClusters(
             IEnumerable<ComposeNetworkLayoutGroup> groups,
-            IReadOnlyDictionary<string, int> groupOrder)
+            Dictionary<string, int> groupOrder)
         {
             var clusters = new List<NetworkCluster>();
             foreach (ComposeNetworkLayoutGroup group in groups)
@@ -269,16 +269,16 @@ namespace DockerDiagram.Diagram
             return clusters;
         }
 
-        private static IReadOnlyList<ComposeNetworkLayoutRelation> BuildRelations(
-            IReadOnlyList<ComposeNetworkLayoutGroup> groups)
+        private static List<ComposeNetworkLayoutRelation> BuildRelations(
+            ComposeNetworkLayoutGroup[] groups)
         {
             var relations = new List<ComposeNetworkLayoutRelation>();
-            for (int leftIndex = 0; leftIndex < groups.Count; leftIndex++)
+            for (int leftIndex = 0; leftIndex < groups.Length; leftIndex++)
             {
                 var leftMembers = new HashSet<string>(
                     groups[leftIndex].MemberIds,
                     StringComparer.OrdinalIgnoreCase);
-                for (int rightIndex = leftIndex + 1; rightIndex < groups.Count; rightIndex++)
+                for (int rightIndex = leftIndex + 1; rightIndex < groups.Length; rightIndex++)
                 {
                     var rightMembers = new HashSet<string>(
                         groups[rightIndex].MemberIds,
@@ -310,7 +310,7 @@ namespace DockerDiagram.Diagram
 
         private static void ResolveHeaderOverlaps(
             IReadOnlyList<NetworkCluster> clusters,
-            IDictionary<string, ComposeNetworkLayoutRect> boundsByNetwork,
+            Dictionary<string, ComposeNetworkLayoutRect> boundsByNetwork,
             double headerHeight,
             double headerGap,
             double sidePadding,
@@ -361,7 +361,7 @@ namespace DockerDiagram.Diagram
 
         private static void PropagateContainment(
             IReadOnlyList<NetworkCluster> clusters,
-            IDictionary<string, ComposeNetworkLayoutRect> boundsByNetwork,
+            Dictionary<string, ComposeNetworkLayoutRect> boundsByNetwork,
             double sidePadding,
             double topPadding,
             double bottomPadding,
@@ -474,8 +474,8 @@ namespace DockerDiagram.Diagram
 
             public HashSet<string> Members { get; }
             public int Order { get; }
-            public List<ComposeNetworkLayoutGroup> Groups { get; } = new();
-            public List<NetworkCluster> Children { get; } = new();
+            public List<ComposeNetworkLayoutGroup> Groups { get; } = [];
+            public List<NetworkCluster> Children { get; } = [];
             public NetworkCluster? Parent { get; set; }
             public ComposeNetworkLayoutRect? OuterBounds { get; set; }
         }

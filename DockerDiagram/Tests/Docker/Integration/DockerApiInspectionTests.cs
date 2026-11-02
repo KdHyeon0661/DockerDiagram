@@ -5,8 +5,11 @@ namespace DockerDiagram.Tests;
 
 public sealed class DockerApiInspectionTests
 {
+
+    private static readonly string[] VolumeUsageFiltersNamedAndSourceFallbackMountsExpectedValues = new[] { "web", "worker" };
+
     [Fact]
-    public async Task ResourceInspect_UsesIdentityAndMapsDockerResponses()
+    public async Task ResourceInspectUsesIdentityAndMapsDockerResponses()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""
@@ -56,7 +59,7 @@ public sealed class DockerApiInspectionTests
     }
 
     [Fact]
-    public async Task VolumeUsage_FiltersNamedAndSourceFallbackMounts()
+    public async Task VolumeUsageFiltersNamedAndSourceFallbackMounts()
     {
         const string response = """
             [
@@ -117,7 +120,7 @@ public sealed class DockerApiInspectionTests
                 Assert.Equal("/worker/data", item.Destination);
                 Assert.False(item.ReadWrite);
             });
-        Assert.Equal(new[] { "web", "worker" }, names.OrderBy(name => name));
+        Assert.Equal(VolumeUsageFiltersNamedAndSourceFallbackMountsExpectedValues, names.OrderBy(name => name));
         Assert.All(server.Requests, request =>
         {
             Assert.Equal("GET", request.Method);
@@ -127,7 +130,7 @@ public sealed class DockerApiInspectionTests
     }
 
     [Fact]
-    public async Task SystemInfo_IsCachedWithinServiceLifetime()
+    public async Task SystemInfoIsCachedWithinServiceLifetime()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""
@@ -151,7 +154,7 @@ public sealed class DockerApiInspectionTests
     }
 
     [Fact]
-    public async Task ImageInspectAndSearch_MapResponsesAndQuery()
+    public async Task ImageInspectAndSearchMapResponsesAndQuery()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""

@@ -7,7 +7,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerApiSwarmNodeMutationTests
 {
     [Fact]
-    public async Task InspectNode_MapsVersionLabelsLeaderAndLocalIdentity()
+    public async Task InspectNodeMapsVersionLabelsLeaderAndLocalIdentity()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(ManagerInfo()),
@@ -28,7 +28,7 @@ public sealed class DockerApiSwarmNodeMutationTests
     }
 
     [Fact]
-    public async Task UpdateNode_UsesVersionQueryAndReplacesEditableSpec()
+    public async Task UpdateNodeUsesVersionQueryAndReplacesEditableSpec()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(ManagerInfo()),
@@ -65,7 +65,7 @@ public sealed class DockerApiSwarmNodeMutationTests
     }
 
     [Fact]
-    public async Task RemoveDownWorker_UsesExplicitForceQueryAfterSafetyChecks()
+    public async Task RemoveDownWorkerUsesExplicitForceQueryAfterSafetyChecks()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(ManagerInfo()),

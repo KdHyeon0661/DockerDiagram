@@ -8,7 +8,7 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmReadinessAuditServiceTests
 {
     [Fact]
-    public async Task Audit_ManagerQueriesEngineClusterNodesAndServices()
+    public async Task AuditManagerQueriesEngineClusterNodesAndServices()
     {
         await using var server = new ScriptedDockerApiServer(
             new ScriptedDockerApiServer.Response(200, "OK", "text/plain"),
@@ -26,6 +26,11 @@ public sealed class SwarmReadinessAuditServiceTests
                     "ServiceStatus":{"RunningTasks":1,"DesiredTasks":1}
                   }
                 ]
+                """),
+            ScriptedDockerApiServer.Json("""
+                [
+                  {"Name":"ingress","Id":"ingress-1","Driver":"overlay","Scope":"swarm","Ingress":true}
+                ]
                 """));
         using var docker = CreateService(server);
         var audit = new SwarmReadinessAuditService(
@@ -33,15 +38,18 @@ public sealed class SwarmReadinessAuditServiceTests
 
         SwarmReadinessReport report = await audit.AuditAsync(docker);
 
-        Assert.Equal(SwarmReadinessSeverity.Pass, report.OverallSeverity);
+        Assert.Equal(SwarmReadinessSeverity.Warning, report.OverallSeverity);
+        Assert.Contains(report.Checks, check =>
+            check.Name == "Failure recovery" && check.Severity == SwarmReadinessSeverity.Warning);
         Assert.Contains(report.Checks, check => check.Name == "Service inventory" && check.Severity == SwarmReadinessSeverity.Pass);
+        Assert.Contains(report.Checks, check => check.Name == "Routing mesh ingress" && check.Severity == SwarmReadinessSeverity.Pass);
         Assert.Equal(
-            new[] { ("GET", "/_ping"), ("GET", "/info"), ("GET", "/nodes"), ("GET", "/services") },
+            new[] { ("GET", "/_ping"), ("GET", "/info"), ("GET", "/nodes"), ("GET", "/services"), ("GET", "/networks") },
             server.Requests.Select(RequestIdentity));
     }
 
     [Fact]
-    public async Task Audit_UnreachableEngineStopsBeforeSwarmQueries()
+    public async Task AuditUnreachableEngineStopsBeforeSwarmQueries()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""{"message":"engine unavailable"}""", 500));

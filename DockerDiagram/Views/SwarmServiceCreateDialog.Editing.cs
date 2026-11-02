@@ -1,6 +1,6 @@
+using System.Windows.Controls;
 using DockerDiagram.ApplicationServices;
 using DockerDiagram.Models;
-using System.Windows.Controls;
 
 namespace DockerDiagram.Views
 {
@@ -11,7 +11,7 @@ namespace DockerDiagram.Views
             ArgumentNullException.ThrowIfNull(initialSpec);
             SwarmServiceCreateFormInput input = SwarmServiceEditFormatter.ToFormInput(initialSpec);
 
-            Title = "Edit Swarm Service";
+            Title = "Swarm Service 편집";
             ServiceNameTextBox.Text = input.Name;
             ServiceNameTextBox.IsReadOnly = true;
             ServiceNameTextBox.ToolTip = "Docker Swarm service 이름은 생성 후 변경할 수 없습니다.";
@@ -45,9 +45,9 @@ namespace DockerDiagram.Views
             SelectComboTag(RollbackActionComboBox, input.RollbackFailureAction);
             SelectComboTag(RollbackOrderComboBox, input.RollbackOrder);
 
-            DialogTitleTextBlock.Text = "Edit Swarm Service";
+            DialogTitleTextBlock.Text = "Swarm Service 편집";
             DialogDescriptionTextBlock.Text = "현재 service version을 기준으로 설정을 안전하게 갱신합니다.";
-            SubmitButton.Content = "Apply Changes";
+            SubmitButton.Content = "변경 적용";
             PlacementResourcesTab.Visibility = System.Windows.Visibility.Collapsed;
         }
 

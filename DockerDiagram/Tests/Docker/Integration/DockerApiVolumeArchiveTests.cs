@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerApiVolumeArchiveTests
 {
     [Fact]
-    public async Task BackupVolume_UsesTemporaryContainerAndAlwaysRemovesIt()
+    public async Task BackupVolumeUsesTemporaryContainerAndAlwaysRemovesIt()
     {
         const string progress = "{\"status\":\"done\"}\n";
         await using var server = new ScriptedDockerApiServer(
@@ -40,7 +40,7 @@ public sealed class DockerApiVolumeArchiveTests
     }
 
     [Fact]
-    public async Task RestoreVolume_UploadsArchiveAndAlwaysRemovesTemporaryContainer()
+    public async Task RestoreVolumeUploadsArchiveAndAlwaysRemovesTemporaryContainer()
     {
         const string progress = "{\"status\":\"done\"}\n";
         await using var server = new ScriptedDockerApiServer(

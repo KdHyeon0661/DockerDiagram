@@ -36,7 +36,7 @@ namespace DockerDiagram.Infrastructure
                     : $"{plainIp}:{DefaultManagerPort}";
             }
 
-            if (value.StartsWith("[", StringComparison.Ordinal))
+            if (value.StartsWith('['))
             {
                 int closingBracket = value.IndexOf(']');
                 if (closingBracket <= 1)
@@ -52,7 +52,7 @@ namespace DockerDiagram.Infrastructure
                 string remainder = value[(closingBracket + 1)..];
                 int port = string.IsNullOrEmpty(remainder)
                     ? DefaultManagerPort
-                    : ParsePort(remainder.StartsWith(":", StringComparison.Ordinal) ? remainder[1..] : string.Empty);
+                    : ParsePort(remainder.StartsWith(':') ? remainder[1..] : string.Empty);
                 return $"[{ipv6}]:{port}";
             }
 

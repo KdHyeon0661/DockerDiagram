@@ -1,5 +1,5 @@
-using DockerDiagram.Models;
 using System.Globalization;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.ApplicationServices
 {

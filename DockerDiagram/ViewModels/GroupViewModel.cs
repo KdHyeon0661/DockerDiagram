@@ -1,15 +1,14 @@
-using DockerDiagram.Infrastructure;
-using DockerDiagram.Contracts;
-using DockerDiagram.Common;
-using DockerDiagram.Models;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using System.Windows.Media;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Infrastructure;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
@@ -36,7 +35,7 @@ namespace DockerDiagram.ViewModels
         private string _headerColor = "White";
         private string _headerFontColor = "#333";
         private double _strokeThickness = 2;
-        private DoubleCollection? _strokeDashArray = new DoubleCollection { 4, 2 };
+        private DoubleCollection? _strokeDashArray = [4, 2];
         private readonly HashSet<NodeViewModel> _layoutAttachedNodes =
             new(ReferenceEqualityComparer.Instance);
         #endregion
@@ -75,9 +74,9 @@ namespace DockerDiagram.ViewModels
         public string ComposeProjectIdentity { get; set; } = "";
         public string ComposeLayoutInstanceId { get; set; } = "";
         public string ComposeRawNetworkYaml { get; set; } = "";
-        public Dictionary<string, string> Labels { get; set; } = new();
-        public Dictionary<string, string> DriverOptions { get; set; } = new();
-        public Dictionary<string, string> AuxAddresses { get; set; } = new();
+        public Dictionary<string, string> Labels { get; set; } = [];
+        public Dictionary<string, string> DriverOptions { get; set; } = [];
+        public Dictionary<string, string> AuxAddresses { get; set; } = [];
         public string DockerNetworkName => string.IsNullOrWhiteSpace(ComposeNetworkName) ? Title : ComposeNetworkName;
         public int ZIndex { get => _zIndex; set => SetProperty(ref _zIndex, value); }
         public bool IsDockerConnected
@@ -149,7 +148,7 @@ namespace DockerDiagram.ViewModels
 
         #region Collections
         // 포함된 노드들
-        public ObservableCollection<NodeViewModel> ContainedNodes { get; } = new();
+        public ObservableCollection<NodeViewModel> ContainedNodes { get; } = [];
         #endregion
 
         #region Commands
@@ -166,14 +165,17 @@ namespace DockerDiagram.ViewModels
         public GroupViewModel(double x, double y, double w, double h,
                               INetworkService networkService,
                               IDialogService dialogService,
-                              string title = "New Group",
+                              string title = "새 그룹",
                               GroupType type = GroupType.General) // 기본값은 일반 폴더
             : base(x, y, Math.Max(MinimumWidth, w), Math.Max(MinimumHeight, h))
         {
             _networkService = networkService;
             _dialogService = dialogService;
 
-            Title = title;
+            // 이전 버전이 자동으로 붙인 기본 영문 이름은 사용자 지정 이름으로 보지 않고 한글 기본값으로 이관합니다.
+            Title = string.Equals(title, "New Group", StringComparison.Ordinal)
+                ? "새 그룹"
+                : title;
             Type = type; // 타입 확정!
 
             ArrangeCommand = new RelayCommand(_ => ArrangeNodes());
@@ -206,7 +208,7 @@ namespace DockerDiagram.ViewModels
                 HeaderColor = "White";
                 HeaderFontColor = "#333";
                 StrokeThickness = 2;
-                StrokeDashArray = new DoubleCollection { 4, 2 };
+                StrokeDashArray = [4, 2];
             }
         }
 
@@ -263,8 +265,6 @@ namespace DockerDiagram.ViewModels
                     ResourceKind != RuntimeResourceKind.SwarmOverlayNetwork &&
                     !string.IsNullOrEmpty(node.ContainerId))
                 {
-                    if (ParentSheet?.Profile.Type == EndpointType.Local && !DockerServiceHelper.IsDockerRunning()) return;
-
                     if (!await node.ValidateNetworkOptionsBeforeConnectAsync(_networkService, this.Title, DockerNetworkName))
                     {
                         return;
@@ -282,15 +282,15 @@ namespace DockerDiagram.ViewModels
                     catch (Exception ex)
                     {
                         // 1. 도커 엔진 특성상 무시 가능한 에러 (이미 연결된 상태)
-                        if (ex.Message.Contains("이미 연결") || ex.Message.Contains("already") || ex.Message.Contains("in use"))
+                        if (DockerErrorClassifier.IsConflict(ex))
                         {
-                            Debug.WriteLine($"[DockerDiscovery] {node.Name}은(는) 이미 {this.Title} 네트워크에 연결되어 있습니다.");
+                            AppLog.Info($"'{node.Name}' 컨테이너는 이미 '{Title}' 네트워크에 연결되어 있습니다.");
                         }
                         // 2. 🚨 진짜 통신 에러 발생 시 (UI 알림 후 상위로 전파)
                         else
                         {
-                            Debug.WriteLine($"[DockerDiscovery] 네트워크 연결 실패: {ex.Message}");
-                            _dialogService.ShowError($"'{node.Name}' 컨테이너를 '{this.Title}' 네트워크에 연결하는 중 오류가 발생했습니다.\n{ex.Message}", "Network Error");
+                            AppLog.Error($"'{node.Name}' 컨테이너의 '{Title}' 네트워크 연결 실패", ex);
+                            _dialogService.ShowError($"'{node.Name}' 컨테이너를 '{this.Title}' 네트워크에 연결하는 중 오류가 발생했습니다.\n{ex.Message}", "네트워크 오류");
                             throw; // AsyncRelayCommand나 최상위 이벤트 핸들러가 이 예외를 캐치할 수 있도록 던짐
                         }
                     }
@@ -313,8 +313,6 @@ namespace DockerDiagram.ViewModels
                     ResourceKind != RuntimeResourceKind.SwarmOverlayNetwork &&
                     !string.IsNullOrEmpty(node.ContainerId))
                 {
-                    if (ParentSheet?.Profile.Type == EndpointType.Local && !DockerServiceHelper.IsDockerRunning()) return;
-
                     try
                     {
                         await _networkService.DisconnectNetworkAsync(DockerNetworkName, node.ContainerId);
@@ -322,15 +320,15 @@ namespace DockerDiagram.ViewModels
                     catch (Exception ex)
                     {
                         // 1. 도커 엔진 특성상 무시 가능한 에러 (애초에 연결되어 있지 않은 상태)
-                        if (ex.Message.Contains("is not connected") || ex.Message.Contains("연결되어 있지"))
+                        if (DockerErrorClassifier.IsNotConnected(ex))
                         {
-                            Debug.WriteLine($"[DockerDiscovery] {node.Name}은(는) 원래 {this.Title} 네트워크에 없습니다.");
+                            AppLog.Info($"'{node.Name}' 컨테이너는 '{Title}' 네트워크에 연결되어 있지 않습니다.");
                         }
                         // 2. 🚨 진짜 통신 에러 발생 시 (UI 알림 후 상위로 전파)
                         else
                         {
-                            Debug.WriteLine($"[DockerDiscovery] 네트워크 해제 실패: {ex.Message}");
-                            _dialogService.ShowError($"'{node.Name}' 컨테이너를 '{this.Title}' 네트워크에서 해제하는 중 오류가 발생했습니다.\n{ex.Message}", "Network Error");
+                            AppLog.Error($"'{node.Name}' 컨테이너의 '{Title}' 네트워크 해제 실패", ex);
+                            _dialogService.ShowError($"'{node.Name}' 컨테이너를 '{this.Title}' 네트워크에서 해제하는 중 오류가 발생했습니다.\n{ex.Message}", "네트워크 오류");
                             throw; // AsyncRelayCommand나 최상위 이벤트 핸들러가 이 예외를 캐치할 수 있도록 던짐
                         }
                     }
@@ -346,18 +344,35 @@ namespace DockerDiagram.ViewModels
         /// </summary>
         public void MoveBy(double dx, double dy)
         {
-            X += dx;
-            Y += dy;
-
             var movingNodes = new HashSet<NodeViewModel>(
                 ContainedNodes,
                 ReferenceEqualityComparer.Instance);
             movingNodes.UnionWith(_layoutAttachedNodes);
-            foreach (NodeViewModel node in movingNodes)
+
+            if (ParentSheet is SheetViewModel sheet)
             {
-                node.X += dx;
-                node.Y += dy;
+                var updates = new List<CanvasPositionUpdate>(movingNodes.Count + 1)
+                {
+                    new(this, X + dx, Y + dy)
+                };
+                updates.AddRange(movingNodes.Select(node =>
+                    new CanvasPositionUpdate(node, node.X + dx, node.Y + dy)));
+                sheet.ApplyInteractivePositions(updates);
+                return;
             }
+
+            SetPosition(X + dx, Y + dy);
+            foreach (NodeViewModel node in movingNodes)
+                node.SetPosition(node.X + dx, node.Y + dy);
+        }
+
+        public IReadOnlyCollection<NodeViewModel> GetNodesMovedWithGroup()
+        {
+            var nodes = new HashSet<NodeViewModel>(
+                ContainedNodes,
+                ReferenceEqualityComparer.Instance);
+            nodes.UnionWith(_layoutAttachedNodes);
+            return nodes.ToList();
         }
 
         /// <summary>
@@ -418,7 +433,7 @@ namespace DockerDiagram.ViewModels
                 }
 
                 var groupTree = new Dictionary<GroupViewModel, List<GroupViewModel>>();
-                foreach (var g in allGroups) { groupTree[g] = new List<GroupViewModel>(); }
+                foreach (var g in allGroups) { groupTree[g] = []; }
 
                 foreach (var g in allGroups)
                 {
@@ -461,7 +476,7 @@ namespace DockerDiagram.ViewModels
                     }
 
                     var directNodes = ContainedNodes.Where(n => nodeToGroup[n] == currentGroup).ToList();
-                    if (directNodes.Any())
+                    if (directNodes.Count != 0)
                     {
                         hasElements = true;
                         int col = 0;
@@ -514,7 +529,7 @@ namespace DockerDiagram.ViewModels
                 if (node.StartCommand.CanExecute(null))
                 {
                     await node.StartCommand.ExecuteAsync(null);
-                    await Task.Delay(1000); // 컨테이너 간 시작 안정화 시간(1초) 부여
+                    await Task.Delay(RuntimeSyncTiming.GroupStartStagger); // 컨테이너 간 시작 안정화 시간
                 }
             }
             _dialogService.ShowMessage("전체 실행 완료");
@@ -536,7 +551,7 @@ namespace DockerDiagram.ViewModels
                 if (node.StopCommand.CanExecute(null))
                 {
                     await node.StopCommand.ExecuteAsync(null);
-                    await Task.Delay(500); // 정지는 비교적 빠르게(0.5초 간격)
+                    await Task.Delay(RuntimeSyncTiming.GroupStopStagger); // 정지는 비교적 빠르게 처리
                 }
             }
             _dialogService.ShowMessage("전체 정지 완료");
@@ -557,7 +572,7 @@ namespace DockerDiagram.ViewModels
 
             foreach (var c in containers)
             {
-                dependencies[c] = new List<NodeViewModel>();
+                dependencies[c] = [];
                 inDegree[c] = 0;
             }
 

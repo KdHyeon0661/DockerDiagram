@@ -8,9 +8,9 @@ namespace DockerDiagram.Tests;
 public sealed class DockerServiceFactoryTests
 {
     [Fact]
-    public void CreateAndRelease_DisposesRegisteredServiceOnce()
+    public void CreateAndReleaseDisposesRegisteredServiceOnce()
     {
-        IDockerService service = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
+        using IDockerService service = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
         var tracker = (TrackingDockerServiceProxy)(object)service;
         using var factory = new DockerServiceFactory(_ => service);
 
@@ -24,9 +24,9 @@ public sealed class DockerServiceFactoryTests
     }
 
     [Fact]
-    public void RegisterAndReleaseAll_DisposesDuplicateRegistrationOnce()
+    public void RegisterAndReleaseAllDisposesDuplicateRegistrationOnce()
     {
-        IDockerService service = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
+        using IDockerService service = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
         var tracker = (TrackingDockerServiceProxy)(object)service;
         using var factory = new DockerServiceFactory(_ => service);
 
@@ -39,19 +39,26 @@ public sealed class DockerServiceFactoryTests
     }
 
     [Fact]
-    public void Create_WhenRegistrationIsRejected_DisposesNewService()
+    public void CreateWhenRegistrationIsRejectedDisposesNewService()
     {
-        IDockerService service = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
+        using IDockerService service = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
         var tracker = (TrackingDockerServiceProxy)(object)service;
         DockerServiceFactory? factory = null;
-        factory = new DockerServiceFactory(_ =>
+        try
         {
-            factory!.Dispose();
-            return service;
-        });
+            factory = new DockerServiceFactory(_ =>
+            {
+                factory!.Dispose();
+                return service;
+            });
 
-        Assert.Throws<ObjectDisposedException>(() => factory!.Create(new ConnectionProfile()));
-        Assert.Equal(1, tracker.DisposeCount);
+            Assert.Throws<ObjectDisposedException>(() => factory.Create(new ConnectionProfile()));
+            Assert.Equal(1, tracker.DisposeCount);
+        }
+        finally
+        {
+            factory?.Dispose();
+        }
     }
 }
 

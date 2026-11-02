@@ -13,7 +13,7 @@ namespace DockerDiagram.Tests
         [InlineData("orphaned", "", SwarmTaskFailureCategory.Orphaned)]
         [InlineData("running", "", SwarmTaskFailureCategory.Healthy)]
         [InlineData("preparing", "", SwarmTaskFailureCategory.Starting)]
-        public void Classify_RecognizesOperationalFailure(string state, string error, SwarmTaskFailureCategory expected)
+        public void ClassifyRecognizesOperationalFailure(string state, string error, SwarmTaskFailureCategory expected)
         {
             SwarmTaskFailureCategory category = SwarmTaskDiagnosticAnalyzer.Classify(
                 Task("task", slot: 1, state: state, error: error));
@@ -22,7 +22,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void Classify_RecognizesNonZeroProcessExit()
+        public void ClassifyRecognizesNonZeroProcessExit()
         {
             var task = Task("task", 1, "failed");
             task = new SwarmTaskDiagnostic
@@ -37,7 +37,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void Analyze_AssignsAttemptsAndMarksOldReplicaTaskHistorical()
+        public void AnalyzeAssignsAttemptsAndMarksOldReplicaTaskHistorical()
         {
             SwarmTaskDiagnostic oldTask = Task("old", 1, "shutdown", createdMinutes: 0);
             SwarmTaskDiagnostic currentTask = Task("current", 1, "running", createdMinutes: 1);
@@ -52,7 +52,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void Analyze_KeepsGlobalTasksOnDifferentNodesCurrent()
+        public void AnalyzeKeepsGlobalTasksOnDifferentNodesCurrent()
         {
             SwarmTaskDiagnostic first = Task("first", 0, "running", nodeId: "node-a");
             SwarmTaskDiagnostic second = Task("second", 0, "running", nodeId: "node-b");
@@ -66,7 +66,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void ReportSummary_CountsOnlyCurrentFailures()
+        public void ReportSummaryCountsOnlyCurrentFailures()
         {
             SwarmTaskDiagnostic oldFailed = Task("old", 1, "failed", createdMinutes: 0);
             SwarmTaskDiagnostic running = Task("new", 1, "running", createdMinutes: 1);
@@ -80,7 +80,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void UnassignedPendingTask_IsSchedulingPending()
+        public void UnassignedPendingTaskIsSchedulingPending()
         {
             SwarmTaskDiagnostic task = Task("pending", 1, "pending", nodeId: string.Empty);
 
@@ -105,7 +105,10 @@ namespace DockerDiagram.Tests
                 DesiredState = "running",
                 CurrentState = state,
                 Error = error,
-                CreatedAt = DateTimeOffset.Parse("2026-01-01T00:00:00Z").AddMinutes(createdMinutes)
+                CreatedAt = DateTimeOffset.Parse(
+                        "2026-01-01T00:00:00Z",
+                        System.Globalization.CultureInfo.InvariantCulture)
+                    .AddMinutes(createdMinutes)
             };
     }
 }

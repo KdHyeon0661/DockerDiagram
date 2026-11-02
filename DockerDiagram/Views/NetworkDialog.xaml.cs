@@ -1,9 +1,11 @@
-using DockerDiagram.Contracts;
-using DockerDiagram.Models;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.Views
 {
@@ -17,27 +19,14 @@ namespace DockerDiagram.Views
     {
         private readonly IDialogService _dialogService;
         private readonly NetworkDialogMode _mode;
+        private NetworkCreateOptions? _createOptions;
 
         public string NetworkName => txtName.Text.Trim();
 
         public string Driver => (cmbDriver.SelectedItem as ComboBoxItem)?.Content.ToString() ?? "bridge";
 
-        public NetworkCreateOptions CreateOptions => new NetworkCreateOptions
-        {
-            Name = NetworkName,
-            Driver = Driver,
-            Subnet = txtSubnet.Text.Trim(),
-            Gateway = txtGateway.Text.Trim(),
-            IpRange = txtIpRange.Text.Trim(),
-            Internal = chkInternal.IsChecked == true,
-            Attachable = chkAttachable.IsChecked == true,
-            EnableIPv6 = chkEnableIPv6.IsChecked == true,
-            External = chkExternal.IsChecked == true,
-            ComposeNetworkName = txtComposeName.Text.Trim(),
-            Labels = ParseKeyValueLines(txtLabels.Text),
-            DriverOptions = BuildDriverOptions(),
-            AuxAddresses = ParseKeyValueLines(txtAuxAddresses.Text)
-        };
+        public NetworkCreateOptions CreateOptions => _createOptions ??
+            throw new InvalidOperationException("네트워크 입력이 아직 검증되지 않았습니다.");
 
         public NetworkDialog(
             IDialogService dialogService,
@@ -82,32 +71,35 @@ namespace DockerDiagram.Views
 
         private void BtnOk_Click(object sender, RoutedEventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(NetworkName))
+            var input = new NetworkCreateFormInput(
+                NetworkName,
+                Driver,
+                txtSubnet.Text,
+                txtGateway.Text,
+                txtIpRange.Text,
+                chkInternal.IsChecked == true,
+                chkAttachable.IsChecked == true,
+                chkEnableIPv6.IsChecked == true,
+                chkExternal.IsChecked == true,
+                txtComposeName.Text,
+                txtLabels.Text,
+                txtDriverOptions.Text,
+                txtAuxAddresses.Text,
+                txtParentInterface.Text,
+                IsMacvlanOrIpvlan()
+                    ? GetComboBoxContent(Driver.Equals("macvlan", System.StringComparison.OrdinalIgnoreCase)
+                        ? cmbMacvlanMode
+                        : cmbIpvlanMode)
+                    : string.Empty);
+            FormParseResult<NetworkCreateOptions> result = NetworkCreateFormValidator.Parse(
+                input,
+                _mode == NetworkDialogMode.SwarmOverlay);
+            if (!result.IsValid)
             {
-                _dialogService.ShowError("Enter a network name.", "Input Error");
+                _dialogService.ShowError(result.Message, "Input Error");
                 return;
             }
-
-            if (_mode == NetworkDialogMode.SwarmOverlay &&
-                string.Equals(NetworkName, "ingress", System.StringComparison.OrdinalIgnoreCase))
-            {
-                _dialogService.ShowError(
-                    "'ingress' is reserved for Swarm routing mesh and is managed automatically.",
-                    "Input Error");
-                return;
-            }
-
-            if (!ValidateKeyValueLines(txtAuxAddresses.Text, "Aux Addresses")) return;
-            if (!ValidateKeyValueLines(txtLabels.Text, "Labels")) return;
-            if (!ValidateKeyValueLines(txtDriverOptions.Text, "Driver Options")) return;
-
-            if (IsMacvlanOrIpvlan() &&
-                chkExternal.IsChecked != true &&
-                string.IsNullOrWhiteSpace(txtParentInterface.Text))
-            {
-                _dialogService.ShowError($"{Driver} requires a parent interface, e.g. eth0.", "Input Error");
-                return;
-            }
+            _createOptions = result.Value!;
 
             if (chkExternal.IsChecked == true && HasCreateOnlyOptions())
             {
@@ -145,62 +137,9 @@ namespace DockerDiagram.Views
                    chkInternal.IsChecked == true ||
                    chkAttachable.IsChecked == true ||
                    chkEnableIPv6.IsChecked == true ||
-                   GetKeyValueLines(txtAuxAddresses.Text).Any() ||
-                   GetKeyValueLines(txtLabels.Text).Any() ||
-                   GetKeyValueLines(txtDriverOptions.Text).Any();
-        }
-
-        private Dictionary<string, string> BuildDriverOptions()
-        {
-            var options = ParseKeyValueLines(txtDriverOptions.Text);
-
-            if (IsMacvlanOrIpvlan())
-            {
-                var parent = txtParentInterface.Text.Trim();
-                if (!string.IsNullOrWhiteSpace(parent))
-                    options["parent"] = parent;
-
-                if (string.Equals(Driver, "macvlan", System.StringComparison.OrdinalIgnoreCase))
-                {
-                    var mode = GetComboBoxContent(cmbMacvlanMode);
-                    if (!string.IsNullOrWhiteSpace(mode))
-                        options["macvlan_mode"] = mode;
-                }
-                else if (string.Equals(Driver, "ipvlan", System.StringComparison.OrdinalIgnoreCase))
-                {
-                    var mode = GetComboBoxContent(cmbIpvlanMode);
-                    if (!string.IsNullOrWhiteSpace(mode))
-                        options["ipvlan_mode"] = mode;
-                }
-            }
-
-            return options;
-        }
-
-        private bool ValidateKeyValueLines(string text, string fieldName)
-        {
-            var invalidLine = GetKeyValueLines(text).FirstOrDefault(line => !line.Contains('=') || line.StartsWith("="));
-            if (invalidLine == null) return true;
-
-            _dialogService.ShowError($"{fieldName} must use key=value format.\n\nInvalid line: {invalidLine}", "Input Error");
-            return false;
-        }
-
-        private static Dictionary<string, string> ParseKeyValueLines(string text)
-        {
-            return GetKeyValueLines(text)
-                .Select(line => line.Split(new[] { '=' }, 2))
-                .Where(parts => parts.Length == 2 && !string.IsNullOrWhiteSpace(parts[0]))
-                .GroupBy(parts => parts[0].Trim())
-                .ToDictionary(group => group.Key, group => group.Last()[1].Trim());
-        }
-
-        private static IEnumerable<string> GetKeyValueLines(string text)
-        {
-            return (text ?? "")
-                .Split(new[] { "\r\n", "\n" }, System.StringSplitOptions.None)
-                .Select(line => line.Trim())
-                .Where(line => !string.IsNullOrWhiteSpace(line));
+                   KeyValueTextParser.ReadEntries(txtAuxAddresses.Text).Count > 0 ||
+                   KeyValueTextParser.ReadEntries(txtLabels.Text).Count > 0 ||
+                   KeyValueTextParser.ReadEntries(txtDriverOptions.Text).Count > 0;
         }
 
         private static string GetComboBoxContent(ComboBox comboBox)

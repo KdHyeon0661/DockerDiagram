@@ -1,17 +1,21 @@
-﻿using DockerDiagram.Contracts;
-using Docker.DotNet;
-using Docker.DotNet.Models;
-using DockerDiagram.Models;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO;
 using System.Net.Http;
-using System.Reflection;
+using System.Net.Security;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
+using Docker.DotNet;
+using Docker.DotNet.Models;
+using Docker.DotNet.X509;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Models;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace DockerDiagram.Infrastructure
 {
@@ -21,17 +25,21 @@ namespace DockerDiagram.Infrastructure
     /// </summary>
     public partial class DockerApiService : IDockerService
     {
-        private static readonly TimeSpan DockerRequestTimeout = TimeSpan.FromSeconds(100);
-        private static readonly TimeSpan NamedPipeConnectTimeout = TimeSpan.FromSeconds(2);
+        private static readonly TimeSpan DockerRequestTimeout = DockerConnectionTiming.RequestTimeout;
+        private static readonly TimeSpan NamedPipeConnectTimeout = DockerConnectionTiming.NamedPipeConnectTimeout;
+        private static readonly TimeSpan DockerHealthCheckTimeout = DockerConnectionTiming.HealthCheckTimeout;
         private readonly DockerClient _client;
         private readonly DockerClient _eventsClient;
+        private readonly X509Certificate2? _clientCertificate;
+        private readonly X509Certificate2? _eventsClientCertificate;
+        private readonly DockerRawApiClient _rawApiClient;
         private readonly CancellationTokenSource _eventsLifetimeCts = new();
         private readonly object _eventsClientLifetimeSync = new();
         private int _activeEventMonitors;
         private bool _disposeEventsClientWhenIdle;
         private bool _eventsClientDisposed;
-        private static readonly TimeSpan SystemDiskUsageCacheTtl = TimeSpan.FromSeconds(10);
-        private static readonly TimeSpan SystemInfoCacheTtl = TimeSpan.FromMinutes(5);
+        private static readonly TimeSpan SystemDiskUsageCacheTtl = RuntimeSyncTiming.ResourceCacheTtl;
+        private static readonly TimeSpan SystemInfoCacheTtl = DockerConnectionTiming.SystemInfoCacheTtl;
         private SystemDiskUsage? _systemDiskUsageCache;
         private DateTimeOffset _systemDiskUsageCacheAt = DateTimeOffset.MinValue;
         private readonly SemaphoreSlim _systemDiskUsageCacheLock = new(1, 1);
@@ -41,6 +49,8 @@ namespace DockerDiagram.Infrastructure
         private bool _disposedValue; // 중복 해제 방지 플래그
 
         public ConnectionProfile CurrentProfile { get; private set; }
+
+        private static readonly char[] separator = new[] { '\r', '\n' };
 
         /// <summary>
         /// 연결 프로필에 따라 로컬 또는 원격 Docker 클라이언트를 초기화합니다.
@@ -77,19 +87,155 @@ namespace DockerDiagram.Infrastructure
                 throw new NotSupportedException($"지원하지 않는 엔드포인트 타입입니다: {profile.Type}");
             }
 
-            var config = new DockerClientConfiguration(
-                dockerUri,
-                defaultTimeout: DockerRequestTimeout,
-                namedPipeConnectTimeout: NamedPipeConnectTimeout);
-            _client = config.CreateClient();
+            DockerClient? client = null;
+            X509Certificate2? clientCertificate = null;
+            DockerRawApiClient? rawApiClient = null;
+            DockerClient? eventsClient = null;
+            X509Certificate2? eventsClientCertificate = null;
+            try
+            {
+                client = CreateDockerClient(
+                    dockerUri,
+                    profile,
+                    DockerRequestTimeout,
+                    out clientCertificate);
+                rawApiClient = new DockerRawApiClient(dockerUri, profile, DockerRequestTimeout);
 
-            // Docker Events는 끝나지 않는 스트림이므로 일반 API의 요청 제한을 공유하면
-            // 기본 타임아웃마다 연결이 끊깁니다. 전용 클라이언트는 외부 취소 토큰으로만 종료합니다.
-            var eventsConfig = new DockerClientConfiguration(
-                dockerUri,
-                defaultTimeout: Timeout.InfiniteTimeSpan,
-                namedPipeConnectTimeout: NamedPipeConnectTimeout);
-            _eventsClient = eventsConfig.CreateClient();
+                // Docker Events는 끝나지 않는 스트림이므로 일반 API의 요청 제한을 공유하면
+                // 기본 타임아웃마다 연결이 끊깁니다. 전용 클라이언트는 외부 취소 토큰으로만 종료합니다.
+                eventsClient = CreateDockerClient(
+                    dockerUri,
+                    profile,
+                    Timeout.InfiniteTimeSpan,
+                    out eventsClientCertificate);
+            }
+            catch
+            {
+                eventsClient?.Dispose();
+                eventsClientCertificate?.Dispose();
+                rawApiClient?.Dispose();
+                client?.Dispose();
+                clientCertificate?.Dispose();
+                _eventsLifetimeCts.Dispose();
+                throw;
+            }
+
+            _client = client!;
+            _clientCertificate = clientCertificate;
+            _rawApiClient = rawApiClient!;
+            _eventsClient = eventsClient!;
+            _eventsClientCertificate = eventsClientCertificate;
+        }
+
+        private static DockerClient CreateDockerClient(
+            Uri dockerUri,
+            ConnectionProfile profile,
+            TimeSpan timeout,
+            out X509Certificate2? clientCertificate)
+        {
+            clientCertificate = null;
+            DockerClientConfiguration? pendingConfiguration = null;
+            X509Certificate2? pendingCertificate = null;
+            try
+            {
+                pendingConfiguration = CreateClientConfiguration(
+                    dockerUri,
+                    profile,
+                    timeout,
+                    out pendingCertificate);
+                DockerClient client = pendingConfiguration.CreateClient();
+                pendingConfiguration = null;
+                clientCertificate = pendingCertificate;
+                pendingCertificate = null;
+                return client;
+            }
+            finally
+            {
+                pendingConfiguration?.Dispose();
+                pendingCertificate?.Dispose();
+            }
+        }
+
+        private static DockerClientConfiguration CreateClientConfiguration(
+            Uri dockerUri,
+            ConnectionProfile profile,
+            TimeSpan timeout,
+            out X509Certificate2? clientCertificate)
+        {
+            clientCertificate = null;
+            if (profile.Type != EndpointType.DockerContext || !profile.DockerTlsEnabled)
+            {
+                return new DockerClientConfiguration(
+                    dockerUri,
+                    defaultTimeout: timeout,
+                    namedPipeConnectTimeout: NamedPipeConnectTimeout);
+            }
+
+            if (string.IsNullOrWhiteSpace(profile.DockerTlsCertPath) ||
+                string.IsNullOrWhiteSpace(profile.DockerTlsKeyPath) ||
+                !File.Exists(profile.DockerTlsCertPath) ||
+                !File.Exists(profile.DockerTlsKeyPath))
+            {
+                throw new InvalidOperationException(
+                    $"Docker context '{profile.DockerContextName ?? profile.Name}'의 TLS 클라이언트 인증서(cert.pem/key.pem)를 찾을 수 없습니다.");
+            }
+
+            X509Certificate2? pendingCertificate = null;
+            CertificateCredentials? pendingCredentials = null;
+            try
+            {
+                pendingCertificate = X509Certificate2.CreateFromPemFile(
+                    profile.DockerTlsCertPath,
+                    profile.DockerTlsKeyPath);
+                pendingCredentials = new CertificateCredentials(pendingCertificate);
+                pendingCredentials.ServerCertificateValidationCallback =
+                    (_, certificate, chain, sslPolicyErrors) =>
+                        ValidateDockerServerCertificate(profile, certificate, chain, sslPolicyErrors);
+
+                var configuration = new DockerClientConfiguration(
+                    dockerUri,
+                    pendingCredentials,
+                    defaultTimeout: timeout,
+                    namedPipeConnectTimeout: NamedPipeConnectTimeout);
+                pendingCredentials = null;
+                clientCertificate = pendingCertificate;
+                pendingCertificate = null;
+                return configuration;
+            }
+            finally
+            {
+                pendingCredentials?.Dispose();
+                pendingCertificate?.Dispose();
+            }
+        }
+
+        internal static bool ValidateDockerServerCertificate(
+            ConnectionProfile profile,
+            X509Certificate? certificate,
+            X509Chain? chain,
+            SslPolicyErrors sslPolicyErrors)
+        {
+            if (profile.DockerTlsSkipVerify)
+                return true;
+            if (certificate == null)
+                return false;
+
+            // 호스트 이름 불일치는 CA가 맞더라도 허용하지 않습니다.
+            if ((sslPolicyErrors & SslPolicyErrors.RemoteCertificateNameMismatch) != 0)
+                return false;
+
+            if (string.IsNullOrWhiteSpace(profile.DockerTlsCaPath) || !File.Exists(profile.DockerTlsCaPath))
+                return sslPolicyErrors == SslPolicyErrors.None;
+
+            using var serverCertificate = X509CertificateLoader.LoadCertificate(
+                certificate.GetRawCertData());
+            using var caCertificate = X509Certificate2.CreateFromPemFile(profile.DockerTlsCaPath);
+            using var customChain = new X509Chain();
+            customChain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+            customChain.ChainPolicy.CustomTrustStore.Add(caCertificate);
+            customChain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+            customChain.ChainPolicy.VerificationFlags = X509VerificationFlags.NoFlag;
+            return customChain.Build(serverCertificate);
         }
 
         // ---------------------------------------------------------
@@ -145,6 +291,7 @@ namespace DockerDiagram.Infrastructure
                     {
                         ContainerId = c.ID,
                         ContainerName = c.Names.FirstOrDefault()?.TrimStart('/') ?? c.ID,
+                        Source = mount.Source ?? string.Empty,
                         Destination = mount.Destination,
                         ReadWrite = mount.RW,
                         Mode = mount.Mode ?? string.Empty
@@ -193,8 +340,14 @@ namespace DockerDiagram.Infrastructure
         /// <summary>
         /// 지정된 컨테이너의 Docker 이름을 변경합니다.
         /// </summary>
-        public async Task RenameContainerAsync(string id, string newName)
-            => await _client.Containers.RenameContainerAsync(id, new ContainerRenameParameters { NewName = newName }, CancellationToken.None);
+        public async Task RenameContainerAsync(
+            string id,
+            string newName,
+            CancellationToken cancellationToken = default)
+            => await _client.Containers.RenameContainerAsync(
+                id,
+                new ContainerRenameParameters { NewName = newName },
+                cancellationToken);
 
         /// <summary>
         /// 지정된 컨테이너의 실행을 일시 정지(Pause)합니다.
@@ -225,7 +378,14 @@ namespace DockerDiagram.Infrastructure
         /// <summary>
         /// 컨테이너의 현재 파일시스템 상태를 새 이미지로 커밋합니다.
         /// </summary>
-        public async Task<string> CommitContainerAsync(string containerId, string repository, string tag, string comment, string author, bool pause)
+        public async Task<string> CommitContainerAsync(
+            string containerId,
+            string repository,
+            string tag,
+            string comment,
+            string author,
+            bool pause,
+            CancellationToken cancellationToken = default)
         {
             var response = await _client.Images.CommitContainerChangesAsync(new CommitContainerChangesParameters
             {
@@ -235,7 +395,7 @@ namespace DockerDiagram.Infrastructure
                 Comment = comment,
                 Author = author,
                 Pause = pause
-            }, CancellationToken.None);
+            }, cancellationToken);
 
             return response.ID;
         }
@@ -243,17 +403,26 @@ namespace DockerDiagram.Infrastructure
         /// <summary>
         /// 컨테이너 파일시스템을 tar 아카이브로 내보냅니다.
         /// </summary>
-        public async Task ExportContainerAsync(string containerId, string tarFilePath)
+        public async Task ExportContainerAsync(
+            string containerId,
+            string tarFilePath,
+            CancellationToken cancellationToken = default)
         {
-            await using var source = await _client.Containers.ExportContainerAsync(containerId, CancellationToken.None);
+            await using var source = await _client.Containers.ExportContainerAsync(containerId, cancellationToken);
             await using var target = File.Create(tarFilePath);
-            await source.CopyToAsync(target);
+            await source.CopyToAsync(target, cancellationToken);
         }
 
         /// <summary>
         /// 지정된 이미지와 태그를 도커 허브(또는 레지스트리)에서 로컬로 다운로드(Pull)합니다.
         /// </summary>
-        public async Task PullImageAsync(string image, string tag, string? username = null, string? password = null, string? serverAddress = null)
+        public async Task PullImageAsync(
+            string image,
+            string tag,
+            string? username = null,
+            string? password = null,
+            string? serverAddress = null,
+            CancellationToken cancellationToken = default)
         {
             AuthConfig? authConfig = null;
 
@@ -272,21 +441,49 @@ namespace DockerDiagram.Infrastructure
             await _client.Images.CreateImageAsync(
                 new ImagesCreateParameters { FromImage = image, Tag = tag },
                 authConfig,
-                new Progress<JSONMessage>());
+                new Progress<JSONMessage>(),
+                cancellationToken);
         }
 
         /// <summary>
         /// 사용자가 뷰모델에 설정한 각종 옵션(포트, 환경변수, 볼륨, 명령어 등)을 바탕으로 새 컨테이너를 생성하고 즉시 실행합니다.
         /// </summary>
+        public Task<string> CreateAndStartContainerAsync(
+            string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes,
+            string restartPolicy, long memoryMb, double cpuCount,
+            string command = "", bool tty = false, string networkName = "", Dictionary<string, string>? labels = null,
+            IProgress<ContainerCreationProgress>? progress = null) =>
+            CreateAndStartContainerAsync(
+                name,
+                image,
+                tag,
+                ports,
+                envs,
+                ContainerMountParser.ParseLegacyMany(volumes),
+                restartPolicy,
+                memoryMb,
+                cpuCount,
+                command,
+                tty,
+                networkName,
+                labels,
+                progress);
+
         public async Task<string> CreateAndStartContainerAsync(
-    string name, string image, string tag, List<string> ports, List<string> envs, List<string> volumes,
-    string restartPolicy, long memoryMb, double cpuCount,
-    string command = "", bool tty = false, string networkName = "", Dictionary<string, string>? labels = null)
+            string name, string image, string tag, List<string> ports, List<string> envs, IReadOnlyList<ContainerMountSpec> mounts,
+            string restartPolicy, long memoryMb, double cpuCount,
+            string command = "", bool tty = false, string networkName = "", Dictionary<string, string>? labels = null,
+            IProgress<ContainerCreationProgress>? progress = null)
         {
+            progress?.Report(new ContainerCreationProgress(
+                ContainerCreationPhase.Preparing,
+                "컨테이너 설정 준비 중",
+                "포트, 환경 변수, 볼륨, 네트워크 및 리소스 제한을 Docker 요청으로 변환하고 있습니다."));
+
             (image, tag) = DockerImageReferenceParser.Split(image, tag);
             string fullImageName = $"{image}:{tag}";
 
-            string safeContainerName = System.Text.RegularExpressions.Regex.Replace(name, "[^a-zA-Z0-9_.-]", "-");
+            string safeContainerName = MyRegex().Replace(name, "-");
 
             var portBindings = new Dictionary<string, IList<PortBinding>>();
             var exposedPorts = new Dictionary<string, EmptyStruct>();
@@ -315,14 +512,16 @@ namespace DockerDiagram.Infrastructure
 
                     string containerPort = rawContainerPort.Contains('/') ? rawContainerPort : rawContainerPort + "/tcp";
                     exposedPorts[containerPort] = new EmptyStruct();
-                    portBindings[containerPort] = new List<PortBinding> { new PortBinding { HostPort = hostPort } };
+                    portBindings[containerPort] = [new PortBinding { HostPort = hostPort }];
                 }
             }
 
             long memoryBytes = memoryMb > 0 ? memoryMb * 1024 * 1024 : 0;
             long nanoCpus = cpuCount > 0 ? (long)(cpuCount * 1_000_000_000) : 0;
 
-            string safeRestartPolicy = (restartPolicy ?? "no").ToLower().Replace("-", "");
+            string safeRestartPolicy = (restartPolicy ?? "no")
+                .ToLowerInvariant()
+                .Replace("-", "", StringComparison.Ordinal);
 
             if (!Enum.TryParse(typeof(RestartPolicyKind), safeRestartPolicy, true, out var policyEnum))
             {
@@ -333,12 +532,12 @@ namespace DockerDiagram.Infrastructure
             {
                 Image = fullImageName,
                 Name = safeContainerName,
-                Env = envs ?? new List<string>(),
+                Env = envs ?? [],
                 ExposedPorts = exposedPorts,
                 HostConfig = new HostConfig
                 {
                     PortBindings = portBindings,
-                    Binds = volumes ?? new List<string>(),
+                    Mounts = BuildDockerMounts(mounts),
                     Memory = memoryBytes,
                     NanoCPUs = nanoCpus,
                     RestartPolicy = new RestartPolicy
@@ -358,10 +557,22 @@ namespace DockerDiagram.Infrastructure
                 parameters.Cmd = ParseCommandArguments(command);
             }
 
+            progress?.Report(new ContainerCreationProgress(
+                ContainerCreationPhase.Creating,
+                "컨테이너 생성 중",
+                $"Docker 엔진이 '{safeContainerName}' 컨테이너를 생성하고 있습니다."));
             var response = await _client.Containers.CreateContainerAsync(parameters);
             try
             {
+                progress?.Report(new ContainerCreationProgress(
+                    ContainerCreationPhase.Starting,
+                    "컨테이너 시작 중",
+                    $"컨테이너 {response.ID[..Math.Min(12, response.ID.Length)]}을(를) 시작하고 있습니다."));
                 await _client.Containers.StartContainerAsync(response.ID, new ContainerStartParameters());
+                progress?.Report(new ContainerCreationProgress(
+                    ContainerCreationPhase.Started,
+                    "컨테이너 시작 완료",
+                    "컨테이너가 시작되었습니다. 실제 상태와 연결 정보를 동기화합니다."));
                 return response.ID;
             }
             catch
@@ -372,14 +583,62 @@ namespace DockerDiagram.Infrastructure
                         response.ID,
                         new ContainerRemoveParameters { Force = true, RemoveVolumes = false });
                 }
-                catch
+                catch (Exception cleanupException)
                 {
+                    AppLog.Warning(
+                        $"시작 실패 컨테이너 '{response.ID}' 정리 실패",
+                        cleanupException);
                 }
                 throw;
             }
         }
 
-        private static IList<string> ParseCommandArguments(string command)
+        private static List<Mount> BuildDockerMounts(IEnumerable<ContainerMountSpec>? mounts)
+        {
+            var result = new List<Mount>();
+            foreach (ContainerMountSpec spec in mounts ?? [])
+            {
+                var mount = new Mount
+                {
+                    Type = spec.Kind switch
+                    {
+                        MountKind.Bind => "bind",
+                        MountKind.Tmpfs => "tmpfs",
+                        _ => "volume"
+                    },
+                    Source = spec.Kind == MountKind.Tmpfs ? string.Empty : spec.Source.Trim(),
+                    Target = spec.Target.Trim(),
+                    ReadOnly = spec.ReadOnly
+                };
+
+                if (spec.Kind == MountKind.Bind)
+                {
+                    mount.BindOptions = new BindOptions
+                    {
+                        Propagation = string.IsNullOrWhiteSpace(spec.BindPropagation)
+                            ? "rprivate"
+                            : spec.BindPropagation.Trim()
+                    };
+                }
+                else if (spec.Kind == MountKind.Volume)
+                {
+                    mount.VolumeOptions = new VolumeOptions { NoCopy = spec.VolumeNoCopy };
+                }
+                else
+                {
+                    mount.TmpfsOptions = new TmpfsOptions
+                    {
+                        SizeBytes = spec.TmpfsSizeBytes,
+                        Mode = spec.TmpfsMode
+                    };
+                }
+
+                result.Add(mount);
+            }
+            return result;
+        }
+
+        private static List<string> ParseCommandArguments(string command)
         {
             var arguments = new List<string>();
             var current = new System.Text.StringBuilder();
@@ -437,39 +696,43 @@ namespace DockerDiagram.Infrastructure
         /// <summary>
         /// 특정 컨테이너 내부의 파일이나 디렉토리를 호스트 PC(내 컴퓨터)의 지정된 경로로 복사(추출)해옵니다.
         /// </summary>
-        public async Task CopyFromContainerAsync(string containerId, string containerPath, string hostPath)
+        public async Task CopyFromContainerAsync(
+            string containerId,
+            string containerPath,
+            string hostPath,
+            CancellationToken cancellationToken = default)
         {
             var tarResponse = await _client.Containers.GetArchiveFromContainerAsync(containerId, new GetArchiveFromContainerParameters
             {
                 Path = containerPath
-            }, false);
+            }, false, cancellationToken);
 
-            TarFile.ExtractToDirectory(tarResponse.Stream, hostPath, overwriteFiles: true);
+            await using Stream archiveStream = tarResponse.Stream;
+            await TarFile.ExtractToDirectoryAsync(
+                archiveStream,
+                hostPath,
+                overwriteFiles: true,
+                cancellationToken);
         }
 
         /// <summary>
         /// 호스트 PC(내 컴퓨터)의 파일이나 디렉토리를 임시 TAR 아카이브로 압축한 뒤, 특정 컨테이너 내부의 지정된 경로로 복사(삽입)합니다.
         /// </summary>
-        public async Task CopyToContainerAsync(string containerId, string hostPath, string containerPath)
+        public async Task CopyToContainerAsync(
+            string containerId,
+            string hostPath,
+            string containerPath,
+            CancellationToken cancellationToken = default)
         {
             string tempTarFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".tar");
 
             try
             {
-                if (Directory.Exists(hostPath))
-                {
-                    TarFile.CreateFromDirectory(hostPath, tempTarFile, includeBaseDirectory: false);
-                }
-                else if (File.Exists(hostPath))
-                {
-                    await using var archive = File.Create(tempTarFile);
-                    using var writer = new TarWriter(archive, leaveOpen: false);
-                    writer.WriteEntry(hostPath, Path.GetFileName(hostPath));
-                }
-                else
-                {
-                    throw new FileNotFoundException("호스트 파일 또는 폴더를 찾을 수 없습니다.", hostPath);
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                await Task.Run(
+                    () => CreateContainerCopyArchive(hostPath, tempTarFile),
+                    cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
 
                 using (var fs = File.OpenRead(tempTarFile))
                 {
@@ -477,16 +740,39 @@ namespace DockerDiagram.Infrastructure
                     {
                         Path = containerPath,
                         AllowOverwriteDirWithFile = true
-                    }, fs);
+                    }, fs, cancellationToken);
                 }
             }
             finally
             {
                 if (File.Exists(tempTarFile))
                 {
-                    File.Delete(tempTarFile);
+                    try
+                    {
+                        File.Delete(tempTarFile);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        AppLog.Warning($"임시 컨테이너 전송 파일 정리 실패: {tempTarFile}", cleanupException);
+                    }
                 }
             }
+        }
+
+        private static void CreateContainerCopyArchive(string hostPath, string tarFilePath)
+        {
+            if (Directory.Exists(hostPath))
+            {
+                TarFile.CreateFromDirectory(hostPath, tarFilePath, includeBaseDirectory: false);
+                return;
+            }
+
+            if (!File.Exists(hostPath))
+                throw new FileNotFoundException("호스트 파일 또는 폴더를 찾을 수 없습니다.", hostPath);
+
+            using var archive = File.Create(tarFilePath);
+            using var writer = new TarWriter(archive, leaveOpen: false);
+            writer.WriteEntry(hostPath, Path.GetFileName(hostPath));
         }
 
         /// <summary>
@@ -526,13 +812,14 @@ namespace DockerDiagram.Infrastructure
                 Internal = options.Internal,
                 Attachable = options.Attachable,
                 EnableIPv6 = options.EnableIPv6,
+                Ingress = options.Ingress,
                 Labels = options.Labels.Count > 0 ? options.Labels : null,
                 Options = options.DriverOptions.Count > 0 ? options.DriverOptions : null,
                 IPAM = options.HasIpam
                     ? new IPAM
                     {
-                        Config = new List<IPAMConfig>
-                        {
+                        Config =
+                        [
                             new IPAMConfig
                             {
                                 Subnet = string.IsNullOrWhiteSpace(options.Subnet) ? null : options.Subnet,
@@ -540,7 +827,7 @@ namespace DockerDiagram.Infrastructure
                         IPRange = string.IsNullOrWhiteSpace(options.IpRange) ? null : options.IpRange,
                         AuxAddress = options.AuxAddresses.Count > 0 ? options.AuxAddresses : null
                     }
-                }
+                ]
             }
                     : null
             });
@@ -558,7 +845,12 @@ namespace DockerDiagram.Infrastructure
         /// <summary>
         /// docker export 등으로 만든 root filesystem tar를 새 이미지로 import합니다.
         /// </summary>
-        public async Task ImportImageFromTarAsync(string tarFilePath, string repository, string tag, string message)
+        public async Task ImportImageFromTarAsync(
+            string tarFilePath,
+            string repository,
+            string tag,
+            string message,
+            CancellationToken cancellationToken = default)
         {
             await using var tarStream = File.OpenRead(tarFilePath);
             await _client.Images.CreateImageAsync(
@@ -571,27 +863,38 @@ namespace DockerDiagram.Infrastructure
                 },
                 tarStream,
                 null,
-                new Progress<JSONMessage>(m => Debug.WriteLine(m.Status ?? m.ErrorMessage ?? m.ProgressMessage)),
-                CancellationToken.None);
+                new Progress<JSONMessage>(LogDockerProgressError),
+                cancellationToken);
         }
 
         /// <summary>
         /// 기존 이미지에 새 repository:tag 별칭을 붙입니다.
         /// </summary>
-        public async Task TagImageAsync(string sourceImage, string repository, string tag, bool force = true)
+        public async Task TagImageAsync(
+            string sourceImage,
+            string repository,
+            string tag,
+            bool force = true,
+            CancellationToken cancellationToken = default)
         {
             await _client.Images.TagImageAsync(sourceImage, new ImageTagParameters
             {
                 RepositoryName = repository,
                 Tag = tag,
                 Force = force
-            }, CancellationToken.None);
+            }, cancellationToken);
         }
 
         /// <summary>
         /// 지정한 repository:tag 이미지를 레지스트리에 push합니다.
         /// </summary>
-        public async Task PushImageAsync(string repository, string tag, string? username = null, string? password = null, string? serverAddress = null)
+        public async Task PushImageAsync(
+            string repository,
+            string tag,
+            string? username = null,
+            string? password = null,
+            string? serverAddress = null,
+            CancellationToken cancellationToken = default)
         {
             AuthConfig? authConfig = null;
             if (!string.IsNullOrWhiteSpace(username) && !string.IsNullOrWhiteSpace(password))
@@ -608,34 +911,44 @@ namespace DockerDiagram.Infrastructure
                 repository,
                 new ImagePushParameters { Tag = tag },
                 authConfig,
-                new Progress<JSONMessage>(m => Debug.WriteLine(m.Status ?? m.ErrorMessage ?? m.ProgressMessage)),
-                CancellationToken.None);
+                new Progress<JSONMessage>(LogDockerProgressError),
+                cancellationToken);
         }
 
         /// <summary>
         /// docker save와 동일하게 이미지 tar 아카이브를 파일로 저장합니다.
         /// </summary>
-        public async Task SaveImageAsync(string image, string tarFilePath)
+        public async Task SaveImageAsync(
+            string image,
+            string tarFilePath,
+            CancellationToken cancellationToken = default)
         {
-            await using var source = await _client.Images.SaveImageAsync(image, CancellationToken.None);
+            await using var source = await _client.Images.SaveImageAsync(image, cancellationToken);
             await using var target = File.Create(tarFilePath);
-            await source.CopyToAsync(target);
+            await source.CopyToAsync(target, cancellationToken);
         }
 
         /// <summary>
         /// docker load와 동일하게 docker save tar 아카이브를 로드합니다.
         /// </summary>
-        public async Task LoadImageFromTarAsync(string tarFilePath)
+        public async Task LoadImageFromTarAsync(
+            string tarFilePath,
+            CancellationToken cancellationToken = default)
         {
             await using var source = File.OpenRead(tarFilePath);
             await _client.Images.LoadImageAsync(
                 new ImageLoadParameters { Quiet = false },
                 source,
-                new Progress<JSONMessage>(m => Debug.WriteLine(m.Status ?? m.ErrorMessage ?? m.ProgressMessage)),
-                CancellationToken.None);
+                new Progress<JSONMessage>(LogDockerProgressError),
+                cancellationToken);
         }
 
-        public async Task BuildImageAsync(string targetImageName, string buildContextPath, string dockerfilePath, IProgress<JSONMessage>? progress = null)
+        public async Task BuildImageAsync(
+            string targetImageName,
+            string buildContextPath,
+            string dockerfilePath,
+            IProgress<JSONMessage>? progress = null,
+            CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(targetImageName))
                 throw new ArgumentException("이미지 태그가 비어 있습니다.", nameof(targetImageName));
@@ -659,17 +972,24 @@ namespace DockerDiagram.Infrastructure
 
             try
             {
-                TarFile.CreateFromDirectory(fullContextPath, tempTarFile, includeBaseDirectory: false);
+                cancellationToken.ThrowIfCancellationRequested();
+                await Task.Run(
+                    () => DockerBuildContextArchive.Create(
+                        fullContextPath,
+                        dockerfileInContext,
+                        tempTarFile,
+                        cancellationToken),
+                    cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
 
                 await using var tarStream = File.OpenRead(tempTarFile);
                 var buildProgress = new Progress<JSONMessage>(message =>
                 {
-                    string? output = message.ErrorMessage ?? message.Stream ?? message.Status ?? message.ProgressMessage;
-                    if (!string.IsNullOrWhiteSpace(output))
-                        Debug.WriteLine($"[DockerBuild] {output.TrimEnd()}");
-
                     if (!string.IsNullOrWhiteSpace(message.ErrorMessage))
+                    {
                         errors.Add(message.ErrorMessage);
+                        AppLog.Warning($"Docker 이미지 빌드 오류: {message.ErrorMessage.Trim()}");
+                    }
 
                     progress?.Report(message);
                 });
@@ -677,7 +997,7 @@ namespace DockerDiagram.Infrastructure
                 await _client.Images.BuildImageFromDockerfileAsync(
                     new ImageBuildParameters
                     {
-                        Tags = new List<string> { targetImageName },
+                        Tags = [targetImageName],
                         Dockerfile = dockerfileInContext,
                         Remove = true,
                         ForceRemove = true
@@ -686,7 +1006,7 @@ namespace DockerDiagram.Infrastructure
                     null,
                     null,
                     buildProgress,
-                    CancellationToken.None);
+                    cancellationToken);
 
                 if (errors.Count > 0)
                 {
@@ -697,9 +1017,22 @@ namespace DockerDiagram.Infrastructure
             {
                 if (File.Exists(tempTarFile))
                 {
-                    File.Delete(tempTarFile);
+                    try
+                    {
+                        File.Delete(tempTarFile);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        AppLog.Warning($"임시 이미지 빌드 파일 정리 실패: {tempTarFile}", cleanupException);
+                    }
                 }
             }
+        }
+
+        private static void LogDockerProgressError(JSONMessage message)
+        {
+            if (!string.IsNullOrWhiteSpace(message.ErrorMessage))
+                AppLog.Warning($"Docker 이미지 작업 오류: {message.ErrorMessage.Trim()}");
         }
 
         /// <summary>
@@ -710,9 +1043,16 @@ namespace DockerDiagram.Infrastructure
             if (string.IsNullOrWhiteSpace(name))
                 throw new ArgumentException("Volume name is required.", nameof(name));
 
-            await MakeRawDockerRequestAsync(
-                HttpMethod.Delete,
-                $"volumes/{Uri.EscapeDataString(name.Trim())}?force={force.ToString().ToLowerInvariant()}");
+            try
+            {
+                await MakeRawDockerRequestAsync(
+                    HttpMethod.Delete,
+                    $"volumes/{Uri.EscapeDataString(name.Trim())}?force={force.ToString().ToLowerInvariant()}");
+            }
+            finally
+            {
+                InvalidateSystemDiskUsageCache();
+            }
         }
 
         /// <summary>
@@ -720,18 +1060,31 @@ namespace DockerDiagram.Infrastructure
         /// </summary>
         public async Task RemoveNetworkAsync(string id)
         {
-            await _client.Networks.DeleteNetworkAsync(id);
+            if (string.IsNullOrWhiteSpace(id))
+                throw new ArgumentException("Network ID or name is required.", nameof(id));
+
+            string networkId = id.Trim();
+            var network = await _client.Networks.InspectNetworkAsync(networkId);
+            if (DockerNetworkSafety.IsProtected(network.Name, network.Ingress == true))
+            {
+                throw new InvalidOperationException(
+                    $"Network '{network.Name}' is managed by Docker and cannot be deleted here.");
+            }
+
+            await _client.Networks.DeleteNetworkAsync(networkId);
         }
 
         /// <summary>
         /// 컨테이너에 실제로 설치된 셸을 먼저 확인한 뒤 시스템 터미널에서 해당 셸만 실행합니다.
         /// </summary>
-        public async Task<bool> OpenTerminalAsync(string containerId)
+        public async Task<bool> OpenTerminalAsync(
+            string containerId,
+            CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(containerId))
                 throw new ArgumentException("Container ID is required.", nameof(containerId));
 
-            var inspect = await _client.Containers.InspectContainerAsync(containerId);
+            var inspect = await _client.Containers.InspectContainerAsync(containerId, cancellationToken);
             bool isWindowsContainer = (inspect.Platform ?? string.Empty)
                 .Contains("windows", StringComparison.OrdinalIgnoreCase);
 
@@ -760,10 +1113,20 @@ namespace DockerDiagram.Infrastructure
                         AttachStderr = true,
                         Tty = false
                     };
-                    var exec = await _client.Exec.ExecCreateContainerAsync(containerId, execParams);
-                    using var stream = await _client.Exec.StartAndAttachContainerExecAsync(exec.ID, false);
-                    await stream.CopyOutputToAsync(default, Stream.Null, Stream.Null, CancellationToken.None);
-                    var status = await _client.Exec.InspectContainerExecAsync(exec.ID);
+                    var exec = await _client.Exec.ExecCreateContainerAsync(
+                        containerId,
+                        execParams,
+                        cancellationToken);
+                    using var stream = await _client.Exec.StartAndAttachContainerExecAsync(
+                        exec.ID,
+                        false,
+                        cancellationToken);
+                    await stream.CopyOutputToAsync(
+                        default,
+                        Stream.Null,
+                        Stream.Null,
+                        cancellationToken);
+                    var status = await _client.Exec.InspectContainerExecAsync(exec.ID, cancellationToken);
                     if (status.ExitCode != 0) continue;
                 }
                 catch (DockerApiException)
@@ -786,41 +1149,14 @@ namespace DockerDiagram.Infrastructure
         }
 
         /// <summary>
-        /// 실행 중인 컨테이너 내부에서 특정 명령어(Command)를 백그라운드에서 비동기적으로 실행하고, 그 결과를 디버그 로그로 기록합니다.
-        /// </summary>
-        public async Task ExecuteCommandAsync(string containerId, string command)
-        {
-            try
-            {
-                var result = await ExecuteCommandWithOutputAsync(containerId, command);
-
-                if (!string.IsNullOrWhiteSpace(result.Stdout))
-                    Debug.WriteLine($"[DockerDiscovery] Exec Output:\n{result.Stdout}");
-
-                if (!string.IsNullOrWhiteSpace(result.Stderr))
-                    Debug.WriteLine($"[DockerDiscovery] Exec Error:\n{result.Stderr}");
-
-                if (result.ExitCode != 0)
-                {
-                    Debug.WriteLine($"[DockerDiscovery] Exec Failed (Code: {result.ExitCode})");
-                }
-                else
-                {
-                    Debug.WriteLine($"[DockerDiscovery] Exec Success");
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[DockerDiscovery] ExecuteCommandAsync Error: {ex.Message}");
-            }
-        }
-
-        /// <summary>
         /// 실행 중인 컨테이너 내부에서 명령어를 실행하고 stdout/stderr/exit code를 호출자에게 반환합니다.
         /// </summary>
-        public async Task<ExecCommandResult> ExecuteCommandWithOutputAsync(string containerId, string command)
+        public async Task<ExecCommandResult> ExecuteCommandWithOutputAsync(
+            string containerId,
+            string command,
+            CancellationToken cancellationToken = default)
         {
-            var inspect = await _client.Containers.InspectContainerAsync(containerId);
+            var inspect = await _client.Containers.InspectContainerAsync(containerId, cancellationToken);
             string platform = inspect.Platform ?? string.Empty;
             string[] cmdShell = platform.Contains("windows", StringComparison.OrdinalIgnoreCase)
                 ? new[] { "cmd", "/c", command }
@@ -834,18 +1170,26 @@ namespace DockerDiagram.Infrastructure
                 Tty = false
             };
 
-            var execCreateResp = await _client.Exec.ExecCreateContainerAsync(containerId, execParams);
+            var execCreateResp = await _client.Exec.ExecCreateContainerAsync(
+                containerId,
+                execParams,
+                cancellationToken);
 
-            using var stream = await _client.Exec.StartAndAttachContainerExecAsync(execCreateResp.ID, false);
+            using var stream = await _client.Exec.StartAndAttachContainerExecAsync(
+                execCreateResp.ID,
+                false,
+                cancellationToken);
             using var stdoutMs = new MemoryStream();
             using var stderrMs = new MemoryStream();
 
-            await stream.CopyOutputToAsync(default, stdoutMs, stderrMs, CancellationToken.None);
+            await stream.CopyOutputToAsync(default, stdoutMs, stderrMs, cancellationToken);
 
             stdoutMs.Position = 0;
             stderrMs.Position = 0;
 
-            var finalStatus = await _client.Exec.InspectContainerExecAsync(execCreateResp.ID);
+            var finalStatus = await _client.Exec.InspectContainerExecAsync(
+                execCreateResp.ID,
+                cancellationToken);
 
             return new ExecCommandResult
             {
@@ -883,13 +1227,14 @@ namespace DockerDiagram.Infrastructure
 
                 await _client.Networks.ConnectNetworkAsync(networkId, config);
 
-                Debug.WriteLine($"[DockerDiscovery] Network Connected: {networkId} -> {containerId} (IPv4: {options?.StaticIPv4 ?? "Auto"}, IPv6: {options?.StaticIPv6 ?? "Auto"})");
             }
             catch (DockerApiException ex)
             {
-                if (ex.Message.Contains("already exists") || ex.Message.Contains("address already in use"))
+                if (DockerErrorClassifier.IsConflict(ex))
                 {
-                    throw new Exception($"네트워크 연결 실패: 이미 연결되어 있거나 지정한 IP가 다른 컨테이너에서 사용 중입니다.");
+                    throw new InvalidOperationException(
+                        "네트워크 연결 실패: 이미 연결되어 있거나 지정한 IP가 다른 컨테이너에서 사용 중입니다.",
+                        ex);
                 }
                 throw;
             }
@@ -935,25 +1280,51 @@ namespace DockerDiagram.Infrastructure
 
                     if (stats != null)
                     {
+                        ulong networkRxBytes = stats.Networks?.Values.Aggregate(
+                            0UL,
+                            (total, network) => total + network.RxBytes) ?? 0UL;
+                        ulong networkTxBytes = stats.Networks?.Values.Aggregate(
+                            0UL,
+                            (total, network) => total + network.TxBytes) ?? 0UL;
+                        ulong blockReadBytes = stats.BlkioStats?.IoServiceBytesRecursive?
+                            .Where(entry => string.Equals(entry.Op, "read", StringComparison.OrdinalIgnoreCase))
+                            .Aggregate(0UL, (total, entry) => total + entry.Value) ?? 0UL;
+                        ulong blockWriteBytes = stats.BlkioStats?.IoServiceBytesRecursive?
+                            .Where(entry => string.Equals(entry.Op, "write", StringComparison.OrdinalIgnoreCase))
+                            .Aggregate(0UL, (total, entry) => total + entry.Value) ?? 0UL;
+
                         return new ContainerStats
                         {
                             CpuPercentage = CalculateCpuPercentage(stats),
                             MemoryUsedMB = stats.MemoryStats.Usage / (1024.0 * 1024.0),
-                            MemoryLimitMB = stats.MemoryStats.Limit / (1024.0 * 1024.0)
+                            MemoryLimitMB = stats.MemoryStats.Limit / (1024.0 * 1024.0),
+                            NetworkRxBytes = networkRxBytes,
+                            NetworkTxBytes = networkTxBytes,
+                            BlockReadBytes = blockReadBytes,
+                            BlockWriteBytes = blockWriteBytes
                         };
                     }
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException ex)
             {
-                Debug.WriteLine($"[DockerStats] {containerId}의 통계 데이터 조회 시간({timeoutSeconds}초)이 초과되었습니다.");
+                AppLog.WarningThrottled(
+                    $"docker-stats-timeout-{containerId}",
+                    $"컨테이너 통계 조회 시간 초과: {containerId} ({timeoutSeconds}초)");
+                throw new TimeoutException(
+                    $"컨테이너 통계 조회가 {timeoutSeconds}초 안에 완료되지 않았습니다.",
+                    ex);
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[DockerStats] Stats Error: {ex.Message}");
+                AppLog.WarningThrottled(
+                    $"docker-stats-{containerId}",
+                    $"컨테이너 통계 조회 실패: {containerId}",
+                    ex);
+                throw;
             }
 
-            return new ContainerStats();
+            throw new InvalidOperationException("Docker가 컨테이너 통계 응답을 반환하지 않았습니다.");
         }
 
         /// <summary>
@@ -961,7 +1332,7 @@ namespace DockerDiagram.Infrastructure
         /// 도커의 CPU 측정 방식에 따라, 이전 측정값(PreCPUStats)과 현재 측정값(CPUStats)의 차이(Delta)를 구한 뒤
         /// 전체 시스템 CPU 사용량 대비 컨테이너가 점유한 비율을 계산하고 코어 수(OnlineCPUs)를 곱하여 최종 퍼센티지를 도출합니다.
         /// </summary>
-        private double CalculateCpuPercentage(ContainerStatsResponse stats)
+        private static double CalculateCpuPercentage(ContainerStatsResponse stats)
         {
             // 컨테이너 자체의 CPU 사용량 변화량
             double cpuDelta = stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage;
@@ -994,6 +1365,8 @@ namespace DockerDiagram.Infrastructure
 
                 // HttpClient 등 내부적으로 사용하던 IDisposable 객체들을 명시적으로 해제
                 _client.Dispose();
+                _clientCertificate?.Dispose();
+                _rawApiClient.Dispose();
                 _systemDiskUsageCacheLock.Dispose();
                 _systemInfoCacheLock.Dispose();
             }
@@ -1008,16 +1381,16 @@ namespace DockerDiagram.Infrastructure
             ContainerInspectResponse source,
             IList<string> binds,
             bool startContainer,
-            IList<Mount>? mounts = null)
+            IList<Mount>? mounts = null,
+            IList<string>? environment = null,
+            IDictionary<string, IList<PortBinding>>? portBindings = null,
+            IDictionary<string, EmptyStruct>? exposedPorts = null)
         {
             ArgumentNullException.ThrowIfNull(source);
             if (source.Config == null || source.HostConfig == null)
                 throw new InvalidOperationException("컨테이너 재생성에 필요한 inspect 설정이 없습니다.");
 
-            string safeContainerName = System.Text.RegularExpressions.Regex.Replace(
-                name.TrimStart('/'),
-                "[^a-zA-Z0-9_.-]",
-                "-");
+            string safeContainerName = MyRegex().Replace(name.TrimStart('/'), "-");
 
             var parameters = JsonConvert.DeserializeObject<CreateContainerParameters>(
                                  JsonConvert.SerializeObject(source.Config))
@@ -1029,6 +1402,14 @@ namespace DockerDiagram.Infrastructure
             parameters.HostConfig.Binds = binds.ToList();
             if (mounts != null)
                 parameters.HostConfig.Mounts = mounts.ToList();
+            if (environment != null)
+                parameters.Env = environment.ToList();
+            if (portBindings != null)
+                parameters.HostConfig.PortBindings = portBindings.ToDictionary(
+                    pair => pair.Key,
+                    pair => (IList<PortBinding>)pair.Value.ToList());
+            if (exposedPorts != null)
+                parameters.ExposedPorts = exposedPorts.ToDictionary(pair => pair.Key, pair => pair.Value);
 
             if (source.NetworkSettings?.Networks is { Count: > 0 } networks)
             {
@@ -1073,9 +1454,10 @@ namespace DockerDiagram.Infrastructure
                         response.ID,
                         new ContainerRemoveParameters { Force = true });
                 }
-                catch
+                catch (Exception cleanupException)
                 {
-                    // 시작 실패의 원래 예외를 유지합니다.
+                    // 시작 실패의 원래 예외를 유지하되, 남은 컨테이너는 진단 가능하게 기록합니다.
+                    AppLog.Warning($"시작에 실패한 교체 컨테이너 정리 실패: {response.ID}", cleanupException);
                 }
 
                 throw;
@@ -1144,7 +1526,14 @@ namespace DockerDiagram.Infrastructure
             }
             finally
             {
-                _eventsLifetimeCts.Dispose();
+                try
+                {
+                    _eventsClientCertificate?.Dispose();
+                }
+                finally
+                {
+                    _eventsLifetimeCts.Dispose();
+                }
             }
         }
 
@@ -1160,7 +1549,10 @@ namespace DockerDiagram.Infrastructure
         /// <summary>
         /// 특정 컨테이너가 뱉어낸 최근 로그(표준 출력 및 에러)를 지정된 줄(Tail) 수만큼 가져와 문자열로 반환합니다.
         /// </summary>
-        public async Task<string> GetContainerLogsAsync(string containerId, int tailCount = 500)
+        public async Task<string> GetContainerLogsAsync(
+            string containerId,
+            int tailCount = 500,
+            CancellationToken cancellationToken = default)
         {
             try
             {
@@ -1168,16 +1560,22 @@ namespace DockerDiagram.Infrastructure
                 {
                     ShowStdout = true,
                     ShowStderr = true,
-                    Tail = tailCount <= 0 ? "all" : tailCount.ToString(),
+                    Tail = tailCount <= 0
+                        ? "all"
+                        : tailCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     Timestamps = true // 도커 엔진에서 각 줄 앞에 타임스탬프를 붙여서 보내줌
                 };
 
-                using (var stream = await _client.Containers.GetContainerLogsAsync(containerId, false, parameters))
+                using (var stream = await _client.Containers.GetContainerLogsAsync(
+                    containerId,
+                    false,
+                    parameters,
+                    cancellationToken))
                 {
                     using (var stdoutMs = new MemoryStream())
                     using (var stderrMs = new MemoryStream())
                     {
-                        await stream.CopyOutputToAsync(default, stdoutMs, stderrMs, CancellationToken.None);
+                        await stream.CopyOutputToAsync(default, stdoutMs, stderrMs, cancellationToken);
 
                         stdoutMs.Position = 0;
                         stderrMs.Position = 0;
@@ -1195,7 +1593,7 @@ namespace DockerDiagram.Infrastructure
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[DockerDiscovery] GetContainerLogsAsync Error: {ex.Message}");
+                AppLog.Warning($"컨테이너 로그 조회 실패: {containerId}", ex);
                 return $"로그를 가져오는 중 오류가 발생했습니다:\n{ex.Message}";
             }
         }
@@ -1210,7 +1608,7 @@ namespace DockerDiagram.Infrastructure
                 ShowStdout = true,
                 ShowStderr = true,
                 Follow = true,
-                Tail = Math.Max(0, initialTailCount).ToString(),
+                Tail = Math.Max(0, initialTailCount).ToString(System.Globalization.CultureInfo.InvariantCulture),
                 Timestamps = true
             };
 
@@ -1238,27 +1636,28 @@ namespace DockerDiagram.Infrastructure
                     }
                 }
             }
-            catch (TaskCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                Debug.WriteLine($"[VDM Stream] {containerId} 로그 파이프 안전 종료 완료.");
+                AppLog.Info($"컨테이너 로그 스트림 종료: {containerId}");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[VDM Stream] 로그 스트리밍 중 오류: {ex.Message}");
+                AppLog.Warning($"컨테이너 로그 스트림 오류: {containerId}", ex);
+                throw;
             }
         }
 
         /// <summary>
         /// 도커 엔진이 반환한 원시 로그의 타임스탬프(ISO 8601)를 파싱하여 보기 편한 로컬 시간 포맷으로 가공합니다.
         /// </summary>
-        private string FormatDockerLogs(string rawLogs)
+        private static string FormatDockerLogs(string rawLogs)
         {
             if (string.IsNullOrWhiteSpace(rawLogs)) return string.Empty;
 
             var sb = new System.Text.StringBuilder();
 
             // 줄 단위로 분리
-            var lines = rawLogs.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var lines = rawLogs.Split(separator, StringSplitOptions.RemoveEmptyEntries);
 
             foreach (var line in lines)
             {
@@ -1267,16 +1666,20 @@ namespace DockerDiagram.Infrastructure
 
                 if (spaceIndex > 0)
                 {
-                    string timePart = line.Substring(0, spaceIndex);
+                    string timePart = line[..spaceIndex];
 
                     // 도커의 UTC 타임스탬프 문자열을 DateTime 객체로 변환 시도
                     if (DateTime.TryParse(timePart, out DateTime dt))
                     {
                         // 로컬 시간으로 변경 후, [2024-04-03 14:30:22] 형식으로 가공
-                        string formattedTime = dt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
-                        string message = line.Substring(spaceIndex + 1);
+                        string formattedTime = dt.ToLocalTime().ToString(
+                            "yyyy-MM-dd HH:mm:ss",
+                            System.Globalization.CultureInfo.InvariantCulture);
+                        string message = line[(spaceIndex + 1)..];
 
-                        sb.AppendLine($"[{formattedTime}] {message}");
+                        sb.AppendLine(
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            $"[{formattedTime}] {message}");
                     }
                     else
                     {
@@ -1341,8 +1744,12 @@ namespace DockerDiagram.Infrastructure
             {
                 throw;
             }
-            catch
+            catch (Exception ex)
             {
+                AppLog.WarningThrottled(
+                    $"image-metadata-registry-fallback-{imageReference}",
+                    $"Docker Engine에서 이미지 '{imageReference}' 메타데이터를 읽지 못해 Registry 조회로 전환합니다.",
+                    ex);
                 return await RegistryImageMetadataReader.ReadAsync(
                     imageReference,
                     username,
@@ -1355,7 +1762,14 @@ namespace DockerDiagram.Infrastructure
         /// <summary>
         /// 진행률(Progress)을 UI로 실시간 보고하면서 지정된 이미지와 태그를 도커 허브에서 다운로드(Pull)합니다.
         /// </summary>
-        public async Task PullImageWithProgressAsync(string image, string tag, IProgress<JSONMessage> progress, string? username = null, string? password = null, string? serverAddress = null)
+        public async Task PullImageWithProgressAsync(
+            string image,
+            string tag,
+            IProgress<JSONMessage> progress,
+            string? username = null,
+            string? password = null,
+            string? serverAddress = null,
+            CancellationToken cancellationToken = default)
         {
             AuthConfig? authConfig = null;
 
@@ -1374,27 +1788,37 @@ namespace DockerDiagram.Infrastructure
             await _client.Images.CreateImageAsync(
                 new ImagesCreateParameters { FromImage = image, Tag = string.IsNullOrWhiteSpace(tag) ? "latest" : tag },
                 authConfig,
-                progress);
+                progress,
+                cancellationToken);
         }
 
         /// <summary>
         /// 특정 도커 볼륨을 임시 알파인(Alpine) 컨테이너에 마운트하여 .tar 파일로 압축한 뒤 로컬 PC에 저장(백업)합니다.
         /// </summary>
-        public async Task BackupVolumeAsync(string volumeName, string hostTarFilePath)
+        public async Task BackupVolumeAsync(
+            string volumeName,
+            string hostTarFilePath,
+            CancellationToken cancellationToken = default)
         {
-            string tempContainerName = $"vdm-backup-{Guid.NewGuid().ToString().Substring(0, 6)}";
+            if (string.IsNullOrWhiteSpace(volumeName))
+                throw new ArgumentException("백업할 볼륨 이름이 비어 있습니다.", nameof(volumeName));
+            if (string.IsNullOrWhiteSpace(hostTarFilePath))
+                throw new ArgumentException("백업 파일 경로가 비어 있습니다.", nameof(hostTarFilePath));
+
+            string tempContainerName = $"vdm-backup-{Guid.NewGuid().ToString("N")[..6]}";
 
             // 1. 임시로 사용할 가벼운 alpine 이미지 다운로드 (이미 있으면 즉시 넘어감)
-            await PullImageAsync("alpine", "latest");
+            await PullImageAsync("alpine", "latest", cancellationToken: cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
 
             // 2. 임시 컨테이너 생성 및 시작 (백업할 볼륨을 컨테이너 내부의 /backup_data 에 마운트)
             string containerId = await CreateAndStartContainerAsync(
                 name: tempContainerName,
                 image: "alpine",
                 tag: "latest",
-                ports: new List<string>(),
-                envs: new List<string>(),
-                volumes: new List<string> { $"{volumeName}:/backup_data" },
+                ports: [],
+                envs: [],
+                volumes: [$"{volumeName}:/backup_data"],
                 restartPolicy: "no",
                 memoryMb: 0,
                 cpuCount: 0,
@@ -1402,42 +1826,65 @@ namespace DockerDiagram.Infrastructure
                 tty: false
             );
 
+            bool backupSucceeded = false;
             try
             {
                 // 3. 컨테이너 내부의 /backup_data 폴더 자체를 TAR 스트림으로 가져와서 로컬 파일로 저장
                 var tarResponse = await _client.Containers.GetArchiveFromContainerAsync(containerId, new GetArchiveFromContainerParameters
                 {
                     Path = "/backup_data"
-                }, false);
+                }, false, cancellationToken);
 
+                await using Stream archiveStream = tarResponse.Stream;
                 using (var fileStream = File.Create(hostTarFilePath))
                 {
-                    await tarResponse.Stream.CopyToAsync(fileStream);
+                    await archiveStream.CopyToAsync(fileStream, cancellationToken);
                 }
+                backupSucceeded = true;
             }
             finally
             {
                 // 4. 백업이 끝나면(성공하든 에러가 나든) 흔적 없이 임시 컨테이너 강제 삭제
-                await _client.Containers.RemoveContainerAsync(containerId, new ContainerRemoveParameters { Force = true });
+                try
+                {
+                    using var cleanupTimeout = new CancellationTokenSource(DockerConnectionTiming.CleanupTimeout);
+                    await _client.Containers.RemoveContainerAsync(
+                        containerId,
+                        new ContainerRemoveParameters { Force = true },
+                        cleanupTimeout.Token);
+                }
+                catch (Exception cleanupException) when (!backupSucceeded)
+                {
+                    AppLog.Warning($"볼륨 백업 임시 컨테이너 정리 실패: {containerId}", cleanupException);
+                }
             }
         }
 
         /// <summary>
         /// 로컬 PC의 .tar 백업 파일을 읽어, 임시 컨테이너를 통해 특정 도커 볼륨에 데이터를 덮어씁니다(복원).
         /// </summary>
-        public async Task RestoreVolumeAsync(string volumeName, string hostTarFilePath)
+        public async Task RestoreVolumeAsync(
+            string volumeName,
+            string hostTarFilePath,
+            CancellationToken cancellationToken = default)
         {
-            string tempContainerName = $"vdm-restore-{Guid.NewGuid().ToString().Substring(0, 6)}";
+            if (string.IsNullOrWhiteSpace(volumeName))
+                throw new ArgumentException("복원할 볼륨 이름이 비어 있습니다.", nameof(volumeName));
+            if (string.IsNullOrWhiteSpace(hostTarFilePath) || !File.Exists(hostTarFilePath))
+                throw new FileNotFoundException("볼륨 백업 파일을 찾을 수 없습니다.", hostTarFilePath);
 
-            await PullImageAsync("alpine", "latest");
+            string tempContainerName = $"vdm-restore-{Guid.NewGuid().ToString("N")[..6]}";
+
+            await PullImageAsync("alpine", "latest", cancellationToken: cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
 
             string containerId = await CreateAndStartContainerAsync(
                 name: tempContainerName,
                 image: "alpine",
                 tag: "latest",
-                ports: new List<string>(),
-                envs: new List<string>(),
-                volumes: new List<string> { $"{volumeName}:/backup_data" },
+                ports: [],
+                envs: [],
+                volumes: [$"{volumeName}:/backup_data"],
                 restartPolicy: "no",
                 memoryMb: 0,
                 cpuCount: 0,
@@ -1445,6 +1892,7 @@ namespace DockerDiagram.Infrastructure
                 tty: false
             );
 
+            bool restoreSucceeded = false;
             try
             {
                 // 로컬의 .tar 파일을 읽어서 컨테이너 내부의 볼륨 마운트 경로(/backup_data)에 압축 해제하며 덮어쓰기
@@ -1454,13 +1902,25 @@ namespace DockerDiagram.Infrastructure
                     {
                         Path = "/", // 압축 해제 기준 경로 (tar 내부에 backup_data 폴더가 포함되어 있으므로 최상단에 품)
                         AllowOverwriteDirWithFile = true
-                    }, fs);
+                    }, fs, cancellationToken);
                 }
+                restoreSucceeded = true;
             }
             finally
             {
                 // 복원 후 임시 컨테이너 삭제
-                await _client.Containers.RemoveContainerAsync(containerId, new ContainerRemoveParameters { Force = true });
+                try
+                {
+                    using var cleanupTimeout = new CancellationTokenSource(DockerConnectionTiming.CleanupTimeout);
+                    await _client.Containers.RemoveContainerAsync(
+                        containerId,
+                        new ContainerRemoveParameters { Force = true },
+                        cleanupTimeout.Token);
+                }
+                catch (Exception cleanupException) when (!restoreSucceeded)
+                {
+                    AppLog.Warning($"볼륨 복원 임시 컨테이너 정리 실패: {containerId}", cleanupException);
+                }
             }
         }
 
@@ -1469,27 +1929,21 @@ namespace DockerDiagram.Infrastructure
         /// </summary>
         public async Task UpdateContainerResourcesAsync(string containerId, double cpuCount, long memoryMb)
         {
-            var updateParams = new ContainerUpdateParameters();
+            long nanoCpus = cpuCount > 0 ? (long)(cpuCount * 1_000_000_000) : 0;
+            long memoryBytes = memoryMb > 0 ? memoryMb * 1024 * 1024 : 0;
 
-            // CPU 설정 (NanoCPUs: 1 코어 = 1,000,000,000 단위)
-            if (cpuCount > 0)
+            // Docker.DotNet은 0을 생략하므로 raw endpoint로 명시적으로 전송합니다.
+            // 0은 기존 제한을 해제하며, 요청하지 않은 MemorySwap은 그대로 보존됩니다.
+            var payload = new JObject
             {
-                updateParams.NanoCPUs = (long)(cpuCount * 1_000_000_000);
-            }
-
-            // 메모리 설정 (Bytes 단위로 변환)
-            if (memoryMb > 0)
-            {
-                long memoryBytes = memoryMb * 1024 * 1024;
-                updateParams.Memory = memoryBytes;
-
-                // 메모리 제한 변경 시 Docker 규칙에 맞춰 swap 제한도 함께 지정합니다.
-                // 여기서는 메모리와 Swap을 동일하게 주어(하드 리미트) 칼같이 제한하도록 설정합니다.
-                updateParams.MemorySwap = memoryBytes;
-            }
-
-            // 도커 API를 찔러서 즉시 업데이트 (재시작 불필요!)
-            await _client.Containers.UpdateContainerAsync(containerId, updateParams);
+                ["NanoCpus"] = nanoCpus,
+                ["Memory"] = memoryBytes
+            };
+            await _rawApiClient.SendAsync(
+                HttpMethod.Post,
+                $"containers/{Uri.EscapeDataString(containerId)}/update",
+                payload,
+                CancellationToken.None);
         }
 
         /// <summary>
@@ -1642,5 +2096,8 @@ namespace DockerDiagram.Infrastructure
             public bool Leader { get; set; }
             public string Reachability { get; set; } = string.Empty;
         }
+
+        [System.Text.RegularExpressions.GeneratedRegex("[^a-zA-Z0-9_.-]")]
+        private static partial System.Text.RegularExpressions.Regex MyRegex();
     }
 }

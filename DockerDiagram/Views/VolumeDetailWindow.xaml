@@ -1,11 +1,13 @@
-<Window x:Class="DockerDiagram.Views.VolumeDetailWindow"
+﻿<Window x:Class="DockerDiagram.Views.VolumeDetailWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="{Binding Name, StringFormat='Volume Details : {0}'}"
+        Style="{StaticResource DialogWindowStyle}"
+        Title="볼륨 상세 정보"
         Width="720" Height="560" MinWidth="620" MinHeight="480"
         WindowStartupLocation="CenterOwner"
-        Background="#F5F6F8"
+        Background="{StaticResource DialogWindowBackgroundBrush}"
         FontFamily="Segoe UI">
+    <Window.Resources><ResourceDictionary><ResourceDictionary.MergedDictionaries><ResourceDictionary Source="Themes/DialogControlDefaults.xaml"/></ResourceDictionary.MergedDictionaries></ResourceDictionary></Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -13,15 +15,35 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="White" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1" Padding="20,15">
-            <TextBlock Text="{Binding EffectiveVolumeName}" FontSize="22" FontWeight="Bold" Foreground="#333"
-                       TextTrimming="CharacterEllipsis" ToolTip="{Binding EffectiveVolumeName}"/>
+        <Border Grid.Row="0" Style="{StaticResource DialogHeaderPanelStyle}" Padding="20,15">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Text="{Binding VolumeIdentityTitle}"
+                           FontSize="22" FontWeight="Bold"
+                           Foreground="{StaticResource DialogTextBrush}"/>
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,5,0,0">
+                    <TextBlock Text="{Binding VolumeDisplayName}"
+                               ToolTip="{Binding EffectiveVolumeName}"
+                               FontFamily="Consolas" FontSize="12"
+                               Foreground="{StaticResource DialogMutedTextBrush}"
+                               VerticalAlignment="Center"/>
+                    <Button Content="📋"
+                            ToolTip="전체 볼륨 이름 복사"
+                            Command="{Binding CopyVolumeNameCommand}"
+                            Margin="6,0,0,0" Padding="2,0"
+                            Background="Transparent" BorderThickness="0"
+                            Cursor="Hand"/>
+                </StackPanel>
+            </Grid>
         </Border>
 
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20">
             <StackPanel>
-                <TextBlock Text="General" FontSize="15" FontWeight="SemiBold" Foreground="#444" Margin="0,0,0,8"/>
-                <Border Background="White" BorderBrush="#DADDE2" BorderThickness="1" CornerRadius="5" Padding="14">
+                <TextBlock Text="일반 정보" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,8"/>
+                <Border Style="{StaticResource DialogBodyCardStyle}" Padding="14">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="85"/>
@@ -35,62 +57,91 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <TextBlock Text="Driver" Foreground="#777" Margin="0,0,10,8"/>
+                        <TextBlock Text="드라이버" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,10,8"/>
                         <TextBlock Grid.Column="1" Text="{Binding Driver}" FontWeight="SemiBold" Margin="0,0,12,8"/>
-                        <TextBlock Grid.Column="2" Text="Created" Foreground="#777" Margin="0,0,10,8"/>
+                        <TextBlock Grid.Column="2" Text="생성 시각" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,10,8"/>
                         <TextBlock Grid.Column="3" Text="{Binding CreatedDate}" Margin="0,0,0,8"/>
-                        <TextBlock Grid.Row="1" Text="Size" Foreground="#777" Margin="0,0,10,8"/>
+                        <TextBlock Grid.Row="1" Text="크기" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,10,8"/>
                         <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Volume.DisplaySizeText}" Margin="0,0,12,8"/>
-                        <TextBlock Grid.Row="1" Grid.Column="2" Text="External" Foreground="#777" Margin="0,0,10,8"/>
-                        <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding Volume.ExternalText}" Margin="0,0,0,8"/>
-                        <TextBlock Grid.Row="2" Text="Used By" Foreground="#777" Margin="0,0,10,8"/>
+                        <TextBlock Grid.Row="1" Grid.Column="2" Text="관리 상태" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,10,8"/>
+                        <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding Volume.ManagementText}" Margin="0,0,0,8"
+                                   ToolTip="볼륨을 이 앱의 생성 작업이 소유하는지, 기존 Docker 리소스로 참조하는지 나타냅니다."/>
+                        <TextBlock Grid.Row="2" Text="사용 중" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,10,8"/>
                         <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding Volume.UsedContainerCountText}" Margin="0,0,12,8"/>
-                        <TextBlock Grid.Row="2" Grid.Column="2" Text="Ref Count" Foreground="#777" Margin="0,0,10,8"/>
-                        <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding VolumeRefCount}" Margin="0,0,0,8"/>
-                        <TextBlock Grid.Row="3" Text="Mountpoint" Foreground="#777" Margin="0,0,10,8" VerticalAlignment="Top"/>
+                        <TextBlock Grid.Row="2" Grid.Column="2" Text="범위" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,10,8"/>
+                        <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding Volume.Scope}" Margin="0,0,0,8"
+                                   ToolTip="Docker 볼륨 드라이버의 적용 범위입니다. local은 현재 Docker 호스트 범위를 뜻합니다."/>
+                        <TextBlock Grid.Row="3" Text="마운트 위치" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,10,8" VerticalAlignment="Top"/>
                         <TextBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding Mountpoint}" IsReadOnly="True"
-                                 Background="#F8F9FA" BorderBrush="#E2E5E9" Padding="7,5"
-                                 FontFamily="Consolas" TextWrapping="Wrap"/>
+                                 Background="{StaticResource DialogSubtleSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" Padding="7,5"
+                                 FontFamily="Consolas" TextWrapping="Wrap" MinHeight="34" MaxHeight="64"
+                                 HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                                 ToolTip="{Binding Mountpoint}"/>
                     </Grid>
                 </Border>
 
-                <Grid Margin="0,18,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="16"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <StackPanel>
-                        <TextBlock Text="Labels" FontSize="14" FontWeight="SemiBold" Foreground="#444" Margin="0,0,0,8"/>
-                        <Border Background="White" BorderBrush="#DADDE2" BorderThickness="1" CornerRadius="5" Padding="10">
-                            <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                                <TextBlock Text="{Binding VolumeLabelsText}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap"/>
-                            </ScrollViewer>
-                        </Border>
-                    </StackPanel>
-                    <StackPanel Grid.Column="2">
-                        <TextBlock Text="Driver Options" FontSize="14" FontWeight="SemiBold" Foreground="#444" Margin="0,0,0,8"/>
-                        <Border Background="White" BorderBrush="#DADDE2" BorderThickness="1" CornerRadius="5" Padding="10">
-                            <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                                <TextBlock Text="{Binding VolumeDriverOptionsText}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap"/>
-                            </ScrollViewer>
-                        </Border>
-                    </StackPanel>
-                </Grid>
+                <Expander Header="고급 메타데이터" IsExpanded="False" Margin="0,18,0,0"
+                          Foreground="{StaticResource DialogTextBrush}" FontWeight="SemiBold">
+                    <Grid Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="라벨" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,6"/>
+                            <Border Background="{StaticResource DialogSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="5" Padding="10">
+                                <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                    <TextBlock Text="{Binding VolumeLabelsText}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap"/>
+                                </ScrollViewer>
+                            </Border>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="드라이버 옵션" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,6"/>
+                            <Border Background="{StaticResource DialogSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="5" Padding="10">
+                                <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                    <TextBlock Text="{Binding VolumeDriverOptionsText}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap"/>
+                                </ScrollViewer>
+                            </Border>
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Margin="0,12,0,0">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Volume.HasDriverStatus}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="드라이버 상태" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,6"/>
+                            <Border Background="{StaticResource DialogSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="5" Padding="10">
+                                <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                    <TextBlock Text="{Binding Volume.DriverStatusText}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap"/>
+                                </ScrollViewer>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </Expander>
 
-                <TextBlock Text="Used By Containers" FontSize="14" FontWeight="SemiBold" Foreground="#444" Margin="0,18,0,8"/>
-                <Border Background="White" BorderBrush="#DADDE2" BorderThickness="1" CornerRadius="5" Padding="8">
+                <TextBlock Text="사용 중인 컨테이너" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}" Margin="0,18,0,8"/>
+                <Border Background="{StaticResource DialogSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1" CornerRadius="5" Padding="8">
                     <StackPanel>
                         <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                             <ItemsControl ItemsSource="{Binding VolumeUsageDetails}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding DisplayText}" FontSize="12" Margin="3,2" Foreground="#007ACC" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding DisplayText}" FontSize="12" Margin="3,2" Foreground="{StaticResource DialogTextBrush}" TextWrapping="Wrap"/>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </ScrollViewer>
-                        <TextBlock Text="None" FontSize="12" Margin="3,2" Foreground="#888">
+                        <TextBlock Text="없음" FontSize="12" Margin="3,2" Foreground="{StaticResource DialogMutedTextBrush}">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Visibility" Value="Visible"/>
@@ -107,8 +158,8 @@
             </StackPanel>
         </ScrollViewer>
 
-        <Border Grid.Row="2" Background="White" BorderBrush="#E0E0E0" BorderThickness="0,1,0,0" Padding="16,10">
-            <Button Content="Close" Width="100" Height="34" HorizontalAlignment="Right" Click="Close_Click"/>
+        <Border Grid.Row="2" Style="{StaticResource DialogFooterPanelStyle}" Padding="16,10">
+            <Button Content="닫기" Width="100" HorizontalAlignment="Right" Style="{StaticResource DialogSecondaryButtonStyle}" Click="Close_Click"/>
         </Border>
     </Grid>
 </Window>

@@ -1,8 +1,8 @@
+using System.Net.Http;
 using Docker.DotNet;
 using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 using Newtonsoft.Json.Linq;
-using System.Net.Http;
 
 namespace DockerDiagram.Infrastructure
 {
@@ -79,7 +79,10 @@ namespace DockerDiagram.Infrastructure
             }
 
             var warnings = new List<string>();
-            ulong updatedVersion = await TryReadServiceVersionAfterMutationAsync(serviceId, warnings);
+            ulong updatedVersion = await TryReadServiceVersionAfterMutationAsync(
+                serviceId,
+                warnings,
+                cancellationToken);
             return SwarmServiceMutationResult.Create(serviceId, updatedVersion, warnings);
         }
 

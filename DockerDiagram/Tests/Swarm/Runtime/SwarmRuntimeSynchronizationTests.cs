@@ -6,8 +6,11 @@ namespace DockerDiagram.Tests;
 
 public sealed class SwarmRuntimeSynchronizationTests
 {
+
+    private static readonly string[] PartialSyncStateParsesAndDeduplicatesResourcesExpectedValues = new[] { "Services", "Nodes" };
+
     [Fact]
-    public async Task RequestPump_CoalescesManyRequestsDuringActiveRun()
+    public async Task RequestPumpCoalescesManyRequestsDuringActiveRun()
     {
         var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -32,7 +35,7 @@ public sealed class SwarmRuntimeSynchronizationTests
     }
 
     [Fact]
-    public async Task RequestPump_DoesNotRunAfterDispose()
+    public async Task RequestPumpDoesNotRunAfterDispose()
     {
         int runs = 0;
         var pump = new CoalescingAsyncRequestPump(() =>
@@ -54,7 +57,7 @@ public sealed class SwarmRuntimeSynchronizationTests
     [InlineData("secret")]
     [InlineData("config")]
     [InlineData("swarm")]
-    public void DockerEventFilter_IncludesSwarmResourceEvents(string type)
+    public void DockerEventFilterIncludesSwarmResourceEvents(string type)
     {
         Assert.True(DockerSyncCoordinator.IsDiagramRelevantDockerEvent(new Message
         {
@@ -64,7 +67,7 @@ public sealed class SwarmRuntimeSynchronizationTests
     }
 
     [Fact]
-    public void DockerEventFilter_IgnoresExecNoise()
+    public void DockerEventFilterIgnoresExecNoise()
     {
         Assert.False(DockerSyncCoordinator.IsDiagramRelevantDockerEvent(new Message
         {
@@ -74,7 +77,7 @@ public sealed class SwarmRuntimeSynchronizationTests
     }
 
     [Fact]
-    public void IdentityMatcher_PrefersCurrentId()
+    public void IdentityMatcherPrefersCurrentId()
     {
         var resources = new[]
         {
@@ -90,7 +93,7 @@ public sealed class SwarmRuntimeSynchronizationTests
     }
 
     [Fact]
-    public void IdentityMatcher_RebindsUniqueNameAfterResourceRecreation()
+    public void IdentityMatcherRebindsUniqueNameAfterResourceRecreation()
     {
         var resources = new[] { new Identity("new-id", "api") };
 
@@ -102,7 +105,7 @@ public sealed class SwarmRuntimeSynchronizationTests
     }
 
     [Fact]
-    public void IdentityMatcher_RejectsAmbiguousNameFallback()
+    public void IdentityMatcherRejectsAmbiguousNameFallback()
     {
         var resources = new[]
         {
@@ -118,16 +121,16 @@ public sealed class SwarmRuntimeSynchronizationTests
     }
 
     [Fact]
-    public void PartialSyncState_ParsesAndDeduplicatesResources()
+    public void PartialSyncStateParsesAndDeduplicatesResources()
     {
         IReadOnlyList<string> failures = SwarmPartialSyncState.Parse(
             "Partial sync: Services, Nodes, services");
 
-        Assert.Equal(new[] { "Services", "Nodes" }, failures);
+        Assert.Equal(PartialSyncStateParsesAndDeduplicatesResourcesExpectedValues, failures);
     }
 
     [Fact]
-    public void PartialSyncState_IgnoresHealthyStatus()
+    public void PartialSyncStateIgnoresHealthyStatus()
     {
         Assert.Empty(SwarmPartialSyncState.Parse("Last updated: 12:34:56"));
     }

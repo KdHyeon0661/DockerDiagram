@@ -1,4 +1,5 @@
 using DockerDiagram.Contracts;
+using DockerDiagram.Common;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.Infrastructure
@@ -37,7 +38,7 @@ namespace DockerDiagram.Infrastructure
         {
             SwarmClusterState state = await ReadStateAsync(service, cancellationToken);
             var nodes = state.IsManager
-                ? await service.GetSwarmNodesAsync().WaitAsync(TimeSpan.FromSeconds(10), cancellationToken)
+                ? await service.GetSwarmNodesAsync().WaitAsync(SwarmOperationTiming.ReadinessQueryTimeout, cancellationToken)
                 : null;
             return SwarmLeavePolicy.Evaluate(state, nodes);
         }
@@ -50,7 +51,7 @@ namespace DockerDiagram.Infrastructure
 
             string requestError = string.Empty;
             using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            requestCts.CancelAfter(TimeSpan.FromSeconds(20));
+            requestCts.CancelAfter(SwarmOperationTiming.LeaveTimeout);
             try
             {
                 await service.LeaveSwarmAsync(current.Force, requestCts.Token);
@@ -68,7 +69,7 @@ namespace DockerDiagram.Infrastructure
                     latest = await ReadStateAsync(service, cancellationToken);
                     if (latest.Membership == SwarmMembershipState.Inactive)
                         return new(true, "Docker Engine의 미가입 상태를 확인했습니다.");
-                    await Task.Delay(250, cancellationToken);
+                    await Task.Delay(SwarmOperationTiming.PollInterval, cancellationToken);
                 }
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
@@ -82,6 +83,6 @@ namespace DockerDiagram.Infrastructure
         }
 
         public static Task<SwarmClusterState> ReadStateAsync(ISwarmService service, CancellationToken cancellationToken = default) =>
-            service.GetSwarmStateAsync().WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            service.GetSwarmStateAsync(cancellationToken).WaitAsync(SwarmOperationTiming.ReadinessQueryTimeout, cancellationToken);
     }
 }

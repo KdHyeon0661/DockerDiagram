@@ -9,11 +9,11 @@ namespace DockerDiagram.Tests;
 public sealed class RuntimeSyncContextTests
 {
     [Fact]
-    public async Task Sync_DiscardsPreviousConnectionSnapshot_WhenActiveSheetChangesMidQuery()
+    public async Task SyncDiscardsPreviousConnectionSnapshotWhenActiveSheetChangesMidQuery()
     {
-        IDockerService defaultService = DispatchProxy.Create<IDockerService, ControlledSyncDockerServiceProxy>();
-        IDockerService firstService = DispatchProxy.Create<IDockerService, ControlledSyncDockerServiceProxy>();
-        IDockerService secondService = DispatchProxy.Create<IDockerService, ControlledSyncDockerServiceProxy>();
+        using IDockerService defaultService = DispatchProxy.Create<IDockerService, ControlledSyncDockerServiceProxy>();
+        using IDockerService firstService = DispatchProxy.Create<IDockerService, ControlledSyncDockerServiceProxy>();
+        using IDockerService secondService = DispatchProxy.Create<IDockerService, ControlledSyncDockerServiceProxy>();
         var first = (ControlledSyncDockerServiceProxy)(object)firstService;
         var second = (ControlledSyncDockerServiceProxy)(object)secondService;
         IDialogService dialogService = DispatchProxy.Create<IDialogService, LenientDialogServiceProxy>();

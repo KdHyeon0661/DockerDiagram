@@ -8,7 +8,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerApiLogStreamingTests
 {
     [Fact]
-    public async Task ContainerLogs_ReadStdoutAndStderrMultiplexFrames()
+    public async Task ContainerLogsReadStdoutAndStderrMultiplexFrames()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Bytes(
@@ -27,7 +27,7 @@ public sealed class DockerApiLogStreamingTests
     }
 
     [Fact]
-    public async Task ContainerLogStream_ForwardsDataAndStopsAtEngineEof()
+    public async Task ContainerLogStreamForwardsDataAndStopsAtEngineEof()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Bytes(
@@ -45,7 +45,7 @@ public sealed class DockerApiLogStreamingTests
     }
 
     [Fact]
-    public async Task SwarmServiceLogs_SeparatesStderrSection()
+    public async Task SwarmServiceLogsSeparatesStderrSection()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Bytes(

@@ -11,8 +11,8 @@ namespace DockerDiagram.Views
         {
             InitializeComponent();
             TargetTextBlock.Text = $"{kind} {target}";
-            LocalPortTextBox.Text = defaultLocalPort.ToString();
-            RemotePortTextBox.Text = defaultRemotePort.ToString();
+            LocalPortTextBox.Text = defaultLocalPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            RemotePortTextBox.Text = defaultRemotePort.ToString(System.Globalization.CultureInfo.InvariantCulture);
             LocalPortTextBox.SelectAll();
             LocalPortTextBox.Focus();
         }

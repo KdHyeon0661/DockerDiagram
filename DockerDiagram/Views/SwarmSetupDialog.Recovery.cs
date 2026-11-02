@@ -1,10 +1,11 @@
-using DockerDiagram.Infrastructure;
-using DockerDiagram.Models;
 using System;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
+using DockerDiagram.Common;
+using DockerDiagram.Infrastructure;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.Views
 {
@@ -40,7 +41,7 @@ namespace DockerDiagram.Views
             var workflow = new SwarmLeaveWorkflow(_swarmService);
             try
             {
-                SwarmLeavePlan plan = await workflow.PrepareAsync(_lifetimeCts.Token);
+                SwarmLeavePlan plan = await workflow.PrepareAsync(_lifetime.Token);
                 string effect = plan.Force
                     ? "이 노드만 있는 Swarm 클러스터를 종료합니다. Swarm 서비스 관리 상태가 사라지며 되돌리려면 다시 구성해야 합니다."
                     : "이 Docker Engine이 Worker 역할을 종료합니다. 실행 중인 Swarm 작업이 중단될 수 있습니다. " +
@@ -52,7 +53,7 @@ namespace DockerDiagram.Views
                     return;
 
                 LoadingText.Text = "Swarm 탈퇴 요청 및 실제 상태 확인 중...";
-                SwarmLeaveResult result = await workflow.ExecuteAsync(plan, _lifetimeCts.Token);
+                SwarmLeaveResult result = await workflow.ExecuteAsync(plan, _lifetime.Token);
                 if (result.ConfirmedInactive)
                 {
                     WasInitialized = false;
@@ -100,7 +101,7 @@ namespace DockerDiagram.Views
                     !string.IsNullOrWhiteSpace(observed.NodeId))
                 {
                     var nodes = await _swarmService.GetSwarmNodesAsync()
-                        .WaitAsync(TimeSpan.FromSeconds(10), _lifetimeCts.Token);
+                        .WaitAsync(SwarmOperationTiming.ReadinessQueryTimeout, _lifetime.Token);
                     var match = SwarmJoinVerification.FindJoinedNode(
                         nodes, observed.NodeId, connection.Options.AdvertiseAddress, connection.Options.Role);
                     if (match != null)
@@ -149,7 +150,10 @@ namespace DockerDiagram.Views
                 : exception.GetBaseException().Message;
             if (!string.IsNullOrWhiteSpace(token))
                 message = message.Replace(token, "<hidden>", StringComparison.Ordinal);
-            return Regex.Replace(message, @"SWMTKN-[^\s""'<>]+", "<hidden>");
+            return MyRegex().Replace(message, "<hidden>");
         }
+
+        [GeneratedRegex(@"SWMTKN-[^\s""'<>]+")]
+        private static partial Regex MyRegex();
     }
 }

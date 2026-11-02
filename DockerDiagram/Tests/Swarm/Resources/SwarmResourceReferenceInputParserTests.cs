@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmResourceReferenceInputParserTests
 {
     [Fact]
-    public void Parse_AcceptsAbsoluteTargetNamedOwnersAndOctalMode()
+    public void ParseAcceptsAbsoluteTargetNamedOwnersAndOctalMode()
     {
         SwarmResourceTargetOptions result = SwarmResourceReferenceInputParser.Parse(
             " /etc/app/config.yml ",
@@ -27,7 +27,7 @@ public sealed class SwarmResourceReferenceInputParserTests
     [InlineData("secret", "0", "bad group", "0444", "GID")]
     [InlineData("secret", "0", "0", "0488", "Mode")]
     [InlineData("secret", "0", "0", "1000", "Mode")]
-    public void TryParse_RejectsInvalidReferenceSettings(
+    public void TryParseRejectsInvalidReferenceSettings(
         string target,
         string uid,
         string gid,

@@ -1,8 +1,8 @@
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.ViewModels;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.ViewModels;
 
 namespace DockerDiagram
 {
@@ -25,12 +25,9 @@ namespace DockerDiagram
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
-                    this,
+                _dialogService.ShowError(
                     $"Swarm service 편집 정보를 불러오지 못했습니다:\n{ex.GetBaseException().Message}",
-                    "Edit Swarm Service",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
+                    "Edit Swarm Service");
             }
             finally
             {

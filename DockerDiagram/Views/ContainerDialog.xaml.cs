@@ -1,16 +1,18 @@
-﻿using DockerDiagram.ApplicationServices;
-using DockerDiagram.Contracts;
+using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using DockerDiagram.Models;
-using System.Linq;
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Threading;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.Views
 {
@@ -23,12 +25,22 @@ namespace DockerDiagram.Views
     {
         private readonly IDialogService _dialogService;
         private readonly IImageService? _imageService;
+        private readonly INetworkService? _networkService;
+        private readonly ConnectionProfile? _connectionProfile;
+        private readonly ObservableCollection<ContainerMountSpec> _mounts = [];
+        private ContainerMountSpec? _editingMount;
         private readonly Dictionary<string, Control> _profileInputs =
             new(StringComparer.OrdinalIgnoreCase);
         private readonly DispatcherTimer _imageLookupTimer;
         private ContainerImageProfile? _activeImageProfile;
         private ContainerImageMetadata? _imageMetadata;
         private CancellationTokenSource? _imageLookupCancellation;
+        private string _suggestionsAppliedForImage = string.Empty;
+        private readonly HashSet<string> _autoAppliedPorts = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _autoAppliedEnvironment = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _autoAppliedVolumes = new(StringComparer.OrdinalIgnoreCase);
+        private string _autoAppliedCommand = string.Empty;
+        private IReadOnlyList<string>? _validatedEnvironmentVariables;
 
         // =====================================
         // [공통] 현재 사용자가 선택한 생성 방식 (0: UI, 1: CLI, 2: Dockerfile)
@@ -64,27 +76,15 @@ namespace DockerDiagram.Views
 
         public List<string> EnvVars
         {
-            get => ReadNonEmptyLines(txtEnv.Text);
+            get => (_validatedEnvironmentVariables ?? ReadNonEmptyLines(txtEnv.Text)).ToList();
         }
 
         public string RestartPolicy => (cmbRestart.SelectedItem as ComboBoxItem)?.Content.ToString() ?? "no";
         public long MemoryMb => long.TryParse(txtMem.Text, out var v) ? v : 0;
         public double CpuCount => double.TryParse(txtCpu.Text, out var v) ? v : 0;
         public List<string> Volumes
-        {
-            get
-            {
-                var list = new List<string>();
-                foreach (var item in lstVolumes.Items)
-                {
-                    if (item != null) list.Add(item.ToString() ?? "");
-                }
-
-                return list;
-            }
-        }
-        public List<string> ResultBindMounts { get; private set; } = new List<string>();
-        public List<string> ResultNamedVolumes { get; private set; } = new List<string>();
+            => _mounts.Where(mount => mount.Kind != MountKind.Tmpfs).Select(mount => mount.ToLegacyString()).ToList();
+        public List<ContainerMountSpec> Mounts => _mounts.Select(mount => mount.Clone()).ToList();
 
         // =====================================
         // [탭 2: 명령어로 생성 (CLI)] 데이터
@@ -101,14 +101,20 @@ namespace DockerDiagram.Views
         /// <summary>
         /// 컨테이너 생성 대화상자를 초기화하고 내부에서 사용할 다이얼로그 서비스를 연결합니다.
         /// </summary>
-        public ContainerDialog(IDialogService dialogService, IImageService? imageService = null)
+        public ContainerDialog(
+            IDialogService dialogService,
+            IDockerService? dockerService = null,
+            ConnectionProfile? connectionProfile = null)
         {
             InitializeComponent();
             _dialogService = dialogService;
-            _imageService = imageService;
+            _imageService = dockerService;
+            _networkService = dockerService;
+            _connectionProfile = connectionProfile;
+            lstVolumes.ItemsSource = _mounts;
             _imageLookupTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromMilliseconds(800)
+                Interval = ContainerCreationTiming.MetadataLookupDebounce
             };
             _imageLookupTimer.Tick += ImageLookupTimer_Tick;
             Closed += (_, _) =>
@@ -117,8 +123,16 @@ namespace DockerDiagram.Views
                 _imageLookupCancellation?.Cancel();
                 _imageLookupCancellation?.Dispose();
             };
+            Loaded += ContainerDialog_Loaded;
             UpdateImageProfile();
+            UpdateMountEditor();
             txtName.Focus();
+        }
+
+        private async void ContainerDialog_Loaded(object sender, RoutedEventArgs e)
+        {
+            Loaded -= ContainerDialog_Loaded;
+            await RefreshNetworkChoicesAsync();
         }
 
         private void ImageName_TextChanged(object sender, TextChangedEventArgs e)
@@ -126,12 +140,67 @@ namespace DockerDiagram.Views
             if (tabImageSetup == null)
                 return;
 
+            if (!string.IsNullOrWhiteSpace(_suggestionsAppliedForImage) &&
+                !string.Equals(_suggestionsAppliedForImage, ImageName, StringComparison.OrdinalIgnoreCase))
+            {
+                RemoveAutoAppliedSuggestions();
+            }
+
             UpdateImageProfile();
             ClearImageMetadata();
             _imageLookupTimer.Stop();
 
             if (_imageService != null && IsLookupCandidate(ImageName))
                 _imageLookupTimer.Start();
+        }
+
+        private void ContainerName_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_autoAppliedVolumes.Count == 0) return;
+
+            string requestedName = string.IsNullOrWhiteSpace(ContainerName)
+                ? _activeImageProfile?.Id ?? "container"
+                : ContainerName;
+            string containerName = SanitizeDockerName(requestedName);
+            var updatedMappings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string previousMapping in _autoAppliedVolumes.ToList())
+            {
+                int itemIndex = _mounts
+                    .Select((mount, index) => (mount, index))
+                    .FirstOrDefault(entry => string.Equals(
+                        entry.mount.ToLegacyString(),
+                        previousMapping,
+                        StringComparison.OrdinalIgnoreCase)).index;
+                bool found = itemIndex >= 0 && itemIndex < _mounts.Count &&
+                             string.Equals(_mounts[itemIndex].ToLegacyString(), previousMapping, StringComparison.OrdinalIgnoreCase);
+
+                // 사용자가 자동 생성된 매핑을 직접 수정하거나 삭제했다면 더 이상 추적하지 않습니다.
+                if (!found) continue;
+
+                string target = GetVolumeTarget(previousMapping);
+                if (string.IsNullOrWhiteSpace(target))
+                {
+                    updatedMappings.Add(previousMapping);
+                    continue;
+                }
+
+                string suffix = _activeImageProfile?.Volumes
+                    .FirstOrDefault(volume => string.Equals(
+                        volume.ContainerPath,
+                        target,
+                        StringComparison.Ordinal))
+                    ?.NameSuffix ?? GetVolumeNameSuffix(target, 1);
+                string updatedMapping = $"{containerName}-{suffix}:{target}";
+                ContainerMountSpec updated = _mounts[itemIndex].Clone();
+                updated.Source = $"{containerName}-{suffix}";
+                _mounts[itemIndex] = updated;
+                updatedMappings.Add(updatedMapping);
+            }
+
+            _autoAppliedVolumes.Clear();
+            foreach (string mapping in updatedMappings)
+                _autoAppliedVolumes.Add(mapping);
         }
 
         private async void ImageLookupTimer_Tick(object? sender, EventArgs e)
@@ -144,6 +213,143 @@ namespace DockerDiagram.Views
         {
             _imageLookupTimer.Stop();
             await InspectImageAsync();
+        }
+
+        private async void RefreshNetworks_Click(object sender, RoutedEventArgs e)
+        {
+            await RefreshNetworkChoicesAsync();
+        }
+
+        private async void CreateNetwork_Click(object sender, RoutedEventArgs e)
+        {
+            if (_networkService == null)
+            {
+                _dialogService.ShowError(
+                    "현재 Docker 연결에서는 네트워크를 생성할 수 없습니다.",
+                    "네트워크 생성");
+                return;
+            }
+
+            var dialog = new NetworkDialog(_dialogService)
+            {
+                Owner = this
+            };
+            if (dialog.ShowDialog() != true) return;
+
+            NetworkCreateOptions options = dialog.CreateOptions;
+            string dockerNetworkName = options.External &&
+                                       !string.IsNullOrWhiteSpace(options.ComposeNetworkName)
+                ? options.ComposeNetworkName
+                : options.Name;
+
+            btnCreateNetwork.IsEnabled = false;
+            txtNetworkStatus.Text = $"'{dockerNetworkName}' 네트워크를 확인하는 중입니다.";
+
+            try
+            {
+                if (options.External)
+                {
+                    var existingNetworks = await _networkService.GetNetworksAsync();
+                    bool exists = existingNetworks.Any(network => string.Equals(
+                        string.IsNullOrWhiteSpace(network.Name) ? network.Id : network.Name,
+                        dockerNetworkName,
+                        StringComparison.OrdinalIgnoreCase));
+                    if (!exists)
+                    {
+                        _dialogService.ShowError(
+                            $"External 네트워크 '{dockerNetworkName}'을(를) Docker에서 찾을 수 없습니다.",
+                            "네트워크 생성");
+                        return;
+                    }
+                }
+                else
+                {
+                    await _networkService.CreateNetworkAsync(options);
+                }
+
+                await RefreshNetworkChoicesAsync(dockerNetworkName);
+                txtNetworkStatus.Text = options.External
+                    ? $"기존 네트워크 '{dockerNetworkName}'을(를) 선택했습니다."
+                    : $"네트워크 '{dockerNetworkName}'을(를) 생성하고 선택했습니다.";
+            }
+            catch (Exception ex)
+            {
+                txtNetworkStatus.Text = "네트워크를 생성하지 못했습니다.";
+                _dialogService.ShowError(
+                    $"네트워크 '{dockerNetworkName}' 생성 실패:\n{ex.GetBaseException().Message}",
+                    "네트워크 생성");
+            }
+            finally
+            {
+                btnCreateNetwork.IsEnabled = _networkService != null;
+            }
+        }
+
+        private async Task RefreshNetworkChoicesAsync(string? networkToSelect = null)
+        {
+            string requestedNetwork = string.IsNullOrWhiteSpace(networkToSelect)
+                ? cmbNetwork.Text.Trim()
+                : networkToSelect.Trim();
+
+            if (_networkService == null)
+            {
+                cmbNetwork.Items.Clear();
+                cmbNetwork.Items.Add(DockerNetworkSafety.Bridge);
+                cmbNetwork.Items.Add(DockerNetworkSafety.Host);
+                cmbNetwork.Items.Add(DockerNetworkSafety.None);
+                cmbNetwork.Text = string.IsNullOrWhiteSpace(requestedNetwork) ? DockerNetworkSafety.Bridge : requestedNetwork;
+                btnRefreshNetworks.IsEnabled = false;
+                btnCreateNetwork.IsEnabled = false;
+                txtNetworkStatus.Text = "현재 Docker 연결에서는 네트워크 조회와 생성을 사용할 수 없습니다.";
+                return;
+            }
+
+            btnRefreshNetworks.IsEnabled = false;
+            btnCreateNetwork.IsEnabled = false;
+            txtNetworkStatus.Text = "Docker 네트워크 목록을 불러오는 중입니다.";
+
+            try
+            {
+                var networks = await _networkService.GetNetworksAsync();
+                var names = networks
+                    .Select(network => string.IsNullOrWhiteSpace(network.Name) ? network.Id : network.Name)
+                    .Where(DockerNetworkSafety.IsUserSelectable)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(name => string.Equals(name, DockerNetworkSafety.Bridge, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                    .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (!names.Contains(DockerNetworkSafety.Bridge, StringComparer.OrdinalIgnoreCase))
+                    names.Insert(0, DockerNetworkSafety.Bridge);
+                names.Add(DockerNetworkSafety.Host);
+                names.Add(DockerNetworkSafety.None);
+
+                cmbNetwork.Items.Clear();
+                foreach (string name in names)
+                    cmbNetwork.Items.Add(name);
+
+                cmbNetwork.Text = string.IsNullOrWhiteSpace(requestedNetwork)
+                    ? DockerNetworkSafety.Bridge
+                    : requestedNetwork;
+                int selectableNetworkCount = names.Count(DockerNetworkSafety.IsUserSelectable);
+                txtNetworkStatus.Text = $"연결 가능한 Docker 네트워크 {selectableNetworkCount}개를 불러왔습니다.";
+            }
+            catch (Exception ex)
+            {
+                if (cmbNetwork.Items.Count == 0)
+                {
+                    cmbNetwork.Items.Add(DockerNetworkSafety.Bridge);
+                    cmbNetwork.Items.Add(DockerNetworkSafety.Host);
+                    cmbNetwork.Items.Add(DockerNetworkSafety.None);
+                }
+                cmbNetwork.Text = string.IsNullOrWhiteSpace(requestedNetwork) ? DockerNetworkSafety.Bridge : requestedNetwork;
+                txtNetworkStatus.Text = $"네트워크 목록을 불러오지 못했습니다. ({GetShortError(ex)})";
+            }
+            finally
+            {
+                btnRefreshNetworks.IsEnabled = true;
+                btnCreateNetwork.IsEnabled = true;
+            }
         }
 
         private async Task InspectImageAsync()
@@ -238,7 +444,7 @@ namespace DockerDiagram.Views
             profileHeader.Visibility = hasProfile ? Visibility.Visible : Visibility.Collapsed;
             profileFormScroll.Visibility = hasProfile ? Visibility.Visible : Visibility.Collapsed;
             pnlNoImageProfile.Visibility = hasProfile ? Visibility.Collapsed : Visibility.Visible;
-            tabImageSetup.Header = "Initial Setup";
+            tabImageSetup.Header = "초기 설정";
 
             if (!hasProfile)
             {
@@ -247,7 +453,7 @@ namespace DockerDiagram.Views
             }
 
             txtProfileCategory.Text = string.IsNullOrWhiteSpace(profile!.Category)
-                ? "Container profile"
+                ? "컨테이너 프로필"
                 : profile.Category;
             txtProfileName.Text = $"{profile.DisplayName} initial configuration";
             txtProfileDescription.Text = profile.Description;
@@ -421,18 +627,9 @@ namespace DockerDiagram.Views
 
                 if (!ValidateManualEnvironmentVariables())
                     return;
+                if (!ValidateManualMounts())
+                    return;
 
-                ResultBindMounts.Clear();
-                ResultNamedVolumes.Clear();
-                foreach (string volumeString in Volumes)
-                {
-                    bool isWindowsPath = Regex.IsMatch(volumeString, @"^[a-zA-Z]:[\\/]");
-                    bool isLinuxPath = volumeString.StartsWith("/");
-                    bool isRelativePath = volumeString.StartsWith("./") || volumeString.StartsWith("../");
-
-                    if (isWindowsPath || isLinuxPath || isRelativePath) ResultBindMounts.Add(volumeString);
-                    else ResultNamedVolumes.Add(volumeString);
-                }
             }
             else if (SelectedCreationMode == 1) // CLI 방식
             {
@@ -456,11 +653,16 @@ namespace DockerDiagram.Views
 
         private void ApplyImageSuggestions_Click(object sender, RoutedEventArgs e)
         {
+            // 같은 이미지에서 값을 바꿔 다시 적용하거나 다른 이미지로 전환한 경우,
+            // 이전에 자동으로 추가했던 값만 먼저 제거합니다. 사용자가 직접 입력하거나
+            // 수정한 값은 추적 목록과 일치하지 않으므로 그대로 보존됩니다.
+            RemoveAutoAppliedSuggestions();
+
             var ports = ReadNonEmptyLines(txtPorts.Text);
             var environments = ReadNonEmptyLines(txtEnv.Text);
-            var volumes = lstVolumes.Items.Cast<object>()
-                .Select(item => item?.ToString() ?? string.Empty)
-                .Where(item => !string.IsNullOrWhiteSpace(item))
+            var volumes = _mounts
+                .Where(mount => mount.Kind != MountKind.Tmpfs)
+                .Select(mount => mount.ToLegacyString())
                 .ToList();
 
             if (_activeImageProfile != null)
@@ -476,10 +678,14 @@ namespace DockerDiagram.Views
                     if (!string.IsNullOrWhiteSpace(profileField.EnvironmentVariable) &&
                         !string.IsNullOrWhiteSpace(value))
                     {
-                        AddEnvironmentIfMissing(
-                            environments,
-                            profileField.EnvironmentVariable,
-                            value);
+                        string mapping = $"{profileField.EnvironmentVariable}={value}";
+                        if (AddEnvironmentIfMissing(
+                                environments,
+                                profileField.EnvironmentVariable,
+                                value))
+                        {
+                            _autoAppliedEnvironment.Add(mapping);
+                        }
                     }
 
                     if (chkApplyProfilePorts.IsChecked == true &&
@@ -487,7 +693,9 @@ namespace DockerDiagram.Views
                         int.TryParse(value, out int port) &&
                         port is >= 1 and <= 65535)
                     {
-                        AddPortIfMissing(ports, $"{port}:{profileField.ContainerPort}");
+                        string mapping = $"{port}:{profileField.ContainerPort}";
+                        if (AddPortIfMissing(ports, mapping))
+                            _autoAppliedPorts.Add(mapping);
                     }
                 }
 
@@ -499,16 +707,18 @@ namespace DockerDiagram.Views
                             : ContainerName);
                     foreach (var volume in _activeImageProfile.Volumes)
                     {
-                        AddVolumeIfMissing(
-                            volumes,
-                            $"{containerName}-{volume.NameSuffix}:{volume.ContainerPath}");
+                        string mapping = $"{containerName}-{volume.NameSuffix}:{volume.ContainerPath}";
+                        if (AddVolumeIfMissing(volumes, mapping))
+                            _autoAppliedVolumes.Add(mapping);
                     }
                 }
 
                 if (string.IsNullOrWhiteSpace(txtCommand.Text) &&
                     CanResolveProfileCommand())
                 {
-                    txtCommand.Text = ResolveProfileTemplate(_activeImageProfile.CommandTemplate);
+                    string command = ResolveProfileTemplate(_activeImageProfile.CommandTemplate);
+                    txtCommand.Text = command;
+                    _autoAppliedCommand = command;
                 }
             }
 
@@ -520,7 +730,11 @@ namespace DockerDiagram.Views
                     {
                         string containerPort = exposedPort.Split('/')[0];
                         if (int.TryParse(containerPort, out int port))
-                            AddPortIfMissing(ports, $"{port}:{exposedPort}");
+                        {
+                            string mapping = $"{port}:{exposedPort}";
+                            if (AddPortIfMissing(ports, mapping))
+                                _autoAppliedPorts.Add(mapping);
+                        }
                     }
                 }
 
@@ -532,40 +746,131 @@ namespace DockerDiagram.Views
                     foreach (string target in _imageMetadata.Volumes)
                     {
                         string suffix = GetVolumeNameSuffix(target, index++);
-                        AddVolumeIfMissing(
-                            volumes,
-                            $"{containerName}-{suffix}:{target}");
+                        string mapping = $"{containerName}-{suffix}:{target}";
+                        if (AddVolumeIfMissing(volumes, mapping))
+                            _autoAppliedVolumes.Add(mapping);
                     }
                 }
             }
 
             txtPorts.Text = string.Join(Environment.NewLine, ports);
             txtEnv.Text = string.Join(Environment.NewLine, environments);
-            lstVolumes.Items.Clear();
             foreach (string volume in volumes)
-                lstVolumes.Items.Add(volume);
+            {
+                if (_mounts.Any(mount => string.Equals(
+                        mount.ToLegacyString(),
+                        volume,
+                        StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+                _mounts.Add(ContainerMountParser.ParseLegacy(volume));
+            }
+
+            if (_autoAppliedPorts.Count > 0 ||
+                _autoAppliedEnvironment.Count > 0 ||
+                _autoAppliedVolumes.Count > 0 ||
+                !string.IsNullOrWhiteSpace(_autoAppliedCommand))
+            {
+                _suggestionsAppliedForImage = ImageName;
+            }
 
             txtImageLookupStatus.Text =
                 "제안 내용을 설정 탭에 적용했습니다. 생성 전에 자유롭게 수정할 수 있습니다.";
         }
 
-        private bool ValidateManualEnvironmentVariables()
+        private void RemoveAutoAppliedSuggestions()
         {
-            foreach (string line in ReadNonEmptyLines(txtEnv.Text))
+            if (_autoAppliedPorts.Count > 0)
             {
-                int separator = line.IndexOf('=');
-                if (separator <= 0 ||
-                    !Regex.IsMatch(line[..separator].Trim(), @"^[A-Za-z_][A-Za-z0-9_.-]*$"))
+                txtPorts.Text = string.Join(
+                    Environment.NewLine,
+                    ReadNonEmptyLines(txtPorts.Text).Where(value => !_autoAppliedPorts.Contains(value)));
+            }
+
+            if (_autoAppliedEnvironment.Count > 0)
+            {
+                txtEnv.Text = string.Join(
+                    Environment.NewLine,
+                    ReadNonEmptyLines(txtEnv.Text).Where(value => !_autoAppliedEnvironment.Contains(value)));
+            }
+
+            if (_autoAppliedVolumes.Count > 0)
+            {
+                foreach (ContainerMountSpec mount in _mounts
+                             .Where(item => _autoAppliedVolumes.Contains(item.ToLegacyString()))
+                             .ToList())
                 {
-                    _dialogService.ShowInfo(
-                        $"환경변수는 KEY=VALUE 형식이어야 합니다.\n입력값: {line}",
-                        "환경변수 오류");
-                    return false;
+                    _mounts.Remove(mount);
                 }
             }
 
+            if (!string.IsNullOrWhiteSpace(_autoAppliedCommand) &&
+                string.Equals(txtCommand.Text.Trim(), _autoAppliedCommand, StringComparison.Ordinal))
+            {
+                txtCommand.Clear();
+            }
+
+            _autoAppliedPorts.Clear();
+            _autoAppliedEnvironment.Clear();
+            _autoAppliedVolumes.Clear();
+            _autoAppliedCommand = string.Empty;
+            _suggestionsAppliedForImage = string.Empty;
+        }
+
+        private bool ValidateManualEnvironmentVariables()
+        {
+            FormParseResult<IReadOnlyList<string>> validation = ContainerCreateFormValidator.ParseEnvironmentVariables(
+                txtEnv.Text,
+                key => EnvironmentVariableNameRegex().IsMatch(key));
+            if (validation.IsValid)
+            {
+                _validatedEnvironmentVariables = validation.Value;
+                return true;
+            }
+
+            _dialogService.ShowInfo(validation.Message, "환경변수 오류");
+            return false;
+        }
+
+        private bool ValidateManualMounts()
+        {
+            var targets = new HashSet<string>(StringComparer.Ordinal);
+            foreach (ContainerMountSpec mount in _mounts)
+            {
+                if (!ContainerMountParser.IsAbsoluteContainerPath(mount.Target))
+                {
+                    _dialogService.ShowInfo(
+                        $"컨테이너 마운트 경로는 절대 경로여야 합니다: {mount.Target}",
+                        "마운트 경로 오류");
+                    return false;
+                }
+                if (!targets.Add(mount.Target))
+                {
+                    _dialogService.ShowInfo($"컨테이너 마운트 경로가 중복되었습니다: {mount.Target}", "마운트 중복");
+                    return false;
+                }
+                if (mount.Kind == MountKind.Bind && string.IsNullOrWhiteSpace(mount.Source))
+                {
+                    _dialogService.ShowInfo("마운트 원본이 비어 있습니다.", "마운트 입력 오류");
+                    return false;
+                }
+                if (mount.Kind == MountKind.Bind && !ContainerMountParser.IsAbsoluteHostPath(mount.Source))
+                {
+                    _dialogService.ShowInfo($"Bind Mount 원본은 절대 호스트 경로여야 합니다: {mount.Source}", "마운트 경로 오류");
+                    return false;
+                }
+                if (mount.Kind == MountKind.Bind && !IsValidBindPropagation(mount.BindPropagation))
+                {
+                    _dialogService.ShowInfo($"Bind propagation 값이 올바르지 않습니다: {mount.BindPropagation}", "마운트 옵션 오류");
+                    return false;
+                }
+            }
             return true;
         }
+
+        private static bool IsValidBindPropagation(string value) =>
+            value.Trim().ToLowerInvariant() is "private" or "rprivate" or "shared" or "rshared" or "slave" or "rslave";
 
         private string GetProfileValue(string key)
         {
@@ -634,7 +939,7 @@ namespace DockerDiagram.Views
 
         private static string GetVolumeTarget(string mapping)
         {
-            if (Regex.IsMatch(mapping, @"^[a-zA-Z]:[\\/]"))
+            if (MyRegex().IsMatch(mapping))
             {
                 int separator = mapping.IndexOf(':', 2);
                 return separator >= 0 ? mapping[(separator + 1)..].Split(':')[0] : string.Empty;
@@ -646,37 +951,43 @@ namespace DockerDiagram.Views
 
         private static string SanitizeDockerName(string value)
         {
-            string sanitized = Regex.Replace(value.Trim(), @"[^A-Za-z0-9_.-]", "-");
+            string sanitized = InvalidDockerNameCharacterRegex().Replace(value.Trim(), "-");
             return string.IsNullOrWhiteSpace(sanitized) ? "container" : sanitized;
         }
 
-        private static void AddEnvironmentIfMissing(
-            ICollection<string> environments,
+        private static bool AddEnvironmentIfMissing(
+            List<string> environments,
             string key,
             string value)
         {
             bool exists = environments.Any(line =>
                 line.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase));
-            if (!exists)
-                environments.Add($"{key}={value}");
+            if (exists) return false;
+
+            environments.Add($"{key}={value}");
+            return true;
         }
 
-        private static void AddPortIfMissing(ICollection<string> ports, string mapping)
+        private static bool AddPortIfMissing(List<string> ports, string mapping)
         {
             string containerPort = GetContainerPort(mapping);
             bool exists = ports.Any(port =>
                 GetContainerPort(port).Equals(containerPort, StringComparison.OrdinalIgnoreCase));
-            if (!exists)
-                ports.Add(mapping);
+            if (exists) return false;
+
+            ports.Add(mapping);
+            return true;
         }
 
-        private static void AddVolumeIfMissing(ICollection<string> volumes, string mapping)
+        private static bool AddVolumeIfMissing(List<string> volumes, string mapping)
         {
             string target = GetVolumeTarget(mapping);
             bool exists = volumes.Any(volume =>
                 GetVolumeTarget(volume).Equals(target, StringComparison.OrdinalIgnoreCase));
-            if (!exists)
-                volumes.Add(mapping);
+            if (exists) return false;
+
+            volumes.Add(mapping);
+            return true;
         }
 
         private static string GetVolumeNameSuffix(string target, int index)
@@ -684,7 +995,7 @@ namespace DockerDiagram.Views
             string segment = target.TrimEnd('/')
                 .Split('/', StringSplitOptions.RemoveEmptyEntries)
                 .LastOrDefault() ?? $"data-{index}";
-            string suffix = Regex.Replace(segment.ToLowerInvariant(), @"[^a-z0-9_.-]", "-");
+            string suffix = InvalidLowerDockerNameCharacterRegex().Replace(segment.ToLowerInvariant(), "-");
             return string.IsNullOrWhiteSpace(suffix) ? $"data-{index}" : suffix;
         }
 
@@ -699,37 +1010,196 @@ namespace DockerDiagram.Views
         }
 
         /// <summary>
-        /// 볼륨 마운트 리스트에 새로운 경로 매핑(Host:Container)을 추가합니다.
+        /// 선택한 유형의 마운트를 목록에 추가하거나 기존 항목을 수정합니다.
         /// </summary>
         private void BtnAddVolume_Click(object sender, RoutedEventArgs e)
         {
+            MountKind kind = SelectedMountKind;
             string source = txtVolSource.Text.Trim();
             string target = txtVolTarget.Text.Trim();
+            bool anonymousVolume = kind == MountKind.Volume && chkAnonymousVolume.IsChecked == true;
 
-            if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(target))
+            if ((kind != MountKind.Tmpfs && !anonymousVolume && string.IsNullOrWhiteSpace(source)) ||
+                string.IsNullOrWhiteSpace(target))
             {
-                _dialogService.ShowMessage("호스트 경로와 컨테이너 경로가 필요합니다.");
+                _dialogService.ShowMessage(kind == MountKind.Tmpfs
+                    ? "컨테이너 경로가 필요합니다."
+                    : "원본과 컨테이너 경로가 필요합니다.");
                 return;
             }
 
-            bool isTargetLinux = target.StartsWith("/");
-            bool isTargetWindows = Regex.IsMatch(target, @"^[a-zA-Z]:[\\/]");
-
-            if (!isTargetLinux && !isTargetWindows)
+            if (!ContainerMountParser.IsAbsoluteContainerPath(target))
             {
                 _dialogService.ShowInfo($"컨테이너 경로는 절대 경로여야 합니다.\n입력값: {target}", "경로 오류");
                 txtVolTarget.Focus();
                 return;
             }
 
-            string volumeString = $"{source}:{target}";
-            if (!lstVolumes.Items.Contains(volumeString))
+            if (kind == MountKind.Bind && !ContainerMountParser.IsAbsoluteHostPath(source))
             {
-                lstVolumes.Items.Add(volumeString);
-                txtVolSource.Clear();
-                txtVolTarget.Clear();
+                _dialogService.ShowInfo("Bind Mount 원본은 절대 호스트 경로여야 합니다.", "경로 오류");
                 txtVolSource.Focus();
+                return;
             }
+
+            if (_mounts.Any(mount => !ReferenceEquals(mount, _editingMount) &&
+                                     string.Equals(mount.Target, target, StringComparison.Ordinal)))
+            {
+                _dialogService.ShowInfo($"컨테이너 경로가 중복되었습니다: {target}", "마운트 중복");
+                return;
+            }
+
+            ContainerMountSpec mount;
+            try
+            {
+                mount = new ContainerMountSpec
+                {
+                    Kind = kind,
+                    Source = kind == MountKind.Tmpfs || anonymousVolume ? string.Empty : source,
+                    Target = target,
+                    ReadOnly = string.Equals(
+                        (cmbMountMode.SelectedItem as ComboBoxItem)?.Content?.ToString(),
+                        "ro",
+                        StringComparison.OrdinalIgnoreCase),
+                    BindPropagation = string.IsNullOrWhiteSpace(txtBindPropagation.Text)
+                        ? "rprivate"
+                        : txtBindPropagation.Text.Trim(),
+                    VolumeNoCopy = chkVolumeNoCopy.IsChecked == true,
+                    TmpfsSizeBytes = kind == MountKind.Tmpfs
+                        ? ContainerMountParser.ParseByteSize(txtTmpfsSize.Text)
+                        : 0,
+                    TmpfsMode = kind == MountKind.Tmpfs
+                        ? ContainerMountParser.ParseOctalMode(txtTmpfsMode.Text)
+                        : Convert.ToUInt32("1777", 8)
+                };
+            }
+            catch (FormatException ex)
+            {
+                _dialogService.ShowInfo(ex.Message, "마운트 옵션 오류");
+                return;
+            }
+
+            if (_editingMount == null)
+            {
+                _mounts.Add(mount);
+            }
+            else
+            {
+                int index = _mounts.IndexOf(_editingMount);
+                _autoAppliedVolumes.Remove(_editingMount.ToLegacyString());
+                if (index >= 0) _mounts[index] = mount;
+                _editingMount = null;
+            }
+
+            ClearMountEditor();
+        }
+
+        private MountKind SelectedMountKind =>
+            Enum.TryParse((cmbMountType.SelectedItem as ComboBoxItem)?.Tag?.ToString(), out MountKind kind)
+                ? kind
+                : MountKind.Volume;
+
+        private void MountType_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateMountEditor();
+
+        private void UpdateMountEditor()
+        {
+            if (lblMountSource == null) return;
+            MountKind kind = SelectedMountKind;
+            lblMountSource.Text = kind switch
+            {
+                MountKind.Bind => "Docker 호스트 경로",
+                MountKind.Tmpfs => "Memory",
+                _ => "볼륨 이름"
+            };
+            txtVolSource.IsEnabled = kind != MountKind.Tmpfs &&
+                                     !(kind == MountKind.Volume && chkAnonymousVolume.IsChecked == true);
+            btnBrowseBindSource.Visibility = kind == MountKind.Bind ? Visibility.Visible : Visibility.Collapsed;
+            pnlVolumeOptions.Visibility = kind == MountKind.Volume ? Visibility.Visible : Visibility.Collapsed;
+            pnlBindOptions.Visibility = kind == MountKind.Bind ? Visibility.Visible : Visibility.Collapsed;
+            pnlTmpfsOptions.Visibility = kind == MountKind.Tmpfs ? Visibility.Visible : Visibility.Collapsed;
+
+            bool local = IsLocalDockerHost();
+            btnBrowseBindSource.IsEnabled = local;
+            txtMountHostHint.Text = kind switch
+            {
+                MountKind.Bind when local => "내 PC의 경로를 Docker 호스트에 연결합니다.",
+                MountKind.Bind => "원격 Docker 호스트 기준 경로를 직접 입력하세요.",
+                MountKind.Tmpfs => "컨테이너와 함께 사라지는 메모리 기반 저장소입니다.",
+                _ => "Docker가 관리하는 이름 있는 볼륨입니다."
+            };
+        }
+
+        private bool IsLocalDockerHost() =>
+            _connectionProfile?.Type == EndpointType.Local ||
+            (_connectionProfile?.Type == EndpointType.DockerContext &&
+             _connectionProfile.DockerEndpoint?.StartsWith("npipe://", StringComparison.OrdinalIgnoreCase) == true);
+
+        private void BrowseBindSource_Click(object sender, RoutedEventArgs e)
+        {
+            if (!IsLocalDockerHost())
+            {
+                _dialogService.ShowInfo(
+                    "현재 연결은 원격 Docker입니다. Docker 호스트의 경로를 직접 입력하세요.",
+                    "원격 Docker 경로");
+                return;
+            }
+            string? folder = _dialogService.ShowOpenFolderDialog(
+                "Bind mount로 사용할 폴더 선택",
+                System.IO.Directory.Exists(txtVolSource.Text) ? txtVolSource.Text : null);
+            if (!string.IsNullOrWhiteSpace(folder)) txtVolSource.Text = folder;
+        }
+
+        private void AnonymousVolume_Changed(object sender, RoutedEventArgs e)
+        {
+            if (chkAnonymousVolume?.IsChecked == true)
+                txtVolSource?.Clear();
+            UpdateMountEditor();
+        }
+
+        private void BtnEditMount_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: ContainerMountSpec mount }) return;
+            _editingMount = mount;
+            SelectMountKind(mount.Kind);
+            txtVolSource.Text = mount.Source;
+            txtVolTarget.Text = mount.Target;
+            cmbMountMode.SelectedIndex = mount.ReadOnly ? 1 : 0;
+            txtBindPropagation.Text = mount.BindPropagation;
+            chkAnonymousVolume.IsChecked = mount.Kind == MountKind.Volume && string.IsNullOrWhiteSpace(mount.Source);
+            chkVolumeNoCopy.IsChecked = mount.VolumeNoCopy;
+            txtTmpfsSize.Text = mount.TmpfsSizeBytes > 0
+                ? mount.TmpfsSizeBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : "0";
+            txtTmpfsMode.Text = Convert.ToString(mount.TmpfsMode, 8);
+            btnAddMount.Content = "적용";
+        }
+
+        private void SelectMountKind(MountKind kind)
+        {
+            foreach (ComboBoxItem item in cmbMountType.Items)
+            {
+                if (string.Equals(item.Tag?.ToString(), kind.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    cmbMountType.SelectedItem = item;
+                    break;
+                }
+            }
+            UpdateMountEditor();
+        }
+
+        private void ClearMountEditor()
+        {
+            _editingMount = null;
+            txtVolSource.Clear();
+            txtVolTarget.Clear();
+            cmbMountMode.SelectedIndex = 0;
+            txtBindPropagation.Text = "rprivate";
+            chkAnonymousVolume.IsChecked = false;
+            chkVolumeNoCopy.IsChecked = false;
+            txtTmpfsSize.Text = "64m";
+            txtTmpfsMode.Text = "1777";
+            btnAddMount.Content = "추가";
+            txtVolSource.Focus();
         }
 
         /// <summary>
@@ -737,9 +1207,11 @@ namespace DockerDiagram.Views
         /// </summary>
         private void BtnRemoveVolume_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button btn && btn.Tag is string item)
+            if (sender is Button btn && btn.Tag is ContainerMountSpec item)
             {
-                lstVolumes.Items.Remove(item);
+                _autoAppliedVolumes.Remove(item.ToLegacyString());
+                _mounts.Remove(item);
+                if (ReferenceEquals(_editingMount, item)) ClearMountEditor();
             }
         }
 
@@ -748,8 +1220,7 @@ namespace DockerDiagram.Views
         /// </summary>
         private void NumberValidationTextBox(object sender, TextCompositionEventArgs e)
         {
-            Regex regex = new Regex("[^0-9.]+");
-            e.Handled = regex.IsMatch(e.Text);
+            e.Handled = InvalidNumericInputRegex().IsMatch(e.Text);
         }
 
         /// <summary>
@@ -800,7 +1271,7 @@ namespace DockerDiagram.Views
                 int addedCount = 0;
 
                 // 기존에 적혀있던 텍스트가 있다면 줄바꿈을 한번 해줍니다.
-                if (!string.IsNullOrWhiteSpace(txtEnv.Text) && !txtEnv.Text.EndsWith("\n"))
+                if (!string.IsNullOrWhiteSpace(txtEnv.Text) && !txtEnv.Text.EndsWith('\n'))
                 {
                     txtEnv.Text += "\r\n";
                 }
@@ -810,11 +1281,11 @@ namespace DockerDiagram.Views
                     string trimmed = line.Trim();
 
                     // 주석(#)과 빈 줄 무시
-                    if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith("#"))
+                    if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith('#'))
                         continue;
 
                     // KEY=VALUE 형태일 때 TextBox에 텍스트를 추가
-                    if (trimmed.Contains("="))
+                    if (trimmed.Contains('='))
                     {
                         txtEnv.Text += trimmed + "\r\n";
                         addedCount++;
@@ -831,5 +1302,20 @@ namespace DockerDiagram.Views
                 _dialogService.ShowInfo($"파일을 읽는 중 오류가 발생했습니다:\n{ex.Message}", "오류");
             }
         }
+
+        [GeneratedRegex(@"^[a-zA-Z]:[\\/]")]
+        private static partial Regex MyRegex();
+
+        [GeneratedRegex(@"^[A-Za-z_][A-Za-z0-9_.-]*$")]
+        private static partial Regex EnvironmentVariableNameRegex();
+
+        [GeneratedRegex(@"[^A-Za-z0-9_.-]")]
+        private static partial Regex InvalidDockerNameCharacterRegex();
+
+        [GeneratedRegex(@"[^a-z0-9_.-]")]
+        private static partial Regex InvalidLowerDockerNameCharacterRegex();
+
+        [GeneratedRegex("[^0-9.]+")]
+        private static partial Regex InvalidNumericInputRegex();
     }
 }

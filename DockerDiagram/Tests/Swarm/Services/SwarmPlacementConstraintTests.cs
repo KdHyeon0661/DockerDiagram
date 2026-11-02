@@ -10,7 +10,7 @@ namespace DockerDiagram.Tests
         [InlineData("node.role==worker")]
         [InlineData("node.hostname!=worker-3")]
         [InlineData("engine.labels.storage==ssd")]
-        public void Validate_AcceptsDockerConstraintSyntax(string constraint)
+        public void ValidateAcceptsDockerConstraintSyntax(string constraint)
         {
             Options(constraint).Validate();
         }
@@ -19,19 +19,19 @@ namespace DockerDiagram.Tests
         [InlineData("node.labels.zone=seoul")]
         [InlineData("node.labels.zone")]
         [InlineData("==worker")]
-        public void Validate_RejectsInvalidConstraintSyntax(string constraint)
+        public void ValidateRejectsInvalidConstraintSyntax(string constraint)
         {
             Assert.Throws<ArgumentException>(() => Options(constraint).Validate());
         }
 
         [Fact]
-        public void Validate_AllowsEmptyListToClearConstraints()
+        public void ValidateAllowsEmptyListToClearConstraints()
         {
             Options().Validate();
         }
 
         [Fact]
-        public void Validate_RejectsDuplicateConstraints()
+        public void ValidateRejectsDuplicateConstraints()
         {
             var options = new SwarmServicePlacementUpdateOptions
             {

@@ -1,3 +1,4 @@
+using DockerDiagram.ApplicationServices;
 using DockerDiagram.Infrastructure;
 using DockerDiagram.Models;
 using Newtonsoft.Json.Linq;
@@ -7,13 +8,14 @@ namespace DockerDiagram.Tests;
 public sealed class LiveDockerRuntimeTests
 {
     [LiveDockerFact]
-    public async Task DockerEngine_VolumeAndNetworkLifecycle_RoundTrips()
+    public async Task DockerEngineVolumeAndNetworkLifecycleRoundTrips()
     {
         string suffix = Guid.NewGuid().ToString("N")[..12];
         string volumeName = $"dockerdiagram-live-volume-{suffix}";
         string networkName = $"dockerdiagram-live-network-{suffix}";
         bool volumeCreated = false;
         string? networkId = null;
+        var cleanupErrors = new List<Exception>();
         using var service = CreateService(RuntimeKind.DockerEngine);
 
         try
@@ -35,10 +37,15 @@ public sealed class LiveDockerRuntimeTests
 
             Assert.Contains(await service.GetVolumesAsync(), volume => volume.Name == volumeName);
             Assert.Contains(await service.GetNetworksAsync(), network => network.Name == networkName);
+
+            await service.RemoveVolumeAsync(volumeName, force: true);
+            volumeCreated = false;
+            Assert.DoesNotContain(
+                await service.GetVolumesAsync(),
+                volume => string.Equals(volume.Name, volumeName, StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
-            var cleanupErrors = new List<Exception>();
             if (!string.IsNullOrWhiteSpace(networkId))
             {
                 try { await service.RemoveNetworkAsync(networkId); }
@@ -49,13 +56,14 @@ public sealed class LiveDockerRuntimeTests
                 try { await service.RemoveVolumeAsync(volumeName, force: true); }
                 catch (Exception ex) { cleanupErrors.Add(ex); }
             }
-            if (cleanupErrors.Count > 0)
-                throw new AggregateException("Live Docker cleanup failed.", cleanupErrors);
         }
+
+        if (cleanupErrors.Count > 0)
+            throw new AggregateException("Live Docker cleanup failed.", cleanupErrors);
     }
 
     [LiveDockerFact]
-    public async Task DockerSwarm_SecretConfigOverlayAndZeroReplicaServiceLifecycle_RoundTrips()
+    public async Task DockerSwarmSecretConfigOverlayAndZeroReplicaServiceLifecycleRoundTrips()
     {
         string suffix = Guid.NewGuid().ToString("N")[..12];
         string secretName = $"dockerdiagram-live-secret-{suffix}";
@@ -66,6 +74,7 @@ public sealed class LiveDockerRuntimeTests
         string? configId = null;
         string? networkId = null;
         string? serviceId = null;
+        var cleanupErrors = new List<Exception>();
         using var service = CreateService(RuntimeKind.DockerSwarm);
 
         SwarmClusterState state = await service.GetSwarmStateAsync();
@@ -179,7 +188,6 @@ public sealed class LiveDockerRuntimeTests
         }
         finally
         {
-            var cleanupErrors = new List<Exception>();
             if (!string.IsNullOrWhiteSpace(serviceId))
             {
                 try { await service.RemoveSwarmServiceAsync(serviceId); }
@@ -200,9 +208,137 @@ public sealed class LiveDockerRuntimeTests
                 try { await service.RemoveSwarmDataResourceAsync(SwarmDataResourceKind.Config, configId); }
                 catch (Exception ex) { cleanupErrors.Add(ex); }
             }
-            if (cleanupErrors.Count > 0)
-                throw new AggregateException("Live Swarm cleanup failed.", cleanupErrors);
         }
+
+        if (cleanupErrors.Count > 0)
+            throw new AggregateException("Live Swarm cleanup failed.", cleanupErrors);
+    }
+
+    [LiveDockerFact]
+    public async Task DockerSwarmIngressRepairAndPublishedServiceLifecycleRoundTrips()
+    {
+        string suffix = Guid.NewGuid().ToString("N")[..12];
+        string serviceName = $"dockerdiagram-live-ingress-{suffix}";
+        string? serviceId = null;
+        using var service = CreateService(RuntimeKind.DockerSwarm);
+
+        SwarmClusterState state = await service.GetSwarmStateAsync();
+        Assert.True(state.IsManager, "Live Swarm ingress test requires a manager connection.");
+
+        List<DockerNetworkGroup> networks = await service.GetNetworksAsync();
+        if (!SwarmIngressNetworkSupport.HasIngressNetwork(networks))
+        {
+            await service.CreateNetworkAsync(new NetworkCreateOptions
+            {
+                Name = "ingress",
+                Driver = "overlay",
+                Ingress = true
+            });
+            networks = await service.GetNetworksAsync();
+        }
+
+        Assert.True(
+            SwarmIngressNetworkSupport.HasIngressNetwork(networks),
+            "Docker-managed ingress network was not available after repair.");
+
+        var readiness = new SwarmReadinessAuditService(new DockerCliProbe());
+        SwarmReadinessReport report = await readiness.AuditAsync(service);
+        Assert.Contains(report.Checks, check =>
+            check.Name == "Routing mesh ingress" &&
+            check.Severity == SwarmReadinessSeverity.Pass);
+
+        try
+        {
+            SwarmServiceMutationResult created = await service.CreateSwarmServiceAsync(
+                new SwarmServiceCreateOptions
+                {
+                    Spec = new SwarmServiceSpecOptions
+                    {
+                        Name = serviceName,
+                        Image = "nginx:alpine",
+                        Replicas = 1,
+                        PublishedPorts = new[]
+                        {
+                            new SwarmPublishedPortOptions(
+                                80,
+                                null,
+                                SwarmPortProtocol.Tcp,
+                                SwarmPublishMode.Ingress)
+                        },
+                        Labels = new Dictionary<string, string> { ["dockerdiagram.live-test"] = suffix }
+                    }
+                });
+            serviceId = created.ServiceId;
+
+            await WaitForRunningTaskAsync(service, serviceId, TimeSpan.FromSeconds(30));
+
+            JObject rawService = JObject.FromObject(
+                await service.InspectSwarmServiceRawAsync(serviceId));
+            JObject requestedPort = Assert.IsType<JObject>(
+                Assert.Single(rawService["Spec"]!["EndpointSpec"]!["Ports"]!));
+            Assert.Equal(80U, requestedPort.Value<uint>("TargetPort"));
+            Assert.Equal("ingress", requestedPort.Value<string>("PublishMode"));
+            Assert.Null(requestedPort["PublishedPort"]);
+
+            JObject runtimePort = Assert.IsType<JObject>(
+                Assert.Single(rawService["Endpoint"]!["Ports"]!));
+            uint publishedPort = runtimePort.Value<uint>("PublishedPort");
+            Assert.True(publishedPort > 0);
+            await WaitForHttpAsync(publishedPort, TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(serviceId))
+                await service.RemoveSwarmServiceAsync(serviceId);
+        }
+    }
+
+    private static async Task WaitForRunningTaskAsync(
+        DockerApiService service,
+        string serviceId,
+        TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            SwarmServiceTaskSnapshot snapshot = await service.GetSwarmServiceTaskSnapshotAsync(serviceId);
+            if (snapshot.Tasks.Any(task =>
+                    task.DesiredState.Equals("running", StringComparison.OrdinalIgnoreCase) &&
+                    task.CurrentState.Equals("running", StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            await Task.Delay(250);
+        }
+
+        throw new TimeoutException("Swarm ingress test service did not reach the running state.");
+    }
+
+    private static async Task WaitForHttpAsync(uint publishedPort, TimeSpan timeout)
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        DateTime deadline = DateTime.UtcNow + timeout;
+        Exception? lastError = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                using HttpResponseMessage response = await client.GetAsync($"http://127.0.0.1:{publishedPort}/");
+                if (response.IsSuccessStatusCode)
+                    return;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+
+            await Task.Delay(250);
+        }
+
+        throw new TimeoutException(
+            $"Swarm ingress HTTP endpoint on port {publishedPort} did not become reachable.",
+            lastError);
     }
 
     private static DockerApiService CreateService(RuntimeKind runtimeKind) =>

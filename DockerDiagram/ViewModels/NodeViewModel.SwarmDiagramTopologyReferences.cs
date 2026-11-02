@@ -22,11 +22,11 @@ namespace DockerDiagram.ViewModels
                 .Where(connector => ReferenceEquals(connector.Source, this) || ReferenceEquals(connector.Target, this))
                 .ToArray();
 
-            IReadOnlyList<(ConnectorViewModel Connector, NodeViewModel Resource)> secretReferences = ResolveReferencedResources(
+            List<(ConnectorViewModel Connector, NodeViewModel Resource)> secretReferences = ResolveReferencedResources(
                 related,
                 RelationType.SwarmSecretReference,
                 RuntimeResourceKind.SwarmSecret);
-            IReadOnlyList<(ConnectorViewModel Connector, NodeViewModel Resource)> configReferences = ResolveReferencedResources(
+            List<(ConnectorViewModel Connector, NodeViewModel Resource)> configReferences = ResolveReferencedResources(
                 related,
                 RelationType.SwarmConfigReference,
                 RuntimeResourceKind.SwarmConfig);
@@ -75,9 +75,12 @@ namespace DockerDiagram.ViewModels
 
             string previousStatus = DetailStatus;
             string previousColor = StatusColor;
+            RuntimeLifecycleState previousLifecycleState = LifecycleState;
             BindingState = RuntimeBindingState.Applying;
-            IsCreating = true;
-            SetCreationProgress("Applying diagram topology and Swarm data references...");
+            SetLifecycleState(RuntimeLifecycleState.Creating);
+            SetCreationProgress(
+                NodeOperationPhase.Updating,
+                "Applying diagram topology and Swarm data references...");
             RaiseSwarmCommandStates();
 
             try
@@ -86,6 +89,12 @@ namespace DockerDiagram.ViewModels
                 SwarmServiceEditSnapshot snapshot = await LoadSwarmServiceEditSnapshotAsync();
                 SwarmDiagramTopologyInput topology = BuildTopologyInput(related, overlayGroups);
                 SwarmServiceSpecOptions compiled = SwarmDiagramTopologyCompiler.Apply(snapshot.Spec, topology);
+                if (SwarmIngressNetworkSupport.RequiresIngress(compiled) &&
+                    !await EnsureSwarmIngressNetworkAsync())
+                {
+                    RestoreAfterEditFailure(previousStatus, previousColor, previousLifecycleState);
+                    return false;
+                }
 
                 SwarmServiceMutationResult result = await resourceService.UpdateSwarmServiceTopologyAsync(
                     new SwarmServiceTopologyUpdateOptions
@@ -106,8 +115,8 @@ namespace DockerDiagram.ViewModels
                 ApplyEditedSummary(compiled);
                 BindAppliedDraftResources(related);
                 BindingState = RuntimeBindingState.Bound;
-                IsCreating = false;
-                SetCreationProgress("Diagram topology applied", 100);
+                EndCreating();
+                SetCreationProgress(NodeOperationPhase.Completed, "Diagram topology applied", 100);
                 await RefreshSwarmServiceAsync();
                 BindingState = RuntimeBindingState.Bound;
                 IsSwarmDiagramDirty = false;
@@ -124,7 +133,7 @@ namespace DockerDiagram.ViewModels
             }
             catch (SwarmServiceVersionConflictException ex)
             {
-                RestoreAfterEditFailure(previousStatus, previousColor);
+                RestoreAfterEditFailure(previousStatus, previousColor, previousLifecycleState);
                 await RefreshSwarmServiceAsync();
                 _dialogService.ShowError(
                     $"다른 작업에서 service가 먼저 변경되었습니다. 최신 상태를 불러왔으므로 다시 적용해 주세요.\n\n{ex.Message}",
@@ -133,7 +142,7 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                RestoreAfterEditFailure(previousStatus, previousColor);
+                RestoreAfterEditFailure(previousStatus, previousColor, previousLifecycleState);
                 _dialogService.ShowError(
                     $"Swarm 다이어그램 적용 실패:\n{ex.GetBaseException().Message}",
                     "Apply Swarm Diagram");

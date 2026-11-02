@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmResourceFilterTests
 {
     [Fact]
-    public void IsOverlayNetwork_AcceptsUserOverlay()
+    public void IsOverlayNetworkAcceptsUserOverlay()
     {
         var network = new DockerNetworkGroup
         {
@@ -19,7 +19,7 @@ public sealed class SwarmResourceFilterTests
     }
 
     [Fact]
-    public void IsOverlayNetwork_RejectsRoutingMeshIngress()
+    public void IsOverlayNetworkRejectsRoutingMeshIngress()
     {
         var network = new DockerNetworkGroup
         {
@@ -32,7 +32,21 @@ public sealed class SwarmResourceFilterTests
     }
 
     [Fact]
-    public void IsOverlayNetwork_RejectsLocalBridge()
+    public void IsOverlayNetworkRejectsIngressFlagEvenWhenNameIsUnexpected()
+    {
+        var network = new DockerNetworkGroup
+        {
+            Name = "routing-mesh",
+            Driver = "overlay",
+            Scope = "swarm",
+            Ingress = true
+        };
+
+        Assert.False(SwarmResourceFilter.IsOverlayNetwork(network));
+    }
+
+    [Fact]
+    public void IsOverlayNetworkRejectsLocalBridge()
     {
         var network = new DockerNetworkGroup
         {

@@ -1,3 +1,4 @@
+using DockerDiagram.Common;
 using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
@@ -6,7 +7,7 @@ namespace DockerDiagram.ApplicationServices
 {
     public sealed class SwarmStackSheetSynchronizer
     {
-        public async Task<SwarmStackRuntimeSnapshot> SynchronizeAsync(
+        public static async Task<SwarmStackRuntimeSnapshot> SynchronizeAsync(
             SheetViewModel sheet,
             SwarmStackSheetState state,
             CancellationToken cancellationToken = default)
@@ -33,7 +34,7 @@ namespace DockerDiagram.ApplicationServices
             return snapshot;
         }
 
-        public async Task<SwarmStackRuntimeSnapshot> WaitForDeploymentAsync(
+        public static async Task<SwarmStackRuntimeSnapshot> WaitForDeploymentAsync(
             SheetViewModel sheet,
             SwarmStackSheetState state,
             CancellationToken cancellationToken = default)
@@ -44,7 +45,7 @@ namespace DockerDiagram.ApplicationServices
                 cancellationToken.ThrowIfCancellationRequested();
                 snapshot = await SynchronizeAsync(sheet, state, cancellationToken);
                 if (snapshot.Services.Count > 0) return snapshot;
-                if (attempt < 8) await Task.Delay(TimeSpan.FromMilliseconds(750), cancellationToken);
+                if (attempt < 8) await Task.Delay(SwarmOperationTiming.StackSyncRetryDelay, cancellationToken);
             }
             return snapshot;
         }
@@ -54,9 +55,10 @@ namespace DockerDiagram.ApplicationServices
             foreach (NodeViewModel node in StackNodes(sheet, state.StackName))
             {
                 node.BindingState = RuntimeBindingState.Missing;
-                node.IsDockerConnected = false;
-                node.IsRunning = false;
-                node.StatusColor = "#808080";
+                node.ApplyRuntimeState(
+                    RuntimeConnectionState.Disconnected,
+                    RuntimeLifecycleState.Unknown);
+                node.StatusColor = StatusColors.Unknown;
                 node.DetailStatus = "Stack removed";
             }
             state.DeployState = SwarmStackDeployState.Missing;
@@ -103,9 +105,10 @@ namespace DockerDiagram.ApplicationServices
             foreach (NodeViewModel stale in existing.Where(node => !matched.Contains(node)))
             {
                 stale.BindingState = RuntimeBindingState.Missing;
-                stale.IsDockerConnected = false;
-                stale.IsRunning = false;
-                stale.StatusColor = "#808080";
+                stale.ApplyRuntimeState(
+                    RuntimeConnectionState.Disconnected,
+                    RuntimeLifecycleState.Unknown);
+                stale.StatusColor = StatusColors.Unknown;
                 stale.DetailStatus = "Service missing from stack namespace";
             }
         }
@@ -126,8 +129,12 @@ namespace DockerDiagram.ApplicationServices
             node.RuntimeKind = RuntimeKind.DockerSwarm;
             node.ResourceKind = RuntimeResourceKind.SwarmService;
             node.BindingState = RuntimeBindingState.Bound;
-            node.IsDockerConnected = true;
-            node.IsRunning = service.State.Equals("running", StringComparison.OrdinalIgnoreCase);
+            node.ApplyRuntimeState(
+                RuntimeConnectionState.Connected,
+                service.State.Equals("running", StringComparison.OrdinalIgnoreCase)
+                    ? RuntimeLifecycleState.Running
+                    : RuntimeLifecycleState.Stopped,
+                service.Ports);
             node.StatusColor = service.StateColor;
             node.DetailStatus = service.Ports;
             node.PortInfo = service.Ports;

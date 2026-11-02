@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmReadinessUnknownStateTests
 {
     [Fact]
-    public void UnknownNodeFacts_DoNotReportPass()
+    public void UnknownNodeFactsDoNotReportPass()
     {
         IReadOnlyList<SwarmReadinessCheck> checks = SwarmReadinessPolicy.Evaluate(
             engineReachable: true,

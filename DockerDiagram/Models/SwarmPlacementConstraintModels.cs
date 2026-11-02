@@ -10,11 +10,9 @@ namespace DockerDiagram.Models
         public IReadOnlyList<string> Constraints { get; init; } = Array.Empty<string>();
     }
 
-    public sealed class SwarmServicePlacementUpdateOptions
+    public sealed partial class SwarmServicePlacementUpdateOptions
     {
-        private static readonly Regex ConstraintPattern = new(
-            @"^[A-Za-z0-9_.-]+\s*(==|!=)\s*[^\s].*$",
-            RegexOptions.CultureInvariant);
+        private static readonly Regex ConstraintPattern = MyRegex();
 
         public string ServiceId { get; init; } = string.Empty;
         public ulong Version { get; init; }
@@ -35,5 +33,8 @@ namespace DockerDiagram.Models
             if (Constraints.Select(value => value.Trim()).Distinct(StringComparer.Ordinal).Count() != Constraints.Count)
                 throw new ArgumentException("중복된 placement constraint가 있습니다.", nameof(Constraints));
         }
+
+        [GeneratedRegex(@"^[A-Za-z0-9_.-]+\s*(==|!=)\s*[^\s].*$", RegexOptions.CultureInvariant)]
+        private static partial Regex MyRegex();
     }
 }

@@ -1,4 +1,5 @@
 using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
 using DockerDiagram.Contracts;
 using DockerDiagram.Diagram;
 using DockerDiagram.Models;
@@ -26,7 +27,7 @@ namespace DockerDiagram.ViewModels
                 return false;
             }
 
-            IReadOnlyList<GroupViewModel> overlayGroups = ParentSheet.Groups
+            GroupViewModel[] overlayGroups = ParentSheet.Groups
                 .Where(group => group.ResourceKind == RuntimeResourceKind.SwarmOverlayNetwork && group.ContainedNodes.Contains(this))
                 .ToArray();
 
@@ -34,7 +35,7 @@ namespace DockerDiagram.ViewModels
                 return false;
 
             if (!related.Any(connector => connector.RelationType is RelationType.SwarmPublishedPort or RelationType.VolumeMount) &&
-                overlayGroups.Count == 0 &&
+                overlayGroups.Length == 0 &&
                 !SwarmDiagramManagesPublishedPorts &&
                 !SwarmDiagramManagesMounts &&
                 !SwarmDiagramManagesNetworks)
@@ -148,7 +149,7 @@ namespace DockerDiagram.ViewModels
                 SwarmMountKind.Volume,
                 volume.EffectiveVolumeName,
                 target,
-                false,
+                connector.MountReadOnly,
                 string.IsNullOrWhiteSpace(volume.Driver) ? "local" : volume.Driver,
                 new Dictionary<string, string>(volume.VolumeDriverOptions),
                 new Dictionary<string, string>(volume.VolumeLabels));
@@ -215,8 +216,8 @@ namespace DockerDiagram.ViewModels
             {
                 resource.BindingState = RuntimeBindingState.Bound;
                 bool isVolumeDeclaration = resource.ResourceKind == RuntimeResourceKind.SwarmVolume;
-                resource.IsDockerConnected = !isVolumeDeclaration;
-                resource.StatusColor = isVolumeDeclaration ? "#5B6B7A" : "#28A745";
+                resource.SetDockerConnection(!isVolumeDeclaration);
+                resource.StatusColor = isVolumeDeclaration ? "#5B6B7A" : StatusColors.Running;
                 resource.DetailStatus = isVolumeDeclaration
                     ? $"Declared by service {Name} · created on task nodes"
                     : $"Published by service {Name}";

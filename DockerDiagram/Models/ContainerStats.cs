@@ -9,5 +9,9 @@
         public double CpuPercentage { get; set; } // 현재 CPU 사용률 (%)
         public double MemoryUsedMB { get; set; }  // 현재 사용 중인 메모리 양 (MB 단위)
         public double MemoryLimitMB { get; set; } // 컨테이너에 할당된 최대 메모리 한도 (MB 단위)
+        public ulong NetworkRxBytes { get; set; }
+        public ulong NetworkTxBytes { get; set; }
+        public ulong BlockReadBytes { get; set; }
+        public ulong BlockWriteBytes { get; set; }
     }
 }

@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerPullProgressTrackerTests
 {
     [Fact]
-    public void Update_WithoutLayerProgress_ReportsStatusWithoutInventingPercent()
+    public void UpdateWithoutLayerProgressReportsStatusWithoutInventingPercent()
     {
         var tracker = new DockerPullProgressTracker();
 
@@ -20,7 +20,7 @@ public sealed class DockerPullProgressTrackerTests
     }
 
     [Fact]
-    public void Update_AggregatesProgressAcrossLayersAndClampsCompletedBytes()
+    public void UpdateAggregatesProgressAcrossLayersAndClampsCompletedBytes()
     {
         var tracker = new DockerPullProgressTracker();
         tracker.Update(Message("layer-one", 50, 100));
@@ -32,7 +32,7 @@ public sealed class DockerPullProgressTrackerTests
     }
 
     [Fact]
-    public void Update_PrioritizesDockerErrorMessage()
+    public void UpdatePrioritizesDockerErrorMessage()
     {
         var tracker = new DockerPullProgressTracker();
 

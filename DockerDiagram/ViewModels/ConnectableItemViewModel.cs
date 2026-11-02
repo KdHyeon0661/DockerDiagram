@@ -1,6 +1,6 @@
+using System;
 using DockerDiagram.Common;
 using DockerDiagram.Models;
-using System;
 
 namespace DockerDiagram.ViewModels
 {
@@ -37,6 +37,7 @@ namespace DockerDiagram.ViewModels
         private double _width;
         private double _height;
         private bool _isSelected;
+        private bool _isPrimarySelection;
         private SheetViewModel? _parentSheet;
         private RuntimeKind _runtimeKind = RuntimeKind.DockerEngine;
         private RuntimeResourceKind _resourceKind = RuntimeResourceKind.Unspecified;
@@ -112,6 +113,38 @@ namespace DockerDiagram.ViewModels
         public double CenterX => X + Width / 2;
         public double CenterY => Y + Height / 2;
 
+        /// <summary>
+        /// X와 Y를 하나의 위치 변경으로 적용합니다. 드래그처럼 두 좌표가 함께 바뀌는
+        /// 작업에서 위치 변경 구독자가 중간 좌표를 기준으로 두 번 처리하지 않게 합니다.
+        /// </summary>
+        public bool SetPosition(double x, double y)
+        {
+            double normalizedX = NormalizeX(x);
+            double normalizedY = NormalizeY(y);
+            bool xChanged = SetProperty(ref _x, normalizedX, nameof(X));
+            bool yChanged = SetProperty(ref _y, normalizedY, nameof(Y));
+
+            if (!xChanged && !yChanged)
+                return false;
+
+            if (xChanged)
+                OnPropertyChanged(nameof(CenterX));
+
+            if (yChanged)
+                OnPropertyChanged(nameof(CenterY));
+
+            RaisePositionChanged();
+            RaiseModified();
+
+            if (xChanged)
+                OnBoundsChanged(nameof(X));
+
+            if (yChanged)
+                OnBoundsChanged(nameof(Y));
+
+            return true;
+        }
+
         public bool IsSelected
         {
             get => _isSelected;
@@ -119,6 +152,20 @@ namespace DockerDiagram.ViewModels
             {
                 if (SetProperty(ref _isSelected, value))
                     OnSelectionChanged(value);
+            }
+        }
+
+        /// <summary>
+        /// 단일 상세 사이드바가 이 항목을 표시하는지 나타냅니다.
+        /// 다중 선택 중에는 IsSelected만 true이고 이 값은 모든 항목에서 false입니다.
+        /// </summary>
+        public bool IsPrimarySelection
+        {
+            get => _isPrimarySelection;
+            set
+            {
+                if (SetProperty(ref _isPrimarySelection, value))
+                    OnPrimarySelectionChanged(value);
             }
         }
 
@@ -146,6 +193,10 @@ namespace DockerDiagram.ViewModels
         protected virtual double NormalizeWidth(double value) => value;
         protected virtual double NormalizeHeight(double value) => value;
         protected virtual void OnSelectionChanged(bool isSelected)
+        {
+        }
+
+        protected virtual void OnPrimarySelectionChanged(bool isPrimarySelection)
         {
         }
 

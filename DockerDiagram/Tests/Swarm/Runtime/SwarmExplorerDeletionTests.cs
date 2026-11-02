@@ -8,10 +8,14 @@ namespace DockerDiagram.Tests;
 
 public sealed class SwarmExplorerDeletionTests
 {
+
+    private static readonly string[] SidebarDeleteCommandsRemoveEveryManagedSwarmResourceTypeExpectedValues1 = new[] { "service-1" };
+    private static readonly string[] SidebarDeleteCommandsRemoveEveryManagedSwarmResourceTypeExpectedValues2 = new[] { "network-1" };
+
     [Fact]
-    public async Task SidebarDeleteCommands_RemoveEveryManagedSwarmResourceType()
+    public async Task SidebarDeleteCommandsRemoveEveryManagedSwarmResourceType()
     {
-        IDockerService dockerService = DispatchProxy.Create<ISwarmDeletionTestService, SwarmDeletionDockerServiceProxy>();
+        using IDockerService dockerService = DispatchProxy.Create<ISwarmDeletionTestService, SwarmDeletionDockerServiceProxy>();
         var tracker = (SwarmDeletionDockerServiceProxy)(object)dockerService;
         IDialogService dialogService = DispatchProxy.Create<IDialogService, LenientDialogServiceProxy>();
         using var factory = new DockerServiceFactory(_ =>
@@ -48,7 +52,7 @@ public sealed class SwarmExplorerDeletionTests
             Scope = "swarm"
         });
 
-        Assert.Equal(new[] { "service-1" }, tracker.RemovedServices);
+        Assert.Equal(SidebarDeleteCommandsRemoveEveryManagedSwarmResourceTypeExpectedValues1, tracker.RemovedServices);
         Assert.Equal(
             new[]
             {
@@ -56,7 +60,7 @@ public sealed class SwarmExplorerDeletionTests
                 (SwarmDataResourceKind.Config, "config-1")
             },
             tracker.RemovedDataResources);
-        Assert.Equal(new[] { "network-1" }, tracker.RemovedNetworks);
+        Assert.Equal(SidebarDeleteCommandsRemoveEveryManagedSwarmResourceTypeExpectedValues2, tracker.RemovedNetworks);
     }
 }
 

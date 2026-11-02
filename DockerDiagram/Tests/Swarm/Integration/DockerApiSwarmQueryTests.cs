@@ -7,7 +7,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerApiSwarmQueryTests
 {
     [Fact]
-    public async Task ScaleService_SendsVersionAsQueryAndReplicasInSpec()
+    public async Task ScaleServiceSendsVersionAsQueryAndReplicasInSpec()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""
@@ -33,7 +33,7 @@ public sealed class DockerApiSwarmQueryTests
     }
 
     [Fact]
-    public async Task ServiceTasks_SendFilterAsQueryAndResolveNodeName()
+    public async Task ServiceTasksSendFilterAsQueryAndResolveNodeName()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""

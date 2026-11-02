@@ -7,7 +7,8 @@
     {
         Container,  // 실행 중인 도커 컨테이너
         Volume,     // 데이터를 저장하는 도커 볼륨 (보통 원통형 아이콘으로 표현)
-        Internet    // 외부 네트워크와의 연결을 나타내는 가상 노드
+        Internet,   // 외부 네트워크와의 연결을 나타내는 가상 노드
+        HostPath    // Bind mount가 참조하는 Docker 호스트의 파일/폴더 경로
     }
 
     /// <summary>
@@ -74,7 +75,8 @@
         SwarmOverlayNetwork,
         SwarmSecret,
         SwarmConfig,
-        SwarmVisualGroup
+        SwarmVisualGroup,
+        HostPathReference
     }
 
     public enum RuntimeBindingState

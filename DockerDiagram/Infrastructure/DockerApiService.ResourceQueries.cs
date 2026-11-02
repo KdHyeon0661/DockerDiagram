@@ -1,17 +1,5 @@
-using DockerDiagram.Contracts;
-using Docker.DotNet;
 using Docker.DotNet.Models;
 using DockerDiagram.Models;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using System.Diagnostics;
-using System.Formats.Tar;
-using System.IO;
-using System.Net.Http;
-using System.Reflection;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading;
 
 namespace DockerDiagram.Infrastructure
 {
@@ -37,8 +25,8 @@ namespace DockerDiagram.Infrastructure
                     foreach (var repoTag in img.RepoTags)
                     {
                         int lastColonIndex = repoTag.LastIndexOf(':');
-                        string repository = lastColonIndex > 0 ? repoTag.Substring(0, lastColonIndex) : repoTag;
-                        string tag = lastColonIndex > 0 ? repoTag.Substring(lastColonIndex + 1) : "<none>";
+                        string repository = lastColonIndex > 0 ? repoTag[..lastColonIndex] : repoTag;
+                        string tag = lastColonIndex > 0 ? repoTag[(lastColonIndex + 1)..] : "<none>";
 
                         result.Add(new DockerImage
                         {
@@ -81,6 +69,7 @@ namespace DockerDiagram.Infrastructure
                 {
                     Name = v.Name,
                     Id = v.Name,
+                    Driver = string.IsNullOrWhiteSpace(v.Driver) ? "local" : v.Driver,
                     Labels = labels,
                     ComposeProjectName = FirstNonEmpty(
                         GetLabel(labels, "com.docker.compose.project"),
@@ -115,6 +104,7 @@ namespace DockerDiagram.Infrastructure
                     Id = n.ID,
                     Driver = n.Driver,
                     Scope = n.Scope,
+                    Ingress = n.Ingress == true,
                     Labels = labels,
                     ComposeProjectName = FirstNonEmpty(
                         GetLabel(labels, "com.docker.compose.project"),
@@ -137,7 +127,7 @@ namespace DockerDiagram.Infrastructure
                 : new Dictionary<string, string>(labels, StringComparer.OrdinalIgnoreCase);
         }
 
-        private static string GetLabel(IReadOnlyDictionary<string, string> labels, string key)
+        private static string GetLabel(Dictionary<string, string> labels, string key)
         {
             return labels.TryGetValue(key, out string? value) ? value ?? string.Empty : string.Empty;
         }

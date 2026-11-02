@@ -36,6 +36,21 @@ namespace DockerDiagram.Diagram
 
         public static ConnectorRoutePlan Calculate(IConnectableItem source, IConnectableItem target)
         {
+            var preferredPair = GetPreferredFacingPortPair(source, target);
+            if (preferredPair.HasValue &&
+                TryCalculateRoute(
+                    source,
+                    target,
+                    preferredPair.Value.SourceDirection,
+                    preferredPair.Value.TargetDirection,
+                    out PointCollection preferredRoute))
+            {
+                return new ConnectorRoutePlan(
+                    preferredPair.Value.SourceDirection,
+                    preferredPair.Value.TargetDirection,
+                    preferredRoute);
+            }
+
             var candidates = GetClosestPortPairs(source, target, 4);
             PointCollection? bestRoute = null;
             double bestLength = double.MaxValue;
@@ -44,48 +59,101 @@ namespace DockerDiagram.Diagram
 
             foreach (var candidate in candidates)
             {
-                Point start = GetBorderPoint(source, candidate.SourceDirection);
-                Point end = GetBorderPoint(target, candidate.TargetDirection);
-                Rect sourceBounds = source.UsePointRouting
-                    ? new Rect(start.X, start.Y, 0, 0)
-                    : new Rect(source.X, source.Y, source.Width, source.Height);
-                Rect targetBounds = target.UsePointRouting
-                    ? new Rect(end.X, end.Y, 0, 0)
-                    : new Rect(target.X, target.Y, target.Width, target.Height);
-
-                try
-                {
-                    PointCollection route = OrthogonalRouter.GetRoute(
-                        start,
+                if (!TryCalculateRoute(
+                        source,
+                        target,
                         candidate.SourceDirection,
-                        end,
                         candidate.TargetDirection,
-                        sourceBounds,
-                        targetBounds);
-                    if (route.Count < 2) continue;
-
-                    double length = GetPathLength(route);
-                    if (length >= bestLength) continue;
-
-                    bestLength = length;
-                    bestRoute = route;
-                    bestSourceDirection = candidate.SourceDirection;
-                    bestTargetDirection = candidate.TargetDirection;
-                }
-                catch
+                        out PointCollection route))
                 {
-                    // Try the next candidate. A straight fallback is used if all candidates fail.
+                    continue;
                 }
+
+                double length = GetPathLength(route);
+                if (length >= bestLength) continue;
+
+                bestLength = length;
+                bestRoute = route;
+                bestSourceDirection = candidate.SourceDirection;
+                bestTargetDirection = candidate.TargetDirection;
             }
 
             if (bestRoute == null)
             {
                 Point start = GetBorderPoint(source, bestSourceDirection);
                 Point end = GetBorderPoint(target, bestTargetDirection);
-                bestRoute = new PointCollection { start, end };
+                bestRoute = [start, end];
             }
 
             return new ConnectorRoutePlan(bestSourceDirection, bestTargetDirection, bestRoute);
+        }
+
+        private static bool TryCalculateRoute(
+            IConnectableItem source,
+            IConnectableItem target,
+            PortDirection sourceDirection,
+            PortDirection targetDirection,
+            out PointCollection route)
+        {
+            Point start = GetBorderPoint(source, sourceDirection);
+            Point end = GetBorderPoint(target, targetDirection);
+            Rect sourceBounds = source.UsePointRouting
+                ? new Rect(start.X, start.Y, 0, 0)
+                : new Rect(source.X, source.Y, source.Width, source.Height);
+            Rect targetBounds = target.UsePointRouting
+                ? new Rect(end.X, end.Y, 0, 0)
+                : new Rect(target.X, target.Y, target.Width, target.Height);
+
+            try
+            {
+                route = OrthogonalRouter.GetRoute(
+                    start,
+                    sourceDirection,
+                    end,
+                    targetDirection,
+                    sourceBounds,
+                    targetBounds);
+                return route.Count >= 2;
+            }
+            catch
+            {
+                route = [];
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 일반 노드가 한 축으로 명확히 떨어져 있고 반대 축의 영역이 겹치면
+        /// 서로 마주 보는 포트를 우선합니다. 대각선 배치와 그룹 포인트 라우팅은
+        /// 기존 최단 경로 탐색에 맡깁니다.
+        /// </summary>
+        private static (PortDirection SourceDirection, PortDirection TargetDirection)?
+            GetPreferredFacingPortPair(IConnectableItem source, IConnectableItem target)
+        {
+            if (source.UsePointRouting || target.UsePointRouting)
+                return null;
+
+            double horizontalOverlap = Math.Min(source.X + source.Width, target.X + target.Width) -
+                                       Math.Max(source.X, target.X);
+            if (horizontalOverlap > 0)
+            {
+                if (source.Y + source.Height <= target.Y)
+                    return (PortDirection.Bottom, PortDirection.Top);
+                if (target.Y + target.Height <= source.Y)
+                    return (PortDirection.Top, PortDirection.Bottom);
+            }
+
+            double verticalOverlap = Math.Min(source.Y + source.Height, target.Y + target.Height) -
+                                     Math.Max(source.Y, target.Y);
+            if (verticalOverlap > 0)
+            {
+                if (source.X + source.Width <= target.X)
+                    return (PortDirection.Right, PortDirection.Left);
+                if (target.X + target.Width <= source.X)
+                    return (PortDirection.Left, PortDirection.Right);
+            }
+
+            return null;
         }
 
         public static Point GetBorderPoint(IConnectableItem item, PortDirection direction)

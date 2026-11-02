@@ -1,9 +1,9 @@
+using System.Net;
+using System.Net.Http;
 using Docker.DotNet;
 using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 using Newtonsoft.Json.Linq;
-using System.Net;
-using System.Net.Http;
 
 namespace DockerDiagram.Infrastructure
 {
@@ -35,7 +35,10 @@ namespace DockerDiagram.Infrastructure
 
             SwarmServiceCreateApiResponse response = SwarmServiceMutationResponseParser.ParseCreate(responseBody);
             var warnings = response.Warnings.ToList();
-            ulong version = await TryReadServiceVersionAfterMutationAsync(response.ServiceId, warnings);
+            ulong version = await TryReadServiceVersionAfterMutationAsync(
+                response.ServiceId,
+                warnings,
+                cancellationToken);
             return SwarmServiceMutationResult.Create(response.ServiceId, version, warnings);
         }
 
@@ -86,7 +89,10 @@ namespace DockerDiagram.Infrastructure
             }
 
             var warnings = SwarmServiceMutationResponseParser.ParseUpdateWarnings(responseBody).ToList();
-            ulong updatedVersion = await TryReadServiceVersionAfterMutationAsync(serviceId, warnings);
+            ulong updatedVersion = await TryReadServiceVersionAfterMutationAsync(
+                serviceId,
+                warnings,
+                cancellationToken);
             return SwarmServiceMutationResult.Create(serviceId, updatedVersion, warnings);
         }
 
@@ -103,14 +109,15 @@ namespace DockerDiagram.Infrastructure
 
         private async Task<ulong> TryReadServiceVersionAfterMutationAsync(
             string serviceId,
-            ICollection<string> warnings)
+            List<string> warnings,
+            CancellationToken cancellationToken)
         {
             try
             {
                 JObject current = await MakeRawDockerRequestAsync<JObject>(
                     HttpMethod.Get,
                     $"services/{Uri.EscapeDataString(serviceId)}",
-                    cancellationToken: CancellationToken.None);
+                    cancellationToken: cancellationToken);
                 return ReadServiceVersion(current, serviceId);
             }
             catch (Exception ex)
@@ -132,8 +139,7 @@ namespace DockerDiagram.Infrastructure
         {
             int statusCode = (int)exception.StatusCode;
             string engineMessage = ReadDockerErrorMessage(exception.ResponseBody, exception.Message);
-            bool versionConflict = statusCode == (int)HttpStatusCode.Conflict ||
-                                   engineMessage.Contains("update out of sequence", StringComparison.OrdinalIgnoreCase);
+            bool versionConflict = DockerErrorClassifier.IsSwarmVersionConflict(exception, engineMessage);
 
             string summary = versionConflict
                 ? "Service가 다른 작업에서 변경되었거나 이름이 충돌합니다. 최신 상태를 새로고침한 뒤 다시 시도해 주세요."

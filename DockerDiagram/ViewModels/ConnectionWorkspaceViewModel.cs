@@ -1,6 +1,6 @@
-using DockerDiagram.Contracts;
-using DockerDiagram.Common;
 using System.Collections.ObjectModel;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
@@ -48,11 +48,11 @@ namespace DockerDiagram.ViewModels
 
         public string HostSummary => Profile.Type switch
         {
-            EndpointType.Local => "Local Docker",
+            EndpointType.Local => "로컬 Docker",
             EndpointType.SshRemote => $"{Profile.SshUsername}@{Profile.HostIp}:{Profile.SshPort}",
-            EndpointType.DockerContext => Profile.DockerEndpoint ?? "Docker context",
+            EndpointType.DockerContext => Profile.DockerEndpoint ?? "Docker Context",
             _ => Profile.Type.ToString()
         };
-        public string StatusText { get; set; } = "Ready";
+        public string StatusText { get; set; } = "준비";
     }
 }

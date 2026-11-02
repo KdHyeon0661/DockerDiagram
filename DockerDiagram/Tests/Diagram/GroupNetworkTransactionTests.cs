@@ -8,12 +8,12 @@ namespace DockerDiagram.Tests;
 public sealed class GroupNetworkTransactionTests
 {
     [Fact]
-    public async Task AddNodeAsync_ConnectFailureDoesNotAddVisualMembership()
+    public async Task AddNodeAsyncConnectFailureDoesNotAddVisualMembership()
     {
         INetworkService networkService = DispatchProxy.Create<INetworkService, FailingNetworkMutationProxy>();
-        IDockerService dockerService = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
+        using IDockerService dockerService = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
         IDialogService dialogService = DispatchProxy.Create<IDialogService, LenientDialogServiceProxy>();
-        var sheet = new SheetViewModel(
+        using var sheet = new SheetViewModel(
             "Context",
             new ConnectionProfile { Type = EndpointType.DockerContext, DockerEndpoint = "npipe://test" },
             dockerService,
@@ -37,12 +37,12 @@ public sealed class GroupNetworkTransactionTests
     }
 
     [Fact]
-    public async Task RemoveNodeAsync_DisconnectFailurePreservesVisualMembership()
+    public async Task RemoveNodeAsyncDisconnectFailurePreservesVisualMembership()
     {
         INetworkService networkService = DispatchProxy.Create<INetworkService, FailingNetworkMutationProxy>();
-        IDockerService dockerService = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
+        using IDockerService dockerService = DispatchProxy.Create<IDockerService, TrackingDockerServiceProxy>();
         IDialogService dialogService = DispatchProxy.Create<IDialogService, LenientDialogServiceProxy>();
-        var sheet = new SheetViewModel(
+        using var sheet = new SheetViewModel(
             "Context",
             new ConnectionProfile { Type = EndpointType.DockerContext, DockerEndpoint = "npipe://test" },
             dockerService,

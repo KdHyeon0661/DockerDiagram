@@ -103,11 +103,9 @@ namespace DockerDiagram.Models
     }
 
     /// <summary>Docker.DotNet 형식과 UI를 분리한 Swarm service 애플리케이션 계약입니다.</summary>
-    public sealed class SwarmServiceSpecOptions
+    public sealed partial class SwarmServiceSpecOptions
     {
-        private static readonly Regex ValidNamePattern = new(
-            "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
-            RegexOptions.CultureInvariant);
+        private static readonly Regex ValidNamePattern = MyRegex();
 
         public string Name { get; init; } = string.Empty;
         public string Image { get; init; } = string.Empty;
@@ -167,6 +165,9 @@ namespace DockerDiagram.Models
             if (values.Any(string.IsNullOrWhiteSpace))
                 throw new ArgumentException("빈 항목을 포함할 수 없습니다.", parameterName);
         }
+
+        [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9_.-]*$", RegexOptions.CultureInvariant)]
+        private static partial Regex MyRegex();
     }
 
     public sealed class SwarmServiceCreateOptions

@@ -1,65 +1,128 @@
 ﻿<Window x:Class="DockerDiagram.Views.ContainerDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Container Configuration" Height="650" Width="640"
-        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
-        Background="#F5F5F5">
+        Style="{StaticResource DialogWindowStyle}"
+        Title="컨테이너 구성" Height="700" Width="780"
+        MinHeight="620" MinWidth="720"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
+        Background="{StaticResource DialogWindowBackgroundBrush}">
 
-    <Grid Margin="15">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/DialogControlDefaults.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <Style x:Key="ContainerModeTabItemStyle"
+                   TargetType="TabItem"
+                   BasedOn="{StaticResource DialogTabItemStyle}">
+                <Setter Property="MinWidth" Value="168"/>
+                <Setter Property="Height" Value="42"/>
+                <Setter Property="Padding" Value="16,9"/>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="HeaderTemplate">
+                    <Setter.Value>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" TextAlignment="Center"/>
+                        </DataTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="ContainerSectionTabItemStyle"
+                   TargetType="TabItem"
+                   BasedOn="{StaticResource DialogTabItemStyle}">
+                <Setter Property="MinWidth" Value="72"/>
+                <Setter Property="Padding" Value="10,8"/>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="HeaderTemplate">
+                    <Setter.Value>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}" TextAlignment="Center"/>
+                        </DataTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
+    </Window.Resources>
+    <Grid Margin="18">
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TabControl x:Name="MainTabControl" Grid.Row="0" Margin="0,0,0,15" Background="White" BorderBrush="#DDD">
+        <TabControl x:Name="MainTabControl"
+                    Grid.Row="0"
+                    Margin="0,0,0,16"
+                    Background="{StaticResource DialogSurfaceBrush}"
+                    BorderBrush="{StaticResource DialogBorderBrush}"
+                    HorizontalContentAlignment="Stretch"
+                    VerticalContentAlignment="Stretch"
+                    ItemContainerStyle="{StaticResource ContainerModeTabItemStyle}">
 
-            <TabItem Header="🎛️ 직접 설정 (UI)">
-                <Grid Margin="10">
-                    <TabControl Background="#FAFAFA" BorderBrush="#EEE">
+            <TabItem Header="직접 설정 (UI)">
+                <Grid Margin="12">
+                    <TabControl TabStripPlacement="Top"
+                                Background="{StaticResource DialogSubtleSurfaceBrush}"
+                                BorderBrush="{StaticResource DialogBorderBrush}"
+                                HorizontalContentAlignment="Stretch"
+                                VerticalContentAlignment="Stretch"
+                                ItemContainerStyle="{StaticResource ContainerSectionTabItemStyle}">
 
-                        <TabItem Header="General">
+                        <TabItem Header="일반">
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
                                 <StackPanel Margin="15">
-                                    <TextBlock Text="Container Name" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
-                                    <TextBox x:Name="txtName" Padding="5" Margin="0,0,0,15" BorderBrush="#CCC"/>
+                                <TextBlock Text="컨테이너 이름" FontWeight="Bold" Margin="0,0,0,5" Foreground="{StaticResource DialogTextBrush}"/>
+                                    <TextBox x:Name="txtName" Padding="5" Margin="0,0,0,15"
+                                             BorderBrush="{StaticResource DialogStrongBorderBrush}"
+                                             TextChanged="ContainerName_TextChanged"/>
 
-                                    <TextBlock Text="Image Name" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
+                                <TextBlock Text="이미지 이름" FontWeight="Bold" Margin="0,0,0,5" Foreground="{StaticResource DialogTextBrush}"/>
                                     <Grid Margin="0,0,0,4">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <TextBox x:Name="txtImage" Padding="5" BorderBrush="#CCC"
+                                        <TextBox x:Name="txtImage" Padding="5" BorderBrush="{StaticResource DialogStrongBorderBrush}"
                                                  TextChanged="ImageName_TextChanged"/>
                                         <Button x:Name="btnInspectImage"
                                                 Grid.Column="1"
-                                                Content="↻"
+                                                Style="{StaticResource DialogIconButtonStyle}"
                                                 Width="34"
                                                 Margin="6,0,0,0"
-                                                FontSize="17"
                                                 ToolTip="이미지 설정 조회"
-                                                Click="InspectImage_Click"/>
+                                                Click="InspectImage_Click">
+                                            <Path Data="{StaticResource DialogRefreshIcon}" Width="15" Height="15"
+                                                  Fill="{StaticResource DialogTextBrush}" Stretch="Uniform"/>
+                                        </Button>
                                     </Grid>
                                     <TextBlock x:Name="txtImageLookupStatus"
                                                Text="이미지를 입력하면 포트와 볼륨 설정을 조회합니다."
                                                FontSize="10"
-                                               Foreground="#78828C"
+                                               Foreground="{StaticResource DialogMutedTextBrush}"
                                                Margin="1,0,0,15"
                                                TextWrapping="Wrap"/>
 
                                     <CheckBox x:Name="chkInteractive" Content="터미널 유지 (Keep STDIN open / TTY)" 
-                                              FontWeight="Bold" Foreground="#333" Margin="0,5,0,0" ToolTip="컨테이너가 즉시 종료되는 것을 방지합니다 (-it)"/>
+                                              FontWeight="Bold" Foreground="{StaticResource DialogTextBrush}" Margin="0,5,0,0" ToolTip="컨테이너가 즉시 종료되는 것을 방지합니다 (-it)"/>
 
-                                    <Expander Header="🔒 Private Registry (비공개 저장소 인증)" Margin="0,15,0,0" Background="#FDFDFD" BorderBrush="#DDD" BorderThickness="1">
+                                    <Expander Margin="0,15,0,0" Background="{StaticResource DialogSurfaceBrush}" BorderBrush="{StaticResource DialogBorderBrush}" BorderThickness="1">
+                                        <Expander.Header>
+                                            <StackPanel Orientation="Horizontal">
+                                                <Path Data="{StaticResource DialogLockIcon}" Width="14" Height="14"
+                                                      Fill="{StaticResource DialogMutedTextBrush}" Stretch="Uniform" Margin="0,0,7,0"/>
+                                                <TextBlock Text="비공개 Registry 인증" FontWeight="SemiBold"/>
+                                            </StackPanel>
+                                        </Expander.Header>
                                         <StackPanel Margin="10">
-                                            <TextBlock Text="Registry URL (비워두면 기본 Docker Hub 사용)" Foreground="#555" FontSize="11" Margin="0,0,0,2"/>
-                                            <TextBox x:Name="txtRegServer" Padding="5" Margin="0,0,0,10" BorderBrush="#CCC" ToolTip="예: https://ghcr.io 또는 https://12345.dkr.ecr.aws.com"/>
+                                        <TextBlock Text="Registry URL (비워두면 기본 Docker Hub 사용)" Foreground="{StaticResource DialogTextBrush}" FontSize="11" Margin="0,0,0,2"/>
+                                            <TextBox x:Name="txtRegServer" Padding="5" Margin="0,0,0,10" BorderBrush="{StaticResource DialogStrongBorderBrush}" ToolTip="예: https://ghcr.io 또는 https://12345.dkr.ecr.aws.com"/>
 
-                                            <TextBlock Text="Username (아이디)" Foreground="#555" FontSize="11" Margin="0,0,0,2"/>
-                                            <TextBox x:Name="txtRegUser" Padding="5" Margin="0,0,0,10" BorderBrush="#CCC"/>
+                                        <TextBlock Text="사용자 이름" Foreground="{StaticResource DialogTextBrush}" FontSize="11" Margin="0,0,0,2"/>
+                                            <TextBox x:Name="txtRegUser" Padding="5" Margin="0,0,0,10" BorderBrush="{StaticResource DialogStrongBorderBrush}"/>
 
-                                            <TextBlock Text="Password / Token (비밀번호/토큰)" Foreground="#555" FontSize="11" Margin="0,0,0,2"/>
-                                            <PasswordBox x:Name="txtRegPass" Padding="5" Margin="0,0,0,5" BorderBrush="#CCC"/>
+                                        <TextBlock Text="비밀번호 / 토큰" Foreground="{StaticResource DialogTextBrush}" FontSize="11" Margin="0,0,0,2"/>
+                                            <PasswordBox x:Name="txtRegPass" Padding="5" Margin="0,0,0,5" BorderBrush="{StaticResource DialogStrongBorderBrush}"/>
                                         </StackPanel>
                                     </Expander>
 
@@ -67,17 +130,13 @@
                             </ScrollViewer>
                         </TabItem>
 
-                        <TabItem x:Name="tabImageSetup" Header="Initial Setup">
-                            <Grid Margin="15">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="*"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-
+                        <TabItem x:Name="tabImageSetup" Header="초기 설정">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled">
+                                <StackPanel Margin="15">
                                 <Border x:Name="profileHeader"
-                                        Background="#EEF5FA"
-                                        BorderBrush="#BDD3E3"
+                                        Background="{StaticResource DialogInfoSurfaceBrush}"
+                                        BorderBrush="{StaticResource DialogInfoBorderBrush}"
                                         BorderThickness="1"
                                         CornerRadius="4"
                                         Padding="10"
@@ -86,51 +145,47 @@
                                         <TextBlock x:Name="txtProfileCategory"
                                                    FontSize="10"
                                                    FontWeight="SemiBold"
-                                                   Foreground="#5A7388"/>
+                                                   Foreground="{StaticResource DialogInfoTextBrush}"/>
                                         <TextBlock x:Name="txtProfileName"
                                                    Margin="0,2,0,0"
                                                    FontWeight="SemiBold"
-                                                   Foreground="#244A66"/>
+                                                   Foreground="{StaticResource DialogInfoTextBrush}"/>
                                         <TextBlock x:Name="txtProfileDescription"
                                                    Margin="0,3,0,0"
                                                    FontSize="11"
-                                                   Foreground="#526675"
+                                                   Foreground="{StaticResource DialogMutedTextBrush}"
                                                    TextWrapping="Wrap"/>
                                         <TextBlock x:Name="txtProfileNotes"
                                                    Margin="0,5,0,0"
                                                    FontSize="10"
-                                                   Foreground="#6D7883"
+                                                   Foreground="{StaticResource DialogMutedTextBrush}"
                                                    TextWrapping="Wrap"/>
                                     </StackPanel>
                                 </Border>
 
-                                <Grid Grid.Row="1">
-                                    <StackPanel x:Name="pnlNoImageProfile"
-                                                VerticalAlignment="Center"
-                                                HorizontalAlignment="Center"
-                                                MaxWidth="380">
+                                <StackPanel x:Name="pnlNoImageProfile"
+                                            HorizontalAlignment="Center"
+                                            MaxWidth="380"
+                                            Margin="0,80,0,0">
                                         <TextBlock Text="지원되는 서버 이미지를 입력하면 초기 설정 항목이 표시됩니다."
                                                    TextAlignment="Center"
                                                    TextWrapping="Wrap"
-                                                   Foreground="#5F6872"
+                                                   Foreground="{StaticResource DialogMutedTextBrush}"
                                                    FontWeight="SemiBold"/>
                                         <TextBlock Text="알 수 없는 이미지는 Env Vars 탭에서 직접 설정할 수 있습니다."
                                                    Margin="0,6,0,0"
                                                    TextAlignment="Center"
                                                    TextWrapping="Wrap"
-                                                   Foreground="#8A929B"
+                                                   Foreground="{StaticResource DialogDisabledTextBrush}"
                                                    FontSize="11"/>
-                                    </StackPanel>
+                                </StackPanel>
 
-                                    <ScrollViewer x:Name="profileFormScroll"
-                                                  VerticalScrollBarVisibility="Auto"
-                                                  Visibility="Collapsed">
-                                        <StackPanel x:Name="pnlProfileFields"/>
-                                    </ScrollViewer>
-                                </Grid>
+                                <StackPanel x:Name="profileFormScroll"
+                                            Visibility="Collapsed">
+                                    <StackPanel x:Name="pnlProfileFields"/>
+                                </StackPanel>
 
                                 <StackPanel x:Name="pnlProfileOptions"
-                                            Grid.Row="2"
                                             Margin="0,10,0,0"
                                             Visibility="Collapsed">
                                     <CheckBox x:Name="chkApplyProfilePorts"
@@ -143,55 +198,57 @@
                                     <TextBlock x:Name="txtProfileCommandHint"
                                                Margin="0,7,0,0"
                                                FontSize="10"
-                                               Foreground="#777"
+                                               Foreground="{StaticResource DialogMutedTextBrush}"
                                                TextWrapping="Wrap"/>
                                     <Border x:Name="metadataSummaryBorder"
                                             Margin="0,10,0,0"
                                             Padding="9"
-                                            Background="#F5F7F9"
-                                            BorderBrush="#D9DEE3"
+                                            Background="{StaticResource DialogSubtleSurfaceBrush}"
+                                            BorderBrush="{StaticResource DialogBorderBrush}"
                                             BorderThickness="1"
                                             CornerRadius="4"
                                             Visibility="Collapsed">
                                         <StackPanel>
-                                            <TextBlock Text="Detected image metadata"
+                                            <TextBlock Text="감지된 이미지 메타데이터"
                                                        FontWeight="SemiBold"
-                                                       Foreground="#3E4852"/>
+                                                       Foreground="{StaticResource DialogTextBrush}"/>
                                             <TextBlock x:Name="txtMetadataSummary"
                                                        Margin="0,4,0,0"
                                                        FontSize="10"
-                                                       Foreground="#68737E"
+                                                       Foreground="{StaticResource DialogMutedTextBrush}"
                                                        TextWrapping="Wrap"/>
                                         </StackPanel>
                                     </Border>
                                     <Button x:Name="btnApplyImageSuggestions"
-                                            Content="Apply Suggestions"
+                                                Content="권장 설정 적용"
                                             Margin="0,10,0,0"
-                                            Height="32"
+                                            MinHeight="38"
                                             HorizontalAlignment="Left"
                                             Padding="14,0"
                                             IsEnabled="False"
                                             Click="ApplyImageSuggestions_Click"/>
                                 </StackPanel>
-                            </Grid>
+                                </StackPanel>
+                            </ScrollViewer>
                         </TabItem>
 
-                        <TabItem Header="Ports">
+                        <TabItem Header="포트">
                             <Grid Margin="15">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
-                                <TextBlock Text="Port Mappings (Host:Container)" FontWeight="Bold" Margin="0,0,0,5"/>
-                                <TextBox x:Name="txtPorts" Grid.Row="1" AcceptsReturn="True" 
-                                         Padding="5" FontFamily="Consolas" BorderBrush="#CCC"
-                                         ToolTip="Example:&#x0a;8080:80&#x0a;3306:3306"/>
+                                <TextBlock Text="포트 매핑 (호스트:컨테이너)" FontWeight="Bold" Margin="0,0,0,5"/>
+                                <TextBox x:Name="txtPorts" Grid.Row="1"
+                                         Style="{StaticResource DialogMultilineTextBoxStyle}"
+                                         FontFamily="Consolas" BorderBrush="{StaticResource DialogStrongBorderBrush}"
+                                         ToolTip="예시:&#x0a;8080:80&#x0a;3306:3306"/>
                                 <TextBlock Grid.Row="1" VerticalAlignment="Bottom" HorizontalAlignment="Right" 
-                                           Text="One mapping per line" FontSize="10" Foreground="Gray" Margin="5"/>
+                                               Text="한 줄에 매핑 하나" FontSize="10" Foreground="{StaticResource DialogMutedTextBrush}" Margin="5"/>
                             </Grid>
                         </TabItem>
 
-                        <TabItem Header="Env Vars">
+                        <TabItem Header="환경 변수">
                             <Grid Margin="15" AllowDrop="True" Drop="Env_Drop" Background="Transparent">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
@@ -199,25 +256,27 @@
                                     <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
 
-                                <TextBlock Text="Environment Variables (KEY=VALUE)" FontWeight="Bold" Margin="0,0,0,5"/>
+                                <TextBlock Text="환경 변수 (KEY=VALUE)" FontWeight="Bold" Margin="0,0,0,5"/>
 
                                 <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
-                                    <Button x:Name="btnLoadEnv" 
-                                            Content="📁 .env 파일 불러오기" 
-                                            Padding="10,5" 
-                                            Click="BtnLoadEnv_Click" 
-                                            Background="#E0E0E0" BorderThickness="0" Cursor="Hand"/>
-                                    <TextBlock Text="(또는 이 화면에 파일을 드래그하세요)" 
-                                               Foreground="Gray" 
-                                               VerticalAlignment="Center" 
+                                    <Button x:Name="btnLoadEnv"
+                                            Content=".env 파일 불러오기"
+                                            Padding="10,5"
+                                            Click="BtnLoadEnv_Click"
+                                            Style="{StaticResource DialogSecondaryButtonStyle}"/>
+                                    <TextBlock Text="(또는 이 화면에 파일을 드래그하세요)"
+                                               Foreground="{StaticResource DialogMutedTextBrush}"
+                                               VerticalAlignment="Center"
                                                Margin="10,0,0,0"/>
                                 </StackPanel>
 
-                                <TextBox x:Name="txtEnv" Grid.Row="2" AcceptsReturn="True" Padding="5" FontFamily="Consolas" BorderBrush="#CCC" VerticalScrollBarVisibility="Auto"/>
+                                <TextBox x:Name="txtEnv" Grid.Row="2"
+                                         Style="{StaticResource DialogMultilineTextBoxStyle}"
+                                         FontFamily="Consolas" BorderBrush="{StaticResource DialogStrongBorderBrush}"/>
                             </Grid>
                         </TabItem>
 
-                        <TabItem Header="Command">
+                        <TabItem Header="실행 명령">
                             <Grid Margin="15">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
@@ -225,28 +284,57 @@
                                     <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
 
-                                <TextBlock Grid.Row="0" Text="Command / Entrypoint Override" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
-                                <TextBlock Grid.Row="1" Text="이미지의 기본 실행 명령을 무시하고 강제로 실행할 명령어를 입력합니다." FontSize="11" Foreground="Gray" Margin="0,0,0,10"/>
+                            <TextBlock Grid.Row="0" Text="명령 / Entrypoint 재정의" FontWeight="Bold" Margin="0,0,0,5" Foreground="{StaticResource DialogTextBrush}"/>
+                                <TextBlock Grid.Row="1" Text="이미지의 기본 실행 명령을 무시하고 강제로 실행할 명령어를 입력합니다." FontSize="11" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,0,10"/>
 
-                                <TextBox x:Name="txtCommand" Grid.Row="2" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="5" FontFamily="Consolas" BorderBrush="#CCC" ToolTip="예: python app.py 또는 tail -f /dev/null"/>
+                                <TextBox x:Name="txtCommand" Grid.Row="2"
+                                         Style="{StaticResource DialogMultilineTextBoxStyle}"
+                                         FontFamily="Consolas" BorderBrush="{StaticResource DialogStrongBorderBrush}"
+                                         ToolTip="예: python app.py 또는 tail -f /dev/null"/>
                             </Grid>
                         </TabItem>
 
-                        <TabItem Header="Network">
+                        <TabItem Header="네트워크">
                             <StackPanel Margin="15">
-                                <TextBlock Text="Initial Network" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
-                                <TextBlock Text="컨테이너가 처음 생성될 때 연결될 네트워크를 선택합니다." FontSize="11" Foreground="Gray" Margin="0,0,0,10"/>
-                                <ComboBox x:Name="cmbNetwork" Padding="5" Margin="0,0,0,15" IsEditable="True" Text="bridge">
-                                    <ComboBoxItem Content="bridge"/>
-                                    <ComboBoxItem Content="host"/>
-                                    <ComboBoxItem Content="none"/>
-                                </ComboBox>
+                            <TextBlock Text="초기 네트워크" FontWeight="Bold" Margin="0,0,0,5" Foreground="{StaticResource DialogTextBrush}"/>
+                                <TextBlock Text="기존 네트워크를 선택하거나 이 화면에서 새 네트워크를 만든 뒤 선택할 수 있습니다."
+                                           FontSize="11" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,0,10" TextWrapping="Wrap"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="cmbNetwork" Padding="5" IsEditable="True" Text="bridge"/>
+                                    <Button x:Name="btnRefreshNetworks"
+                                            Grid.Column="1"
+                                            Style="{StaticResource DialogIconButtonStyle}"
+                                            Margin="7,0,0,0"
+                                            ToolTip="Docker 네트워크 목록 새로고침"
+                                            Click="RefreshNetworks_Click">
+                                        <Path Data="{StaticResource DialogRefreshIcon}" Width="15" Height="15"
+                                              Fill="{StaticResource DialogTextBrush}" Stretch="Uniform"/>
+                                    </Button>
+                                    <Button x:Name="btnCreateNetwork"
+                                            Grid.Column="2"
+                                            Content="새 네트워크 만들기..."
+                                            Margin="7,0,0,0"
+                                            Padding="12,6"
+                                            Style="{StaticResource DialogNetworkButtonStyle}"
+                                            Click="CreateNetwork_Click"/>
+                                </Grid>
+                                <TextBlock x:Name="txtNetworkStatus"
+                                           Text="Docker 네트워크 목록을 불러오는 중입니다."
+                                           Margin="1,8,0,0"
+                                           FontSize="10"
+                                           Foreground="{StaticResource DialogMutedTextBrush}"
+                                           TextWrapping="Wrap"/>
                             </StackPanel>
                         </TabItem>
 
-                        <TabItem Header="Resources">
+                        <TabItem Header="리소스">
                             <StackPanel Margin="15">
-                                <TextBlock Text="Restart Policy" FontWeight="Bold" Margin="0,0,0,5"/>
+                                <TextBlock Text="재시작 정책" FontWeight="Bold" Margin="0,0,0,5"/>
                                 <ComboBox x:Name="cmbRestart" Margin="0,0,0,15" Padding="5">
                                     <ComboBoxItem Content="no" IsSelected="True"/>
                                     <ComboBoxItem Content="always"/>
@@ -254,43 +342,70 @@
                                     <ComboBoxItem Content="unless-stopped"/>
                                 </ComboBox>
 
-                                <TextBlock Text="Memory Limit (MB)" FontWeight="Bold" Margin="0,0,0,5"/>
+                                    <TextBlock Text="메모리 제한 (MB)" FontWeight="Bold" Margin="0,0,0,5"/>
                                 <TextBox x:Name="txtMem" Padding="5" Margin="0,0,0,5" Text="0" PreviewTextInput="NumberValidationTextBox"/>
-                                <TextBlock Text="0 = No limit" FontSize="10" Foreground="Gray" Margin="0,0,0,15"/>
+                                <TextBlock Text="0 = No limit" FontSize="10" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,0,15"/>
 
-                                <TextBlock Text="CPU Count" FontWeight="Bold" Margin="0,0,0,5"/>
+                                    <TextBlock Text="CPU 개수" FontWeight="Bold" Margin="0,0,0,5"/>
                                 <TextBox x:Name="txtCpu" Padding="5" Margin="0,0,0,5" Text="0" PreviewTextInput="NumberValidationTextBox"/>
-                                <TextBlock Text="0 = No limit (e.g. 0.5 for half core)" FontSize="10" Foreground="Gray"/>
+                                <TextBlock Text="0 = No limit (e.g. 0.5 for half core)" FontSize="10" Foreground="{StaticResource DialogMutedTextBrush}"/>
                             </StackPanel>
                         </TabItem>
 
-                        <TabItem Header="Volumes">
+                        <TabItem Header="마운트">
                             <Grid Margin="15">
                                 <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
                                 <Grid Grid.Row="0" Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="마운트 유형" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                    <ComboBox x:Name="cmbMountType" Grid.Column="1" SelectionChanged="MountType_SelectionChanged" Padding="6,4">
+                                        <ComboBoxItem Content="이름 있는 볼륨" Tag="Volume" IsSelected="True"/>
+                                        <ComboBoxItem Content="바인드 마운트" Tag="Bind"/>
+                                        <ComboBoxItem Content="Tmpfs" Tag="Tmpfs"/>
+                                    </ComboBox>
+                                    <TextBlock x:Name="txtMountHostHint" Grid.Column="2" Margin="12,0,0,0" Foreground="{StaticResource DialogMutedTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                </Grid>
+                                <Grid Grid.Row="1" Margin="0,0,0,8">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="1.1*"/>
                                         <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="1.1*"/>
+                                        <ColumnDefinition Width="82"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="Auto"/>
                                     </Grid.RowDefinitions>
-                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Host Path / Vol Name" FontSize="10" Foreground="Gray" Margin="0,0,0,2"/>
-                                    <TextBlock Grid.Row="0" Grid.Column="2" Text="Container Path" FontSize="10" Foreground="Gray" Margin="0,0,0,2"/>
+                            <TextBlock x:Name="lblMountSource" Grid.Row="0" Grid.Column="0" Text="볼륨 이름" FontSize="10" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,0,2"/>
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="컨테이너 경로" FontSize="10" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,0,2"/>
+                            <TextBlock Grid.Row="0" Grid.Column="3" Text="모드" FontSize="10" Foreground="{StaticResource DialogMutedTextBrush}" Margin="6,0,0,2"/>
 
-                                    <TextBox x:Name="txtVolSource" Grid.Row="1" Grid.Column="0" Padding="5"/>
+                                    <Grid Grid.Row="1" Grid.Column="0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <TextBox x:Name="txtVolSource" Padding="5"/>
+                                        <Button x:Name="btnBrowseBindSource" Grid.Column="1" Content="찾기" Click="BrowseBindSource_Click" Margin="5,0,0,0" Padding="9,4" Style="{StaticResource DialogSecondaryButtonStyle}" Visibility="Collapsed"/>
+                                    </Grid>
                                     <TextBlock Grid.Row="1" Grid.Column="1" Text=":" VerticalAlignment="Center" Margin="5,0" FontWeight="Bold"/>
                                     <TextBox x:Name="txtVolTarget" Grid.Row="1" Grid.Column="2" Padding="5"/>
-                                    <Button Grid.Row="1" Grid.Column="3" Content="Add" Click="BtnAddVolume_Click" Width="50" Margin="10,0,0,0" Background="#E0E0E0" BorderBrush="#CCC"/>
+                                    <ComboBox x:Name="cmbMountMode" Grid.Row="1" Grid.Column="3" Margin="6,0,0,0" Padding="4"><ComboBoxItem Content="rw" IsSelected="True"/><ComboBoxItem Content="ro"/></ComboBox>
+                                    <Button x:Name="btnAddMount" Grid.Row="1" Grid.Column="4" Content="추가" Click="BtnAddVolume_Click" MinWidth="62" Margin="10,0,0,0"
+                                            Style="{StaticResource DialogSecondaryButtonStyle}"/>
                                 </Grid>
-                                <Border Grid.Row="1" BorderBrush="#CCC" BorderThickness="1" CornerRadius="2">
-                                    <ListBox x:Name="lstVolumes" BorderThickness="0" Background="#FAFAFA">
+                                <Grid Grid.Row="2" Margin="0,0,0,10">
+                                    <StackPanel x:Name="pnlVolumeOptions" Orientation="Horizontal">
+                                        <CheckBox x:Name="chkAnonymousVolume" Content="익명 볼륨" Checked="AnonymousVolume_Changed" Unchecked="AnonymousVolume_Changed" Margin="0,0,18,0"/>
+                                        <CheckBox x:Name="chkVolumeNoCopy" Content="기존 이미지 데이터를 볼륨으로 복사하지 않음 (nocopy)"/>
+                                    </StackPanel>
+                                <StackPanel x:Name="pnlBindOptions" Orientation="Horizontal" Visibility="Collapsed"><TextBlock Text="바인드 전파" VerticalAlignment="Center" Margin="0,0,8,0"/><TextBox x:Name="txtBindPropagation" Text="rprivate" Width="130" Padding="5"/></StackPanel>
+                                <StackPanel x:Name="pnlTmpfsOptions" Orientation="Horizontal" Visibility="Collapsed"><TextBlock Text="크기" VerticalAlignment="Center" Margin="0,0,6,0"/><TextBox x:Name="txtTmpfsSize" Text="64m" Width="90" Padding="5"/><TextBlock Text="모드" VerticalAlignment="Center" Margin="14,0,6,0"/><TextBox x:Name="txtTmpfsMode" Text="1777" Width="80" Padding="5"/></StackPanel>
+                                </Grid>
+                                <Border Grid.Row="3" BorderBrush="{StaticResource DialogStrongBorderBrush}" BorderThickness="1" CornerRadius="2">
+                                    <ListBox x:Name="lstVolumes" BorderThickness="0" Background="{StaticResource DialogSubtleSurfaceBrush}">
                                         <ListBox.ItemContainerStyle>
                                             <Style TargetType="ListBoxItem">
                                                 <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -302,11 +417,29 @@
                                             <DataTemplate>
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="34"/>
                                                         <ColumnDefinition Width="*"/>
-                                                        <ColumnDefinition Width="30"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="{Binding}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#333"/>
-                                                    <Button Grid.Column="1" Content="✕" Foreground="Red" Background="Transparent" BorderThickness="0" FontWeight="Bold" Cursor="Hand" Click="BtnRemoveVolume_Click" Tag="{Binding}" HorizontalAlignment="Right"/>
+                                                    <TextBlock Text="{Binding Icon}" FontSize="16" VerticalAlignment="Center"/>
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding KindLabel}" FontSize="10" Foreground="{StaticResource DialogMutedTextBrush}"/>
+                                                        <TextBlock Text="{Binding SourceDisplay}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Source}" FontWeight="SemiBold"/>
+                                                        <TextBlock Text="{Binding Target, StringFormat='→ {0}'}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" ToolTip="{Binding Target}"/>
+                                                    </StackPanel>
+                                                    <TextBlock Grid.Column="2" Text="{Binding OptionSummary}" VerticalAlignment="Center"
+                                                               Margin="0,0,8,0" TextTrimming="CharacterEllipsis"
+                                                               Foreground="{StaticResource DialogMutedTextBrush}"/>
+                                                    <Button Grid.Column="3" Content="편집" Click="BtnEditMount_Click" Tag="{Binding}" Style="{StaticResource DialogCompactButtonStyle}" Margin="4,0" Padding="8,3"/>
+                                                    <Button Grid.Column="4" Style="{StaticResource DialogIconButtonStyle}"
+                                                            Width="38" MinWidth="38" Margin="4,0,0,0"
+                                                            Click="BtnRemoveVolume_Click" Tag="{Binding}"
+                                               HorizontalAlignment="Right" ToolTip="마운트 제거">
+                                                        <Path Data="{StaticResource DialogTrashIcon}" Width="14" Height="14"
+                                                              Fill="{StaticResource DialogDangerBrush}" Stretch="Uniform"/>
+                                                    </Button>
                                                 </Grid>
                                             </DataTemplate>
                                         </ListBox.ItemTemplate>
@@ -318,22 +451,22 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="💻 명령어로 생성 (CLI)">
+            <TabItem Header="명령어로 생성 (CLI)">
                 <Grid Margin="15">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <TextBlock Text="인터넷에서 찾은 docker run ... 명령어를 아래에 붙여넣으세요.&#x0a;프로그램이 자동으로 분석하여 다이어그램에 생성합니다." 
-                               Foreground="#555" Margin="0,0,0,15" TextWrapping="Wrap" LineHeight="18" FontWeight="SemiBold"/>
+                               Foreground="{StaticResource DialogTextBrush}" Margin="0,0,0,15" TextWrapping="Wrap" LineHeight="18" FontWeight="SemiBold"/>
 
-                    <TextBox x:Name="txtCliCommand" Grid.Row="1" AcceptsReturn="True" TextWrapping="Wrap"
-                             Padding="10" FontFamily="Consolas" FontSize="14" Background="#1E1E1E" Foreground="#D4D4D4" BorderBrush="#CCC"
+                    <TextBox x:Name="txtCliCommand" Grid.Row="1" Style="{StaticResource DialogCodeTextBoxStyle}" TextWrapping="Wrap"
+                             Padding="10" FontSize="14" Background="{StaticResource DialogCodeBackgroundBrush}" Foreground="{StaticResource DialogCodeTextBrush}"
                              ToolTip="docker run -d -p 80:80 --name my-nginx nginx"/>
                 </Grid>
             </TabItem>
 
-            <TabItem Header="🛠️ 도커파일 (Build)">
+            <TabItem Header="도커파일 (Build)">
                 <Grid Margin="15">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -343,21 +476,19 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="생성될 이미지 이름 (Tag)" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
-                    <TextBlock Grid.Row="1" Text="도커파일을 빌드해서 만들어질 새로운 이미지의 이름을 지정합니다. (예: my-app:1.0)" FontSize="11" Foreground="Gray" Margin="0,0,0,5"/>
+                    <TextBlock Grid.Row="0" Text="생성될 이미지 이름 (Tag)" FontWeight="Bold" Margin="0,0,0,5" Foreground="{StaticResource DialogTextBrush}"/>
+                    <TextBlock Grid.Row="1" Text="도커파일을 빌드해서 만들어질 새로운 이미지의 이름을 지정합니다. (예: my-app:1.0)" FontSize="11" Foreground="{StaticResource DialogMutedTextBrush}" Margin="0,0,0,5"/>
 
-                    <TextBox x:Name="txtBuildImageTag" Grid.Row="2" Padding="5" Margin="0,0,0,15" BorderBrush="#CCC"/>
+                    <TextBox x:Name="txtBuildImageTag" Grid.Row="2" Padding="5" Margin="0,0,0,15" BorderBrush="{StaticResource DialogStrongBorderBrush}"/>
 
-                    <TextBlock Grid.Row="3" Text="Dockerfile 내용 직접 작성 또는 불러오기" FontWeight="Bold" Margin="0,0,0,5" Foreground="#333"/>
+                    <TextBlock Grid.Row="3" Text="Dockerfile 내용 직접 작성 또는 불러오기" FontWeight="Bold" Margin="0,0,0,5" Foreground="{StaticResource DialogTextBrush}"/>
                     <Grid Grid.Row="4">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="*"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <TextBox x:Name="txtDockerfile" AcceptsReturn="True" TextWrapping="Wrap"
-                                 Padding="10" FontFamily="Consolas" Background="#F8F9FA" BorderBrush="#CCC"
-                                 VerticalScrollBarVisibility="Auto"/>
-                        <Button x:Name="btnBrowseDockerfile" Content="📂 Dockerfile 찾아보기..." Grid.Row="1" Margin="0,10,0,0" Padding="8" Background="#E0E0E0" BorderThickness="0" Cursor="Hand" FontWeight="SemiBold" Click="BtnBrowseDockerfile_Click"/>
+                        <TextBox x:Name="txtDockerfile" Style="{StaticResource DialogCodeTextBoxStyle}" TextWrapping="Wrap" Padding="10"/>
+                        <Button x:Name="btnBrowseDockerfile" Content="Dockerfile 찾아보기..." Grid.Row="1" Margin="0,10,0,0" Style="{StaticResource DialogSecondaryButtonStyle}" Click="BtnBrowseDockerfile_Click"/>
                     </Grid>
                 </Grid>
             </TabItem>
@@ -365,12 +496,11 @@
         </TabControl>
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button x:Name="btnOk" Content="Create / Run" IsDefault="True" Click="BtnOk_Click" 
-                    Width="120" Height="35" Background="#007ACC" Foreground="White" 
-                    FontWeight="Bold" BorderThickness="0" Margin="0,0,10,0" Cursor="Hand"/>
+                <Button x:Name="btnOk" Content="생성 / 실행" IsDefault="True" Click="BtnOk_Click"
+                    Width="120" Style="{StaticResource DialogPrimaryButtonStyle}" Margin="0,0,10,0"/>
 
-            <Button x:Name="btnCancel" Content="Cancel" IsCancel="True" 
-                    Width="100" Height="35" Background="#E0E0E0" BorderThickness="0" Cursor="Hand"/>
+                <Button x:Name="btnCancel" Content="취소" IsCancel="True"
+                    Width="100" Style="{StaticResource DialogSecondaryButtonStyle}"/>
         </StackPanel>
     </Grid>
 </Window>

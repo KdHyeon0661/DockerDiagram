@@ -1,10 +1,10 @@
-using DockerDiagram.Contracts;
-using DockerDiagram.Models;
-using DockerDiagram.ViewModels;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using DockerDiagram.Contracts;
+using DockerDiagram.Models;
+using DockerDiagram.ViewModels;
 
 namespace DockerDiagram.Views
 {
@@ -51,7 +51,7 @@ namespace DockerDiagram.Views
             }
 
             IsEnabled = false;
-            StatusText.Text = "Checking local Swarm manager...";
+            StatusText.Text = "로컬 Swarm Manager를 확인하는 중...";
 
             try
             {
@@ -102,7 +102,7 @@ namespace DockerDiagram.Views
                 return;
             }
 
-            var dialog = new SwarmSetupDialog(swarmService, _dialogService, _mainVm.DockerServiceFactory) { Owner = this };
+            using var dialog = new SwarmSetupDialog(swarmService, _dialogService, _mainVm.DockerServiceFactory) { Owner = this };
             if (dialog.ShowDialog() == true && dialog.WasInitialized)
             {
                 OpenLocalRuntime(RuntimeKind.DockerSwarm);

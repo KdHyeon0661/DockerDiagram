@@ -4,7 +4,10 @@ namespace DockerDiagram.Contracts
 {
     public interface IComposeService
     {
-        Task<ComposeCommandResult> UpAsync(string composeFilePath, ConnectionProfile profile);
+        Task<ComposeCommandResult> UpAsync(
+            string composeFilePath,
+            ConnectionProfile profile,
+            CancellationToken cancellationToken = default);
     }
 
     public class ComposeCommandResult

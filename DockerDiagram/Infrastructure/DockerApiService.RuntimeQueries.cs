@@ -1,17 +1,13 @@
-using DockerDiagram.Contracts;
-using Docker.DotNet;
+using System.Diagnostics;
+using System.IO;
+using System.Net.Http;
+using System.Threading;
 using Docker.DotNet.Models;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using System.Diagnostics;
-using System.Formats.Tar;
-using System.IO;
-using System.Net.Http;
-using System.Reflection;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading;
 
 namespace DockerDiagram.Infrastructure
 {
@@ -28,7 +24,8 @@ namespace DockerDiagram.Infrastructure
         {
             try
             {
-                await _client.System.PingAsync();
+                using var timeout = new CancellationTokenSource(DockerHealthCheckTimeout);
+                await _client.System.PingAsync(timeout.Token);
                 return true;
             }
             catch
@@ -70,7 +67,8 @@ namespace DockerDiagram.Infrastructure
 
                 var parameters = new ContainerEventsParameters
                 {
-                    Since = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
+                    Since = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                        .ToString(System.Globalization.CultureInfo.InvariantCulture),
                     Filters = filters
                 };
 
@@ -105,63 +103,21 @@ namespace DockerDiagram.Infrastructure
                     return _systemDiskUsageCache;
                 }
 
-                var imagesTask = _client.Images.ListImagesAsync(
-                    new ImagesListParameters { All = true });
-                var containersTask = _client.Containers.ListContainersAsync(
-                    new ContainersListParameters { All = true, Size = true });
-                var volumesTask = _client.Volumes.ListAsync();
+                // 일반 images/containers/volumes 목록을 합치면 Volume.UsageData가 채워지지 않아
+                // 실제 크기를 알 수 없는 볼륨도 0 B로 오인하게 된다. Docker가 크기와 참조 수를
+                // 계산해서 반환하는 공식 system/df 응답을 그대로 사용한다.
+                SystemDiskUsage usage = await MakeRawDockerRequestAsync<SystemDiskUsage>(
+                    HttpMethod.Get,
+                    "system/df");
+                bool hasBuildCacheData = usage.BuildCache != null;
+                usage.Images ??= [];
+                usage.Containers ??= [];
+                usage.Volumes ??= [];
+                usage.BuildCache ??= [];
+                usage.HasLayersSize = true;
+                usage.HasBuildCacheData = hasBuildCacheData;
 
-                await Task.WhenAll(imagesTask, containersTask, volumesTask);
-
-                var imageRows = imagesTask.Result.Select(image => new SystemDiskUsageImage
-                {
-                    Id = image.ID,
-                    ParentId = image.ParentID,
-                    RepoTags = image.RepoTags?.ToList(),
-                    RepoDigests = image.RepoDigests?.ToList(),
-                    Created = ToUnixTimeSeconds(image.Created),
-                    Size = image.Size,
-                    SharedSize = image.SharedSize,
-                    VirtualSize = image.VirtualSize,
-                    Containers = image.Containers <= 0
-                        ? 0
-                        : (int)Math.Min(int.MaxValue, image.Containers)
-                }).ToList();
-
-                var containerRows = containersTask.Result.Select(container => new SystemDiskUsageContainer
-                {
-                    Id = container.ID,
-                    Names = container.Names?.ToList(),
-                    Image = container.Image,
-                    State = container.State,
-                    SizeRw = container.SizeRw,
-                    SizeRootFs = container.SizeRootFs
-                }).ToList();
-
-                var volumeRows = (volumesTask.Result.Volumes ?? [])
-                    .Select(volume => new SystemDiskUsageVolume
-                    {
-                        Name = volume.Name,
-                        Driver = volume.Driver,
-                        Mountpoint = volume.Mountpoint,
-                        UsageData = volume.UsageData == null
-                            ? null
-                            : new SystemDiskUsageUsageData
-                            {
-                                Size = volume.UsageData.Size,
-                                RefCount = volume.UsageData.RefCount
-                            }
-                    })
-                    .ToList();
-
-                _systemDiskUsageCache = new SystemDiskUsage
-                {
-                    Images = imageRows,
-                    Containers = containerRows,
-                    Volumes = volumeRows,
-                    HasLayersSize = false,
-                    HasBuildCacheData = false
-                };
+                _systemDiskUsageCache = usage;
                 _systemDiskUsageCacheAt = DateTimeOffset.UtcNow;
                 return _systemDiskUsageCache;
             }
@@ -171,38 +127,340 @@ namespace DockerDiagram.Infrastructure
             }
         }
 
-        private static long ToUnixTimeSeconds(DateTime value)
+        private void InvalidateSystemDiskUsageCache()
         {
-            if (value == default) return 0;
-
-            DateTime utc = value.Kind == DateTimeKind.Unspecified
-                ? DateTime.SpecifyKind(value, DateTimeKind.Utc)
-                : value.ToUniversalTime();
-            return new DateTimeOffset(utc).ToUnixTimeSeconds();
+            _systemDiskUsageCache = null;
+            _systemDiskUsageCacheAt = DateTimeOffset.MinValue;
         }
+
         public async Task<DockerPruneResult> PruneAsync(DockerPruneOptions options)
         {
-            var path = options.Target switch
-            {
-                DockerPruneTarget.Container => "containers/prune",
-                DockerPruneTarget.Image => options.AllImages
-                    ? $"images/prune?filters={Uri.EscapeDataString("{\"dangling\":{\"false\":true}}")}"
-                    : "images/prune",
-                DockerPruneTarget.Volume => "volumes/prune",
-                DockerPruneTarget.Network => "networks/prune",
-                DockerPruneTarget.System => BuildSystemPrunePath(options),
-                _ => throw new NotSupportedException($"지원하지 않는 prune 대상입니다: {options.Target}")
-            };
+            ArgumentNullException.ThrowIfNull(options);
 
-            return await MakeRawDockerRequestAsync<DockerPruneResult>(HttpMethod.Post, path);
+            try
+            {
+                if (options.Resources != DockerPruneResource.None)
+                    return await PruneSelectedResourcesAsync(options);
+
+                if (options.Target == DockerPruneTarget.AllResources)
+                    return await PruneAllResourcesAsync();
+
+                if (options.Target == DockerPruneTarget.System)
+                    return await PruneSystemAsync(options);
+
+                string path = options.Target switch
+                {
+                    DockerPruneTarget.Container => "containers/prune",
+                    DockerPruneTarget.Image => BuildImagePrunePath(options.AllImages),
+                    DockerPruneTarget.Volume => "volumes/prune",
+                    DockerPruneTarget.Network => "networks/prune",
+                    _ => throw new NotSupportedException($"지원하지 않는 prune 대상입니다: {options.Target}")
+                };
+
+                return await MakeRawDockerRequestAsync<DockerPruneResult>(HttpMethod.Post, path);
+            }
+            finally
+            {
+                // 성공과 부분 실패 모두 디스크 상태를 바꿀 수 있으므로 다음 조회는 반드시 새로 읽는다.
+                InvalidateSystemDiskUsageCache();
+            }
         }
 
-        private static string BuildSystemPrunePath(DockerPruneOptions options)
+        private async Task<DockerPruneResult> PruneSelectedResourcesAsync(DockerPruneOptions options)
         {
-            var query = new List<string>();
-            if (options.AllImages) query.Add("all=1");
-            if (options.IncludeVolumes) query.Add("volumes=1");
-            return query.Count == 0 ? "system/prune" : $"system/prune?{string.Join("&", query)}";
+            var aggregate = new DockerPruneResult();
+            DockerPruneResource resources = options.EffectiveResources;
+
+            if (resources.HasFlag(DockerPruneResource.Containers))
+                await PruneSelectedContainersAsync(options.IncludeRunningContainers, aggregate);
+
+            if (resources.HasFlag(DockerPruneResource.Networks))
+            {
+                await MergePruneStepAsync(
+                    aggregate,
+                    "네트워크",
+                    () => MakeRawDockerRequestAsync<DockerPruneResult>(HttpMethod.Post, "networks/prune"));
+            }
+
+            if (resources.HasFlag(DockerPruneResource.Images))
+            {
+                await MergePruneStepAsync(
+                    aggregate,
+                    "이미지",
+                    () => MakeRawDockerRequestAsync<DockerPruneResult>(
+                        HttpMethod.Post,
+                        BuildImagePrunePath(options.AllImages)));
+            }
+
+            if (resources.HasFlag(DockerPruneResource.BuildCache))
+            {
+                await MergePruneStepAsync(
+                    aggregate,
+                    "빌드 캐시",
+                    () => MakeRawDockerRequestAsync<DockerPruneResult>(
+                        HttpMethod.Post,
+                        BuildCachePrunePath(all: true)));
+            }
+
+            if (resources.HasFlag(DockerPruneResource.Volumes))
+                await PruneSelectedVolumesAsync(options, aggregate);
+
+            return aggregate;
+        }
+
+        private async Task PruneSelectedContainersAsync(
+            bool includeRunningContainers,
+            DockerPruneResult aggregate)
+        {
+            List<DockerContainer> containers;
+            try
+            {
+                containers = await GetContainersAsync();
+            }
+            catch (Exception ex)
+            {
+                aggregate.Failures.Add($"컨테이너 목록 조회: {ex.Message}");
+                return;
+            }
+
+            foreach (DockerContainer container in containers)
+            {
+                // 오케스트레이터가 다시 생성하거나 상태를 관리하는 대상은 선택과 무관하게 보호한다.
+                if (DockerPruneSafety.IsOrchestratorManaged(container.Labels))
+                    continue;
+
+                bool isActive = IsActiveContainer(container);
+                if (isActive && !includeRunningContainers)
+                    continue;
+
+                try
+                {
+                    if (isActive)
+                    {
+                        try
+                        {
+                            if (container.State.Equals("paused", StringComparison.OrdinalIgnoreCase))
+                                await UnpauseContainerAsync(container.Id);
+
+                            await StopContainerAsync(container.Id);
+                        }
+                        catch (Exception stopException)
+                        {
+                            // 사용자가 실행 중 삭제를 명시했으므로 정상 종료 실패 시 강제 삭제로 이어 간다.
+                            AppLog.Warning(
+                                $"컨테이너 '{container.Name}' 정상 종료 실패; 강제 삭제로 전환합니다.",
+                                stopException);
+                        }
+                    }
+
+                    await RemoveContainerAsync(container.Id);
+                    if (!aggregate.ContainersDeleted.Contains(container.Id, StringComparer.OrdinalIgnoreCase))
+                        aggregate.ContainersDeleted.Add(container.Id);
+                }
+                catch (Exception ex)
+                {
+                    aggregate.Failures.Add(
+                        $"컨테이너 {DisplayContainerForPrune(container)}: {ex.Message}");
+                }
+            }
+        }
+
+        private async Task PruneSelectedVolumesAsync(
+            DockerPruneOptions options,
+            DockerPruneResult aggregate)
+        {
+            List<DockerVolume> volumes;
+            try
+            {
+                volumes = await GetVolumesAsync();
+            }
+            catch (Exception ex)
+            {
+                aggregate.Failures.Add($"볼륨 목록 조회: {ex.Message}");
+                return;
+            }
+
+            foreach (DockerVolume volume in volumes)
+            {
+                if (string.IsNullOrWhiteSpace(volume.Name))
+                    continue;
+
+                bool anonymous = IsAnonymousVolume(volume);
+                if (anonymous && !options.IncludeAnonymousVolumes ||
+                    !anonymous && !options.IncludeNamedVolumes)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    List<string> users = await GetContainersUsingVolumeAsync(volume.Name);
+                    if (users.Count > 0)
+                        continue;
+
+                    await RemoveVolumeAsync(volume.Name, force: false);
+                    if (!aggregate.VolumesDeleted.Contains(volume.Name, StringComparer.OrdinalIgnoreCase))
+                        aggregate.VolumesDeleted.Add(volume.Name);
+                }
+                catch (Exception ex)
+                {
+                    aggregate.Failures.Add($"볼륨 {volume.Name}: {ex.Message}");
+                }
+            }
+        }
+
+        private static bool IsAnonymousVolume(DockerVolume volume)
+        {
+            if (volume.Labels.ContainsKey("com.docker.volume.anonymous"))
+                return true;
+
+            return volume.Name.Length == 64 && volume.Name.All(Uri.IsHexDigit);
+        }
+
+        private static string DisplayContainerForPrune(DockerContainer container) =>
+            !string.IsNullOrWhiteSpace(container.Name)
+                ? container.Name
+                : DockerIdFormatter.Shorten(container.Id);
+
+        private static async Task MergePruneStepAsync(
+            DockerPruneResult aggregate,
+            string stepName,
+            Func<Task<DockerPruneResult>> action)
+        {
+            try
+            {
+                MergePruneResult(aggregate, await action());
+            }
+            catch (Exception ex)
+            {
+                aggregate.Failures.Add($"{stepName}: {ex.Message}");
+            }
+        }
+
+        private async Task<DockerPruneResult> PruneAllResourcesAsync()
+        {
+            List<DockerContainer> containers = await GetContainersAsync();
+            List<DockerContainer> orchestratorManaged = containers
+                .Where(container => DockerPruneSafety.IsOrchestratorManaged(container.Labels))
+                .ToList();
+
+            if (orchestratorManaged.Count > 0)
+            {
+                string names = string.Join(", ", orchestratorManaged
+                    .Take(5)
+                    .Select(container => string.IsNullOrWhiteSpace(container.Name) ? container.Id : container.Name));
+                string remainder = orchestratorManaged.Count > 5
+                    ? $" 외 {orchestratorManaged.Count - 5}개"
+                    : string.Empty;
+                throw new InvalidOperationException(
+                    $"Swarm 또는 Kubernetes가 관리하는 컨테이너가 있어 전체 삭제를 중단했습니다: {names}{remainder}. " +
+                    "해당 오케스트레이터에서 서비스나 워크로드를 먼저 삭제한 뒤 다시 실행하세요.");
+            }
+
+            var forceRemoved = new List<string>();
+            foreach (DockerContainer container in containers.Where(IsActiveContainer))
+            {
+                try
+                {
+                    if (container.State.Equals("paused", StringComparison.OrdinalIgnoreCase))
+                        await UnpauseContainerAsync(container.Id);
+
+                    await StopContainerAsync(container.Id);
+                }
+                catch (Exception ex)
+                {
+                    // 정상 종료가 불가능해도 사용자가 선택한 '전체 삭제' 의미를 지키기 위해
+                    // Docker의 강제 삭제로 이어 간다. 이 호출도 실패하면 예외를 전달한다.
+                    AppLog.Warning(
+                        $"컨테이너 '{container.Name}' 정상 종료 실패; 강제 삭제로 전환합니다.",
+                        ex);
+                    await RemoveContainerAsync(container.Id);
+                    forceRemoved.Add(container.Id);
+                }
+            }
+
+            var options = new DockerPruneOptions
+            {
+                Target = DockerPruneTarget.System,
+                AllImages = true,
+                IncludeVolumes = true
+            };
+            DockerPruneResult result = await PruneSystemAsync(options, includeNamedVolumes: true);
+            foreach (string containerId in forceRemoved)
+            {
+                if (!result.ContainersDeleted.Contains(containerId, StringComparer.OrdinalIgnoreCase))
+                    result.ContainersDeleted.Add(containerId);
+            }
+
+            return result;
+        }
+
+        private static bool IsActiveContainer(DockerContainer container) =>
+            container.State.Equals("running", StringComparison.OrdinalIgnoreCase) ||
+            container.State.Equals("paused", StringComparison.OrdinalIgnoreCase) ||
+            container.State.Equals("restarting", StringComparison.OrdinalIgnoreCase);
+
+        private async Task<DockerPruneResult> PruneSystemAsync(
+            DockerPruneOptions options,
+            bool includeNamedVolumes = false)
+        {
+            // Docker Engine API에는 /system/prune 엔드포인트가 없다. docker system prune CLI처럼
+            // 각 리소스의 prune API를 순서대로 호출하고 결과를 하나로 합친다.
+            var aggregate = new DockerPruneResult();
+
+            MergePruneResult(aggregate, await MakeRawDockerRequestAsync<DockerPruneResult>(
+                HttpMethod.Post,
+                "containers/prune"));
+            MergePruneResult(aggregate, await MakeRawDockerRequestAsync<DockerPruneResult>(
+                HttpMethod.Post,
+                "networks/prune"));
+            MergePruneResult(aggregate, await MakeRawDockerRequestAsync<DockerPruneResult>(
+                HttpMethod.Post,
+                BuildImagePrunePath(options.AllImages)));
+            MergePruneResult(aggregate, await MakeRawDockerRequestAsync<DockerPruneResult>(
+                HttpMethod.Post,
+                BuildCachePrunePath(options.AllImages)));
+
+            if (options.IncludeVolumes)
+            {
+                MergePruneResult(aggregate, await MakeRawDockerRequestAsync<DockerPruneResult>(
+                    HttpMethod.Post,
+                    "volumes/prune"));
+
+                if (includeNamedVolumes)
+                {
+                    List<DockerVolume> remainingVolumes = await GetVolumesAsync();
+                    foreach (DockerVolume volume in remainingVolumes)
+                    {
+                        if (string.IsNullOrWhiteSpace(volume.Name)) continue;
+
+                        await RemoveVolumeAsync(volume.Name, force: false);
+                        if (!aggregate.VolumesDeleted.Contains(volume.Name, StringComparer.OrdinalIgnoreCase))
+                            aggregate.VolumesDeleted.Add(volume.Name);
+                    }
+                }
+            }
+
+            return aggregate;
+        }
+
+        private static string BuildImagePrunePath(bool allImages) =>
+            allImages
+                ? $"images/prune?filters={Uri.EscapeDataString("{\"dangling\":{\"false\":true}}")}"
+                : "images/prune";
+
+        private static string BuildCachePrunePath(bool all) =>
+            all ? "build/prune?all=1" : "build/prune";
+
+        private static void MergePruneResult(DockerPruneResult aggregate, DockerPruneResult result)
+        {
+            aggregate.ContainersDeleted.AddRange(result.ContainersDeleted);
+            aggregate.ImagesDeleted.AddRange(result.ImagesDeleted);
+            aggregate.VolumesDeleted.AddRange(result.VolumesDeleted);
+            aggregate.NetworksDeleted.AddRange(result.NetworksDeleted);
+            aggregate.BuildCacheDeleted.AddRange(result.BuildCacheDeleted);
+            aggregate.Failures.AddRange(result.Failures);
+            aggregate.SpaceReclaimed += result.SpaceReclaimed;
         }
 
         private async Task<T> MakeRawDockerRequestAsync<T>(HttpMethod method, string path, object? body = null, CancellationToken cancellationToken = default)
@@ -219,105 +477,8 @@ namespace DockerDiagram.Infrastructure
 
         private async Task<string> MakeRawDockerApiRequestAsync(HttpMethod method, string path, object? body = null, CancellationToken cancellationToken = default)
         {
-            (string requestPath, string? rawQuery) = SplitRawDockerTarget(path);
-            var requestMethod = typeof(DockerClient)
-                .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                .FirstOrDefault(m =>
-                    m.Name == "MakeRequestAsync" &&
-                    !m.IsGenericMethodDefinition &&
-                    m.GetParameters().Length == 8)
-                ?? throw new NotSupportedException("Docker.DotNet raw request API를 찾을 수 없습니다.");
-            object? queryString = rawQuery == null
-                ? null
-                : RawDockerQueryStringProxy.Create(
-                    requestMethod.GetParameters()[3].ParameterType,
-                    rawQuery);
-
-            var errorHandlerType = requestMethod.GetParameters()[0].ParameterType.GetGenericArguments()[0];
-            var errorHandlers = Array.CreateInstance(errorHandlerType, 0);
-
-            var task = requestMethod.Invoke(_client, new object?[]
-            {
-                errorHandlers,
-                method,
-                requestPath,
-                queryString,
-                CreateRawRequestContent(body),
-                null,
-                TimeSpan.FromSeconds(CurrentProfile.Type == EndpointType.SshRemote ? 20 : 10),
-                cancellationToken
-            }) as Task;
-
-            if (task == null)
-            {
-                throw new InvalidOperationException($"Docker API 요청을 시작할 수 없습니다: {path}");
-            }
-
-            await task.ConfigureAwait(false);
-
-            var response = task.GetType().GetProperty("Result")?.GetValue(task);
-            var responseBody = response?.GetType()
-                .GetProperty("Body", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                ?.GetValue(response) as string;
-
-            return responseBody ?? string.Empty;
-        }
-
-        private static (string Path, string? QueryString) SplitRawDockerTarget(string target)
-        {
-            int separator = target.IndexOf('?');
-            if (separator < 0)
-                return (target, null);
-
-            string path = target[..separator];
-            string query = target[(separator + 1)..];
-            return (path, query.Length == 0 ? null : query);
-        }
-
-        private class RawDockerQueryStringProxy : DispatchProxy
-        {
-            private string _value = string.Empty;
-
-            public static object Create(Type queryStringType, string value)
-            {
-                object proxy = Create(queryStringType, typeof(RawDockerQueryStringProxy));
-                ((RawDockerQueryStringProxy)proxy)._value = value;
-                return proxy;
-            }
-
-            protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-            {
-                if (targetMethod?.Name == "GetQueryString") return _value;
-                throw new NotSupportedException($"지원하지 않는 Docker query string 호출입니다: {targetMethod?.Name}");
-            }
-        }
-
-        private static object? CreateRawRequestContent(object? body)
-        {
-            if (body == null) return null;
-
-            var contentDefinition = typeof(DockerClient).Assembly.GetType("Docker.DotNet.JsonRequestContent`1")
-                ?? throw new NotSupportedException("Docker.DotNet JsonRequestContent API를 찾을 수 없습니다.");
-            var contentType = contentDefinition.MakeGenericType(body.GetType());
-
-            foreach (var ctor in contentType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                         .OrderBy(ctor => ctor.GetParameters().Length))
-            {
-                var parameters = ctor.GetParameters();
-                if (parameters.Length == 2 &&
-                    parameters[1].ParameterType.FullName == "Docker.DotNet.JsonSerializer")
-                {
-                    var serializer = Activator.CreateInstance(parameters[1].ParameterType, nonPublic: true)
-                        ?? throw new NotSupportedException("Docker.DotNet JsonSerializer를 만들 수 없습니다.");
-                    return ctor.Invoke(new object?[]
-                    {
-                        body,
-                        serializer
-                    });
-                }
-            }
-
-            throw new NotSupportedException("Docker.DotNet JsonRequestContent 생성자를 찾을 수 없습니다.");
+            return await _rawApiClient.SendAsync(method, path, body, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         // =========================================================
@@ -343,17 +504,13 @@ namespace DockerDiagram.Infrastructure
                     var ports = new List<string>();
                     foreach (var p in c.Ports ?? Enumerable.Empty<Docker.DotNet.Models.Port>())
                     {
-                        var proto = string.IsNullOrWhiteSpace(p.Type) ? "tcp" : p.Type;
+                        // Docker 목록 API에는 Dockerfile EXPOSE처럼 호스트에 게시되지 않은
+                        // 컨테이너 전용 포트도 PublicPort=0으로 포함됩니다.
+                        if (p.PublicPort == 0) continue;
 
-                        if (p.PublicPort > 0)
-                        {
-                            var ipPrefix = string.IsNullOrWhiteSpace(p.IP) ? "" : $"{p.IP}:";
-                            ports.Add($"{ipPrefix}{p.PublicPort}->{p.PrivatePort}/{proto}");
-                        }
-                        else
-                        {
-                            ports.Add($"{p.PrivatePort}/{proto}");
-                        }
+                        var proto = string.IsNullOrWhiteSpace(p.Type) ? "tcp" : p.Type;
+                        var ipPrefix = string.IsNullOrWhiteSpace(p.IP) ? "" : $"{p.IP}:";
+                        ports.Add($"{ipPrefix}{p.PublicPort}->{p.PrivatePort}/{proto}");
                     }
                     portStr = string.Join(", ", ports);
                 }
@@ -402,10 +559,10 @@ namespace DockerDiagram.Infrastructure
         {
             return state?.Trim().ToLowerInvariant() switch
             {
-                "running" => "#28a745",
-                "paused" or "restarting" => "#ffc107",
-                "exited" or "dead" => "#dc3545",
-                _ => "#808080"
+                "running" => StatusColors.Running,
+                "paused" or "restarting" => StatusColors.InProgress,
+                "exited" or "dead" => StatusColors.Failed,
+                _ => StatusColors.Unknown
             };
         }
 
@@ -413,7 +570,9 @@ namespace DockerDiagram.Infrastructure
         /// Docker /info 응답으로 현재 엔진의 Swarm 가입 상태와 로컬 역할을 판별합니다.
         /// nodes API는 Manager 전용이므로 상태 판별에는 사용하지 않습니다.
         /// </summary>
-        public Task<SwarmClusterState> GetSwarmStateAsync() => GetSwarmStateCoreAsync(CancellationToken.None);
+        public Task<SwarmClusterState> GetSwarmStateAsync(
+            CancellationToken cancellationToken = default) =>
+            GetSwarmStateCoreAsync(cancellationToken);
 
         private async Task<SwarmClusterState> GetSwarmStateCoreAsync(CancellationToken cancellationToken)
         {
@@ -476,7 +635,7 @@ namespace DockerDiagram.Infrastructure
                 cancellationToken);
             // Docker.DotNet은 init의 JSON 문자열 응답 본문을 그대로 반환합니다.
             string nodeId = response.Trim();
-            if (nodeId.StartsWith("\"", StringComparison.Ordinal))
+            if (nodeId.StartsWith('"'))
                 nodeId = JsonConvert.DeserializeObject<string>(nodeId) ?? string.Empty;
             if (string.IsNullOrWhiteSpace(nodeId))
                 throw new InvalidOperationException("Swarm 초기화 응답에 Node ID가 없습니다. 현재 상태를 다시 확인해 주세요.");
@@ -588,8 +747,8 @@ namespace DockerDiagram.Infrastructure
                     SwarmDesiredReplicas = desired,
                     SwarmRunningReplicas = running,
                     StateColor = running > 0 || mode.Equals("global", StringComparison.OrdinalIgnoreCase)
-                        ? "#28a745"
-                        : "#808080"
+                        ? StatusColors.Running
+                        : StatusColors.Unknown
                 };
             }).ToList();
         }
@@ -710,7 +869,7 @@ namespace DockerDiagram.Infrastructure
 
             if (mode["Replicated"] is not JObject replicated)
             {
-                replicated = new JObject();
+                replicated = [];
                 mode["Replicated"] = replicated;
             }
 
@@ -926,7 +1085,9 @@ namespace DockerDiagram.Infrastructure
                 namespaceName,
                 "--all-containers=true",
                 "--tail",
-                tailCount <= 0 ? "-1" : tailCount.ToString());
+                tailCount <= 0
+                    ? "-1"
+                    : tailCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         public async Task ScaleKubernetesDeploymentAsync(string namespaceName, string deploymentName, int replicas)
@@ -942,7 +1103,7 @@ namespace DockerDiagram.Infrastructure
                 "-n",
                 namespaceName,
                 "--replicas",
-                replicas.ToString());
+                replicas.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         public async Task RolloutRestartKubernetesResourceAsync(string apiResource, string namespaceName, string resourceName)
@@ -1066,6 +1227,7 @@ namespace DockerDiagram.Infrastructure
 
         private static async Task<string> RunKubectlAsync(params string[] args)
         {
+            using var timeout = new CancellationTokenSource(SwarmOperationTiming.RuntimeQueryTimeout);
             var startInfo = new ProcessStartInfo
             {
                 FileName = "kubectl",
@@ -1081,9 +1243,31 @@ namespace DockerDiagram.Infrastructure
             using var process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("kubectl 프로세스를 시작할 수 없습니다.");
 
-            string stdout = await process.StandardOutput.ReadToEndAsync();
-            string stderr = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
+            Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            Task<string> stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token);
+                await Task.WhenAll(stdoutTask, stderrTask);
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                try
+                {
+                    if (!process.HasExited)
+                        process.Kill(entireProcessTree: true);
+                }
+                catch (Exception killException)
+                {
+                    AppLog.Warning("취소된 kubectl 프로세스 종료 실패", killException);
+                }
+
+                throw new TimeoutException("kubectl 명령이 60초 안에 완료되지 않아 중단했습니다.");
+            }
+
+            string stdout = await stdoutTask;
+            string stderr = await stderrTask;
 
             if (process.ExitCode != 0)
                 throw new InvalidOperationException(string.IsNullOrWhiteSpace(stderr) ? $"kubectl failed with exit code {process.ExitCode}." : stderr.Trim());
@@ -1220,10 +1404,10 @@ namespace DockerDiagram.Infrastructure
         {
             return state.ToLowerInvariant() switch
             {
-                "running" or "ready" or "succeeded" or "available" or "bound" or "service" or "configmap" or "secret" or "ingress" => "#28a745",
-                "pending" or "containercreating" or "progressing" or "scaled 0" => "#ffc107",
-                "failed" or "notready" or "unknown" or "lost" => "#dc3545",
-                _ => "#808080"
+                "running" or "ready" or "succeeded" or "available" or "bound" or "service" or "configmap" or "secret" or "ingress" => StatusColors.Running,
+                "pending" or "containercreating" or "progressing" or "scaled 0" => StatusColors.InProgress,
+                "failed" or "notready" or "unknown" or "lost" => StatusColors.Failed,
+                _ => StatusColors.Unknown
             };
         }
 
@@ -1262,10 +1446,10 @@ namespace DockerDiagram.Infrastructure
         {
             return state.ToLowerInvariant() switch
             {
-                "running" or "complete" => "#28a745",
-                "new" or "pending" or "assigned" or "accepted" or "preparing" or "ready" or "starting" => "#ffc107",
-                "failed" or "rejected" or "shutdown" or "orphaned" or "remove" => "#dc3545",
-                _ => "#808080"
+                "running" or "complete" => StatusColors.Running,
+                "new" or "pending" or "assigned" or "accepted" or "preparing" or "ready" or "starting" => StatusColors.InProgress,
+                "failed" or "rejected" or "shutdown" or "orphaned" or "remove" => StatusColors.Failed,
+                _ => StatusColors.Unknown
             };
         }
 
@@ -1273,9 +1457,9 @@ namespace DockerDiagram.Infrastructure
         {
             return state.ToLowerInvariant() switch
             {
-                "ready" => "#28a745",
-                "down" or "disconnected" or "unknown" => "#dc3545",
-                _ => "#808080"
+                "ready" => StatusColors.Running,
+                "down" or "disconnected" or "unknown" => StatusColors.Failed,
+                _ => StatusColors.Unknown
             };
         }
     }

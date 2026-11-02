@@ -1,4 +1,5 @@
 using DockerDiagram.ApplicationServices;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.Tests;
 
@@ -8,7 +9,7 @@ public sealed class ComposeVolumeSyntaxTests
     [InlineData("cache:/var/cache/app", "cache", "/var/cache/app")]
     [InlineData("cache:/var/cache/app:ro", "cache", "/var/cache/app")]
     [InlineData("C:\\\\host\\config:/etc/app:rw", "C:\\\\host\\config", "/etc/app")]
-    public void ShortVolumeSyntax_SeparatesSourceTargetAndMode(
+    public void ShortVolumeSyntaxSeparatesSourceTargetAndMode(
         string value,
         string expectedSource,
         string expectedTarget)
@@ -17,11 +18,17 @@ public sealed class ComposeVolumeSyntaxTests
 
         Assert.Equal(expectedSource, mount.Source);
         Assert.Equal(expectedTarget, mount.Target);
+        Assert.Equal(ContainerMountParser.IsBindSource(expectedSource) ? MountKind.Bind : MountKind.Volume, mount.Kind);
+        Assert.Equal(value.EndsWith(":ro", StringComparison.OrdinalIgnoreCase), mount.ReadOnly);
     }
 
     [Fact]
-    public void AnonymousVolumeTarget_IsNotInventedAsNamedSource()
+    public void AnonymousVolumeTargetIsNotInventedAsNamedSource()
     {
-        Assert.Empty(ComposeYamlHelper.ToVolumeMounts("/var/lib/app"));
+        VolumeMountInfo mount = Assert.Single(ComposeYamlHelper.ToVolumeMounts("/var/lib/app"));
+
+        Assert.Equal(MountKind.Volume, mount.Kind);
+        Assert.Equal(string.Empty, mount.Source);
+        Assert.Equal("/var/lib/app", mount.Target);
     }
 }

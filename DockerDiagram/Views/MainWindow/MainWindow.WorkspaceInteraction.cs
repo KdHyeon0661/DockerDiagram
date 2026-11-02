@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Windows;
 using System.Windows.Controls;
@@ -5,7 +6,6 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using System.Diagnostics;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
@@ -85,21 +85,8 @@ namespace DockerDiagram
         /// </summary>
         private void ClearSheet_Click(object sender, RoutedEventArgs e)
         {
-            // 우클릭한 메뉴 아이템에서 데이터(SheetViewModel)를 가져옴
             if (sender is MenuItem menuItem && menuItem.DataContext is SheetViewModel targetSheet)
-            {
-                // 확인 메시지 띄우기
-                bool isConfirmed = _dialogService.ShowConfirm(
-                    $"'{targetSheet.Title}' 시트의 모든 내용을 지우시겠습니까?\n(컨테이너, 연결선, 그룹이 모두 삭제됩니다)", "시트 비우기");
-
-                if (isConfirmed)
-                {
-                    // 해당 시트의 내용물만 싹 비움
-                    targetSheet.Nodes.Clear();
-                    targetSheet.Connectors.Clear();
-                    targetSheet.Groups.Clear();
-                }
-            }
+                ViewModel.SheetManager.ClearSheetContents(targetSheet);
         }
 
         /// <summary>
@@ -140,8 +127,29 @@ namespace DockerDiagram
             if (sender is not FrameworkElement border) return;
             _movingGroup = border.DataContext as GroupViewModel;
 
-            if (_movingGroup != null)
+            if (_movingGroup != null && DataContext is MainViewModel mainVm)
             {
+                bool additive = IsAdditiveSelectionModifier();
+                if (additive)
+                    mainVm.Inspector.ToggleCanvasItem(_movingGroup);
+                else if (!mainVm.Inspector.IsCanvasItemSelected(_movingGroup))
+                    mainVm.Inspector.SelectCanvasItem(_movingGroup, additive: false);
+
+                if (!mainVm.Inspector.IsCanvasItemSelected(_movingGroup))
+                {
+                    _movingGroup = null;
+                    e.Handled = true;
+                    return;
+                }
+
+                if (mainVm.Inspector.SelectedCanvasItems.Count > 1)
+                {
+                    BeginSelectionMove(border, e, mainVm);
+                    _movingGroup = null;
+                    e.Handled = true;
+                    return;
+                }
+
                 _isGroupMoving = true;
                 Point mouseWorld = GetWorldPosition(e);
                 _groupClickOffset = new Point(mouseWorld.X - _movingGroup.X, mouseWorld.Y - _movingGroup.Y);
@@ -161,7 +169,9 @@ namespace DockerDiagram
             var vm = DataContext as MainViewModel;
             if (vm != null && groupVm != null)
             {
-                vm.Inspector.SelectedElement = groupVm;
+                vm.Inspector.SelectCanvasItem(
+                    groupVm,
+                    additive: IsAdditiveSelectionModifier());
             }
             e.Handled = true;
         }
@@ -260,7 +270,7 @@ namespace DockerDiagram
             {
                 _renamingSheet = sheet;
                 _renamingWorkspace = null;
-                txtRenameTitle.Text = "Rename Sheet";
+                txtRenameTitle.Text = "시트 이름 변경";
                 txtRename.Text = sheet.Title;
                 RenameOverlay.Visibility = Visibility.Visible;
                 txtRename.Focus();
@@ -277,7 +287,7 @@ namespace DockerDiagram
             {
                 _renamingWorkspace = workspace;
                 _renamingSheet = null;
-                txtRenameTitle.Text = "Rename Connection";
+                txtRenameTitle.Text = "연결 이름 변경";
                 txtRename.Text = workspace.DisplayName;
                 RenameOverlay.Visibility = Visibility.Visible;
                 txtRename.Focus();
@@ -399,7 +409,7 @@ namespace DockerDiagram
                 return;
             }
 
-            if (_dialogService.ShowConfirm($"'{workspace.DisplayName}' 연결을 삭제하시겠습니까?\n이 연결 안의 시트도 목록에서 제거됩니다.", "Connection Delete"))
+            if (_dialogService.ShowConfirm($"'{workspace.DisplayName}' 연결을 삭제하시겠습니까?\n이 연결 안의 시트도 목록에서 제거됩니다.", "연결 삭제"))
             {
                 (DataContext as MainViewModel)?.SheetManager.RemoveWorkspace(workspace);
             }

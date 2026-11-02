@@ -1,11 +1,11 @@
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.Contracts;
-using DockerDiagram.Models;
-using DockerDiagram.ViewModels;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Contracts;
+using DockerDiagram.Models;
+using DockerDiagram.ViewModels;
 
 namespace DockerDiagram
 {
@@ -20,7 +20,7 @@ namespace DockerDiagram
                 return;
             }
 
-            IReadOnlyList<DockerSwarmNode> nodes = ViewModel.Explorer.SwarmNodes.ToList();
+            List<DockerSwarmNode> nodes = ViewModel.Explorer.SwarmNodes.ToList();
             if (nodes.Count == 0)
             {
                 _dialogService.ShowInfo("관리할 Swarm node가 없습니다.", "Manage Swarm Nodes");

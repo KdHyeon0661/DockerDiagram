@@ -14,6 +14,7 @@ namespace DockerDiagram.ApplicationServices
         public object? Ports { get; set; } // 문자열 리스트 또는 long syntax 맵 목록
         public object? Environment { get; set; } // 리스트 또는 key/value 맵
         public object? Volumes { get; set; } // 문자열 리스트 또는 long syntax 맵 목록
+        public object? Tmpfs { get; set; } // tmpfs 대상 경로 목록
         public object? DependsOn { get; set; } // 리스트 또는 condition 맵
 
         // 정적 IP가 있으면 딕셔너리, 없으면 단순 문자열 리스트로 처리하기 위해 object 타입 사용 (networks)
@@ -71,7 +72,7 @@ namespace DockerDiagram.ApplicationServices
     public class ComposeFileModel
     {
         public string? Name { get; set; }
-        public Dictionary<string, ComposeService> Services { get; set; } = new(); // compose 파일의 'services' 블록
+        public Dictionary<string, ComposeService> Services { get; set; } = []; // compose 파일의 'services' 블록
         public Dictionary<string, ComposeNetwork>? Networks { get; set; } // compose 파일의 'networks' 블록
         public Dictionary<string, object>? Volumes { get; set; } // compose 파일의 'volumes' 블록
         public Dictionary<string, object>? Secrets { get; set; }

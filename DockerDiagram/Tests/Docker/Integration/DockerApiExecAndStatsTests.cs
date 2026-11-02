@@ -6,8 +6,11 @@ namespace DockerDiagram.Tests;
 
 public sealed class DockerApiExecAndStatsTests
 {
+
+    private static readonly string[] ExecuteCommandUsesPlatformShellBeforeHijackedStreamBoundaryExpectedValues = new[] { "/bin/sh", "-c", "echo hello" };
+
     [Fact]
-    public async Task ExecuteCommand_UsesPlatformShellBeforeHijackedStreamBoundary()
+    public async Task ExecuteCommandUsesPlatformShellBeforeHijackedStreamBoundary()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""{"Id":"container-1","Platform":"linux"}"""),
@@ -21,12 +24,12 @@ public sealed class DockerApiExecAndStatsTests
         Assert.Equal(("GET", "/containers/container-1/json"), RequestIdentity(server.Requests[0]));
         Assert.Equal(("POST", "/containers/container-1/exec"), RequestIdentity(server.Requests[1]));
         JObject create = JObject.Parse(server.Requests[1].Body);
-        Assert.Equal(new[] { "/bin/sh", "-c", "echo hello" }, create["Cmd"]!.Values<string>());
+        Assert.Equal(ExecuteCommandUsesPlatformShellBeforeHijackedStreamBoundaryExpectedValues, create["Cmd"]!.Values<string>());
         Assert.Equal(("POST", "/exec/exec-1/start"), RequestIdentity(server.Requests[2]));
     }
 
     [Fact]
-    public async Task OpenTerminal_ReturnsFalseWhenNoCandidateShellExistsWithoutLaunchingHostProcess()
+    public async Task OpenTerminalReturnsFalseWhenNoCandidateShellExistsWithoutLaunchingHostProcess()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""{"Id":"container-1","Platform":"linux"}"""),
@@ -44,7 +47,7 @@ public sealed class DockerApiExecAndStatsTests
     }
 
     [Fact]
-    public async Task ContainerStats_MapsCpuDeltaAndMemoryBytes()
+    public async Task ContainerStatsMapsCpuDeltaAndMemoryBytes()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""

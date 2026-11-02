@@ -1,8 +1,8 @@
-using DockerDiagram.Infrastructure;
-using DockerDiagram.Diagram;
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.Contracts;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
 using System.Runtime.Versioning;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -10,7 +10,11 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using System.Diagnostics;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
+using DockerDiagram.Infrastructure;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
@@ -22,47 +26,47 @@ namespace DockerDiagram
     /// 사용자의 복잡한 시각적 상호작용(Interaction)을 감지하고 제어하여 MainViewModel로 전달하는 UI 컨트롤 타워 역할을 합니다.
     /// </summary>
     [SupportedOSPlatform("windows")]
-    public partial class MainWindow : Window
+    public partial class MainWindow : Window, IDisposable
     {
         // --- 1. 기본 변수들 ---
         // 사이드바에서 아이템을 캔버스로 끌어올 때(Drag & Drop) 사용하는 시작점 및 드래그 상태
         private Point _toolStartPoint;
-        private bool _isToolDragging = false;
-        private bool _isStackTemplateDragging = false;
-        private bool _isComposeProjectDragging = false;
+        private bool _isToolDragging;
+        private bool _isStackTemplateDragging;
+        private bool _isComposeProjectDragging;
 
         // 캔버스 내 일반 그리기(드래그) 시작 좌표
         private Point _startPoint;
 
         // 이미 캔버스에 배치된 노드를 마우스로 잡고 이동할 때 사용하는 변수들
-        private bool _isNodeDragging = false;
+        private bool _isNodeDragging;
         private Point _nodeClickOffset; // 마우스 커서와 노드 좌상단 간의 거리 보정값
-        private FrameworkElement? _draggedNodeElement = null;
+        private FrameworkElement? _draggedNodeElement;
         private Rect _nodeDragStartRect;
 
         // 컨테이너 포트 간 선(Connector)을 직접 그을 때 사용하는 상태 변수들
-        private bool _isConnecting = false;
-        private IConnectableItem? _sourceItem = null;
+        private bool _isConnecting;
+        private IConnectableItem? _sourceItem;
         private Point _startPointCanvas;
-        private Border? _lastHitPort = null;
+        private Border? _lastHitPort;
         private PortDirection _sourceDir = PortDirection.None;
 
         // 노드나 그룹의 모서리를 잡아당겨 크기를 조절(Resizing)할 때 사용하는 변수들
-        private bool _isResizing = false;
+        private bool _isResizing;
         private string _resizeDir = "";
-        private NodeViewModel? _resizingNode = null;
+        private NodeViewModel? _resizingNode;
         private Point _resizeStartWorldPos;
         private Rect _resizeStartNodeRect;
 
         // 마우스 우클릭으로 캔버스 전체 화면을 이동(Panning)시킬 때 사용하는 변수들
-        private bool _isPanning = false;
+        private bool _isPanning;
         private Point _panStartClick;
         private Point _panStartTranslate;
 
         // 상단 멀티 탭(시트) 순서를 드래그해서 바꿀 때 사용하는 상태 변수들
         private Point _sheetDragStartPoint;
-        private bool _isSheetDragging = false;
-        private bool _isClickedOnTab = false;
+        private bool _isSheetDragging;
+        private bool _isClickedOnTab;
         private SheetViewModel? _renamingSheet;
         private ConnectionWorkspaceViewModel? _renamingWorkspace;
 
@@ -71,30 +75,53 @@ namespace DockerDiagram
 
         // --- 2. 그룹핑(Grouping) 관련 변수 ---
         // 사용자가 직접 화면에 박스를 그려서 그룹/네트워크를 묶는 모드 활성화 플래그
-        private bool _isGroupingMode = false;
-        private bool _isNetworkDrawingMode = false;
+        private bool _isGroupingMode;
+        private bool _isNetworkDrawingMode;
         private DockerNetworkGroup? _pendingExistingNetwork;
         private RuntimeResourceKind? _pendingSwarmDraftGroupKind;
 
         // 이미 만들어진 그룹 전체를 잡고 이동할 때 사용하는 상태 변수들
-        private bool _isGroupMoving = false;
-        private GroupViewModel? _movingGroup = null;
+        private bool _isGroupMoving;
+        private GroupViewModel? _movingGroup;
         private Point _groupClickOffset;
         private Rect _groupMoveStartRect;
 
+        // 임시 다중 선택과 선택 집합 이동 상태
+        private bool _isMarqueeSelecting;
+        private Point _marqueeStartWorld;
+        private bool _marqueePreserveSelection;
+        private ConnectableItemViewModel? _marqueeClickFallbackItem;
+        private bool _isSelectionMoving;
+        private Point _selectionMoveLastWorld;
+        private FrameworkElement? _selectionMoveCaptureElement;
+        private Dictionary<NodeViewModel, Rect> _selectionMoveBeforeNodes = [];
+        private Dictionary<GroupViewModel, Rect> _selectionMoveBeforeGroups = [];
+        private HashSet<NodeViewModel> _selectionMoveNodes = [];
+        private HashSet<NodeViewModel> _selectionMoveMembershipNodes = [];
+        private List<GroupViewModel> _selectionMoveGroups = [];
+
         // --- 3. 재연결(Reconnection) 관련 변수 ---
         // 이미 그어진 선(Connector)의 끝점을 잡고 다른 곳으로 연결을 옮길 때 사용하는 상태 변수들
-        private bool _isReconnecting = false;
-        private ConnectorViewModel? _reconnectingConn = null;
+        private bool _isReconnecting;
+        private ConnectorViewModel? _reconnectingConn;
         private string _reconnectType = "";
 
         // 그룹 리사이징 정보 보관용
-        private GroupViewModel? _resizingGroup = null;
+        private GroupViewModel? _resizingGroup;
         private Rect _resizeStartGroupRect;
 
         // 백그라운드 상태 모니터링 타이머들
         private DispatcherTimer _dockerMonitorTimer;
         private DispatcherTimer _autoSaveTimer;
+        private readonly ApplicationLifetimeCoordinator _lifetime = new();
+        private CancellationTokenSource? _dockerStartupCts;
+        private TaskCompletionSource<bool>? _dockerStartupPromptCompletion;
+        private string? _recoveryFilePath;
+        private long _recoveryEpoch;
+        private int _autoSaveInProgress;
+        private int _dockerHealthFailureCount;
+        private bool _disposed;
+
 
         // 팝업/알림창 출력을 담당하는 다이얼로그 서비스
         private readonly IDialogService _dialogService;
@@ -121,12 +148,13 @@ namespace DockerDiagram
 
             // 3. 타이머 초기화 (기존 로직 그대로 유지)
             _dockerMonitorTimer = new DispatcherTimer();
-            _dockerMonitorTimer.Interval = TimeSpan.FromSeconds(5);
+            _dockerMonitorTimer.Interval = DockerConnectionTiming.HealthPollInterval;
             _dockerMonitorTimer.Tick += DockerMonitorTimer_Tick;
 
             _autoSaveTimer = new DispatcherTimer();
-            _autoSaveTimer.Interval = TimeSpan.FromSeconds(30);
+            _autoSaveTimer.Interval = RuntimeSyncTiming.AutoSaveInterval;
             _autoSaveTimer.Tick += AutoSaveTimer_Tick;
+            _lifetime.Register(CleanupWindowResources);
         }
 
 
@@ -152,7 +180,11 @@ namespace DockerDiagram
                 }
             }
 
-            if (!vm.IsModified) return;
+            if (!vm.IsModified)
+            {
+                DeleteActiveRecovery();
+                return;
+            }
 
             var result = _dialogService.ShowYesNoCancel("변경 사항이 저장되지 않았습니다.\n저장하고 종료하시겠습니까?", "종료 확인");
 
@@ -180,10 +212,30 @@ namespace DockerDiagram
                     }
                 }
             }
+            else
+            {
+                // 사용자가 명시적으로 변경 사항을 버렸으므로 복구본도 제거합니다.
+                vm.IsModified = false;
+                DeleteActiveRecovery();
+            }
         }
 
         private void Window_Closed(object? sender, EventArgs e)
+            => Dispose();
+
+        public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
+
+            _lifetime.Dispose();
+            GC.SuppressFinalize(this);
+        }
+
+        private void CleanupWindowResources()
+        {
+            _dockerStartupPromptCompletion?.TrySetResult(false);
+            _dockerStartupCts?.Cancel();
             _dockerMonitorTimer.Stop();
             _dockerMonitorTimer.Tick -= DockerMonitorTimer_Tick;
             _autoSaveTimer.Stop();
@@ -203,6 +255,19 @@ namespace DockerDiagram
 
         private void SheetManager_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
+            if (e.PropertyName == nameof(SheetManagerViewModel.IsModified) &&
+                sender is SheetManagerViewModel { IsModified: false })
+            {
+                DeleteActiveRecovery();
+                return;
+            }
+
+            if (e.PropertyName == nameof(SheetManagerViewModel.CurrentFilePath))
+            {
+                UpdateTitle();
+                return;
+            }
+
             if (e.PropertyName != nameof(SheetManagerViewModel.ActiveSheet)) return;
 
             Dispatcher.BeginInvoke(
@@ -261,25 +326,46 @@ namespace DockerDiagram
         }
 
         /// <summary>
-        /// 설정된 주기(기본 30초)마다 백그라운드에서 조용히 실행되어 작업 내용을 현재 파일에 덮어쓰기 하는 자동 저장 핸들러입니다.
+        /// 설정된 주기(기본 30초)마다 실제 프로젝트 파일과 분리된 복구 스냅샷을 저장합니다.
         /// </summary>
-        private void AutoSaveTimer_Tick(object? sender, EventArgs e)
+        private async void AutoSaveTimer_Tick(object? sender, EventArgs e)
         {
             var vm = this.DataContext as MainViewModel;
             if (vm == null) return;
 
-            if (string.IsNullOrEmpty(vm.CurrentFilePath)) return;
             if (!vm.IsModified) return;
+            if (Interlocked.Exchange(ref _autoSaveInProgress, 1) == 1) return;
 
-            DiagramSaveResult result = FileService.QuickSaveWithResult(vm, vm.CurrentFilePath);
-            if (result.Success)
+            long recoveryEpoch = Interlocked.Read(ref _recoveryEpoch);
+            try
             {
-                Debug.WriteLine($"[DockerDiscovery] Saved to {vm.CurrentFilePath} at {DateTime.Now}");
-                vm.IsModified = false;
+                DiagramRecoverySaveResult recoveryResult = await FileService.SaveRecoverySnapshotAsync(
+                    vm,
+                    _recoveryFilePath,
+                    _lifetime.Token);
+                if (recoveryResult.SaveResult.Success)
+                {
+                    if (!vm.IsModified ||
+                        recoveryEpoch != Interlocked.Read(ref _recoveryEpoch))
+                    {
+                        // 복구 저장 도중 사용자가 실제 저장·폐기·프로젝트 초기화를 완료한 경우
+                        // 이전 상태의 저장 작업이 뒤늦게 복구본을 되살리지 않도록 결과 파일만 제거합니다.
+                        FileService.DeleteRecoveryFile(recoveryResult.RecoveryPath);
+                    }
+                    else
+                    {
+                        _recoveryFilePath = recoveryResult.RecoveryPath;
+                        AppLog.Info($"프로젝트 복구 스냅샷 저장 완료: {_recoveryFilePath}");
+                    }
+                }
+                else if (!_lifetime.Token.IsCancellationRequested)
+                {
+                    AppLog.Warning($"프로젝트 복구 스냅샷 저장 실패: {recoveryResult.SaveResult.ErrorMessage}");
+                }
             }
-            else
+            finally
             {
-                Debug.WriteLine($"[DockerDiscovery] Auto-save failed for '{vm.CurrentFilePath}'. {result.ErrorMessage}");
+                Interlocked.Exchange(ref _autoSaveInProgress, 0);
             }
         }
 
@@ -294,13 +380,85 @@ namespace DockerDiagram
 
             if (ViewModel == null) return;
 
-            UpdateTitle();
-            CenterActiveSheetIfNeeded();
+            IsEnabled = false;
+            try
+            {
+                await ViewModel.InitializeAsync();
+                await TryRestoreRecoveryAsync();
+                UpdateTitle();
+                CenterActiveSheetIfNeeded();
 
-            await CheckDockerStateAsync();
+                // Docker 시작 상태 오버레이의 취소 버튼을 사용할 수 있도록
+                // 초기 파일 복원이 끝난 뒤에는 메인 창을 다시 활성화합니다.
+                IsEnabled = true;
+                bool dockerReady = await CheckDockerStateAsync();
+                await ViewModel.SheetManager.RestoreLiveStateAsync(
+                    dockerReady ? null : ViewModel.ActiveSheet?.DockerService);
 
-            if (!_dockerMonitorTimer.IsEnabled) _dockerMonitorTimer.Start();
-            if (!_autoSaveTimer.IsEnabled) _autoSaveTimer.Start();
+                if (dockerReady && !_dockerMonitorTimer.IsEnabled) _dockerMonitorTimer.Start();
+                if (!_autoSaveTimer.IsEnabled) _autoSaveTimer.Start();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("메인 화면 초기화 실패", ex);
+                _dialogService.ShowError(
+                    $"프로그램을 초기화하지 못했습니다.\n\n{ex.GetBaseException().Message}\n\n" +
+                    $"진단 로그: {AppLog.LogFilePath}",
+                    "초기화 실패");
+            }
+            finally
+            {
+                IsEnabled = true;
+            }
+        }
+
+        private async Task TryRestoreRecoveryAsync()
+        {
+            foreach (DiagramRecoveryCandidate candidate in FileService.GetRecoveryCandidates())
+            {
+                string sourceText = string.IsNullOrWhiteSpace(candidate.OriginalFilePath)
+                    ? "저장되지 않은 새 프로젝트"
+                    : candidate.OriginalFilePath;
+                bool recover = _dialogService.ShowConfirm(
+                    $"비정상 종료 후 남은 프로젝트 복구본이 있습니다.\n\n" +
+                    $"대상: {sourceText}\n" +
+                    $"복구 시각: {candidate.CapturedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}\n\n" +
+                    "복구하시겠습니까? 아니오를 선택하면 이 복구본은 삭제됩니다.",
+                    "프로젝트 복구");
+
+                if (!recover)
+                {
+                    FileService.DeleteRecoveryFile(candidate.RecoveryPath);
+                    continue;
+                }
+
+                IDockerService activeService = ViewModel.ActiveSheet?.DockerService ??
+                                                 ViewModel.SheetManager.DefaultDockerService;
+                bool loaded = await FileService.LoadDiagramFromPathAsync(
+                    ViewModel,
+                    candidate.RecoveryPath,
+                    (IContainerService)activeService,
+                    (IVolumeService)activeService,
+                    (INetworkService)activeService,
+                    _dialogService);
+                if (!loaded)
+                    continue;
+
+                _recoveryFilePath = candidate.RecoveryPath;
+                ViewModel.CurrentFilePath = !string.IsNullOrWhiteSpace(candidate.OriginalFilePath) &&
+                                            File.Exists(candidate.OriginalFilePath)
+                    ? candidate.OriginalFilePath
+                    : null;
+                ViewModel.IsModified = true;
+                return;
+            }
+        }
+
+        private void DeleteActiveRecovery()
+        {
+            Interlocked.Increment(ref _recoveryEpoch);
+            FileService.DeleteRecoveryFile(_recoveryFilePath);
+            _recoveryFilePath = null;
         }
 
         /// <summary>
@@ -308,48 +466,249 @@ namespace DockerDiagram
         /// </summary>
         private async void DockerMonitorTimer_Tick(object? sender, EventArgs e)
         {
-            if (ViewModel.ActiveSheet?.Profile.Type == EndpointType.Local)
+            SheetViewModel? activeSheet = ViewModel.ActiveSheet;
+            if (activeSheet?.Profile.Type != EndpointType.Local)
             {
-                if (DockerServiceHelper.IsDockerRunning()) return;
+                _dockerHealthFailureCount = 0;
+                return;
+            }
 
-                _dockerMonitorTimer.Stop();
-                await CheckDockerStateAsync();
-                _dockerMonitorTimer.Start();
+            _dockerMonitorTimer.Stop();
+            bool shouldContinue = true;
+            try
+            {
+                if (await activeSheet.DockerService.PingAsync())
+                {
+                    _dockerHealthFailureCount = 0;
+                    return;
+                }
+
+                _dockerHealthFailureCount++;
+                if (_dockerHealthFailureCount < DockerConnectionTiming.HealthFailureThreshold) return;
+
+                _dockerHealthFailureCount = 0;
+                shouldContinue = await CheckDockerStateAsync();
+            }
+            catch (Exception ex)
+            {
+                shouldContinue = false;
+                AppLog.Warning("주기적 Docker 상태 확인 실패", ex);
+                if (!_lifetime.Token.IsCancellationRequested)
+                {
+                    _dialogService.ShowError(
+                        $"Docker 상태를 확인하지 못했습니다.\n{ex.GetBaseException().Message}\n\nDocker 연결 없이 프로그램을 계속 사용합니다.",
+                        "Docker 상태 확인 실패");
+                }
+            }
+            finally
+            {
+                if (shouldContinue && !_lifetime.Token.IsCancellationRequested && IsLoaded)
+                    _dockerMonitorTimer.Start();
             }
         }
 
         /// <summary>
         /// 도커 엔진이 꺼져있음을 감지했을 때 사용자에게 알림을 띄우고, 승인 시 도커를 다시 실행시켜주는 자동 복구(Failover) 로직입니다.
         /// </summary>
-        private async Task CheckDockerStateAsync()
+        private async Task<bool> CheckDockerStateAsync()
         {
-            if (ViewModel.ActiveSheet?.Profile.Type != EndpointType.Local) return;
-            if (DockerServiceHelper.IsDockerRunning()) return;
+            SheetViewModel? activeSheet = ViewModel.ActiveSheet;
+            if (activeSheet?.Profile.Type != EndpointType.Local) return true;
+            if (await activeSheet.DockerService.PingAsync()) return true;
 
-            bool result = _dialogService.ShowConfirm(
-                "내 PC의 Docker 프로세스가 종료되었습니다.\nDocker Desktop을 다시 실행하시겠습니까?\n\n('아니요'를 누르면 프로그램이 종료됩니다.)",
-                "Docker 감지");
+            bool dockerProcessRunning = DockerServiceHelper.IsDockerRunning();
+            string unavailableReason = dockerProcessRunning
+                ? "Docker Desktop 프로세스는 실행 중이지만 Docker 엔진이 응답하지 않습니다."
+                : "내 PC의 Docker Desktop이 종료되었습니다.";
 
-            if (result)
+            bool result = await ShowDockerStartupPromptAsync(
+                dockerProcessRunning,
+                unavailableReason);
+
+            if (!result)
             {
-                try
-                {
-                    await DockerServiceHelper.StartDockerAsync(ViewModel.ActiveSheet.DockerService, _dialogService);
+                HideDockerStartupOverlay();
+                return false;
+            }
 
-                    if (DataContext is MainViewModel vm)
+            using var startupCts = CancellationTokenSource.CreateLinkedTokenSource(
+                _lifetime.Token);
+            _dockerStartupCts = startupCts;
+            ShowDockerStartupOverlay();
+            var progress = new Progress<DockerStartupProgress>(UpdateDockerStartupProgress);
+
+            try
+            {
+                await DockerServiceHelper.StartDockerAsync(
+                    activeSheet.DockerService,
+                    progress,
+                    startupCts.Token);
+
+                if (DataContext is MainViewModel vm)
+                {
+                    DockerStartupPhaseText.Text = "Docker 연결 완료";
+                    DockerStartupDetailText.Text = "Docker 리소스를 최신 상태로 동기화하는 중입니다.";
+                    try
                     {
                         await vm.OnDockerStartedAsync();
                     }
+                    catch (Exception syncException)
+                    {
+                        AppLog.Warning("Docker 시작 후 리소스 동기화 실패", syncException);
+                        HideDockerStartupOverlay();
+                        _dialogService.ShowError(
+                            $"Docker 엔진 연결은 완료되었지만 리소스 동기화에 실패했습니다.\n" +
+                            $"{syncException.GetBaseException().Message}",
+                            "Docker 동기화 실패");
+                    }
                 }
-                catch (Exception ex)
-                {
-                    _dialogService.ShowMessage($"Docker 실행 실패: {ex.Message}");
-                }
+
+                return true;
             }
-            else
+            catch (OperationCanceledException) when (startupCts.IsCancellationRequested)
             {
-                Application.Current.Shutdown();
+                if (!_lifetime.Token.IsCancellationRequested)
+                {
+                    AppLog.Info("사용자가 Docker Desktop 시작 대기를 중지했습니다.");
+                    HideDockerStartupOverlay();
+                    _dialogService.ShowInfo(
+                        "Docker Desktop 시작 대기를 중지했습니다.\n프로그램은 Docker 연결 없이 계속 사용할 수 있습니다.",
+                        "Docker 대기 중지");
+                }
+                return false;
             }
+            catch (Exception ex)
+            {
+                AppLog.Error("Docker Desktop 복구 실패", ex);
+                HideDockerStartupOverlay();
+                _dialogService.ShowError(
+                    $"Docker Desktop을 시작하지 못했습니다.\n{ex.GetBaseException().Message}\n\nDocker 연결 없이 프로그램을 계속 사용합니다.",
+                    "Docker 실행 실패");
+                return false;
+            }
+            finally
+            {
+                if (ReferenceEquals(_dockerStartupCts, startupCts))
+                    _dockerStartupCts = null;
+                HideDockerStartupOverlay();
+            }
+        }
+
+        private async Task<bool> ShowDockerStartupPromptAsync(
+            bool dockerProcessRunning,
+            string unavailableReason)
+        {
+            var completion = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            _dockerStartupPromptCompletion = completion;
+
+            DockerStartupTitleText.Text = dockerProcessRunning
+                ? "Docker Engine 응답 없음"
+                : "Docker Desktop이 꺼져 있습니다";
+            DockerStartupPhaseText.Text = unavailableReason;
+            DockerStartupDetailText.Text = dockerProcessRunning
+                ? "Docker Desktop은 실행 중이지만 엔진 연결이 아직 준비되지 않았습니다. 준비 상태를 계속 확인할 수 있습니다."
+                : "Docker Desktop을 실행하고 엔진 연결이 준비될 때까지 이 화면에서 상태를 확인할 수 있습니다.";
+            DockerStartupStartButton.Content = dockerProcessRunning
+                ? "준비 상태 확인"
+                : "Docker Desktop 실행";
+            SetDockerStartupStatus("연결 필요", isReady: false);
+            DockerStartupPromptPanel.Visibility = Visibility.Visible;
+            DockerStartupProgressPanel.Visibility = Visibility.Collapsed;
+            DockerStartupPromptActions.Visibility = Visibility.Visible;
+            DockerStartupProgressActions.Visibility = Visibility.Collapsed;
+            DockerStartupCancelButton.IsEnabled = true;
+            DockerStartupOverlay.Visibility = Visibility.Visible;
+
+            try
+            {
+                return await completion.Task.WaitAsync(_lifetime.Token);
+            }
+            catch (OperationCanceledException) when (_lifetime.Token.IsCancellationRequested)
+            {
+                return false;
+            }
+            finally
+            {
+                if (ReferenceEquals(_dockerStartupPromptCompletion, completion))
+                    _dockerStartupPromptCompletion = null;
+            }
+        }
+
+        private void ShowDockerStartupOverlay()
+        {
+            DockerStartupTitleText.Text = "Docker Desktop 시작 중";
+            DockerStartupPhaseText.Text = "Docker 상태 확인 중";
+            DockerStartupDetailText.Text = "Docker 엔진 응답을 확인하고 있습니다.";
+            DockerStartupElapsedText.Text = "경과 시간 0:00";
+            SetDockerStartupStatus("시작 중", isReady: false);
+            DockerStartupPromptPanel.Visibility = Visibility.Collapsed;
+            DockerStartupProgressPanel.Visibility = Visibility.Visible;
+            DockerStartupPromptActions.Visibility = Visibility.Collapsed;
+            DockerStartupProgressActions.Visibility = Visibility.Visible;
+            DockerStartupCancelButton.IsEnabled = true;
+            DockerStartupOverlay.Visibility = Visibility.Visible;
+        }
+
+        private void HideDockerStartupOverlay()
+        {
+            DockerStartupOverlay.Visibility = Visibility.Collapsed;
+            DockerStartupCancelButton.IsEnabled = true;
+        }
+
+        private void UpdateDockerStartupProgress(DockerStartupProgress progress)
+        {
+            DockerStartupPhaseText.Text = progress.Phase switch
+            {
+                DockerStartupPhase.Checking => "Docker 상태 확인 중",
+                DockerStartupPhase.Launching => "Docker Desktop 실행 중",
+                DockerStartupPhase.ProcessRunning => "Docker Desktop 프로세스 실행 중",
+                DockerStartupPhase.WaitingForEngine => "Docker 엔진 준비 중",
+                DockerStartupPhase.Ready => "Docker 연결 완료",
+                _ => "Docker 상태 확인 중"
+            };
+            DockerStartupTitleText.Text = progress.Phase == DockerStartupPhase.Ready
+                ? "Docker 연결 완료"
+                : "Docker Desktop 시작 중";
+            DockerStartupDetailText.Text = progress.Message;
+            DockerStartupElapsedText.Text = $"경과 시간 {FormatElapsed(progress.Elapsed)}";
+            SetDockerStartupStatus(
+                progress.Phase == DockerStartupPhase.Ready ? "연결됨" : "시작 중",
+                progress.Phase == DockerStartupPhase.Ready);
+        }
+
+        private void SetDockerStartupStatus(string text, bool isReady)
+        {
+            DockerStartupStatusText.Text = text;
+            DockerStartupStatusBadge.Background = (Brush)FindResource(
+                isReady ? "DialogSuccessSurfaceBrush" : "DialogWarningSurfaceBrush");
+            DockerStartupStatusBadge.BorderBrush = (Brush)FindResource(
+                isReady ? "DialogSuccessBorderBrush" : "DialogWarningBorderBrush");
+            DockerStartupStatusText.Foreground = (Brush)FindResource(
+                isReady ? "DialogSuccessTextBrush" : "DialogWarningTextBrush");
+        }
+
+        private static string FormatElapsed(TimeSpan elapsed) =>
+            elapsed.TotalHours >= 1
+                ? elapsed.ToString(@"h\:mm\:ss", CultureInfo.InvariantCulture)
+                : elapsed.ToString(@"m\:ss", CultureInfo.InvariantCulture);
+
+        private void DockerStartupCancel_Click(object sender, RoutedEventArgs e)
+        {
+            DockerStartupCancelButton.IsEnabled = false;
+            DockerStartupPhaseText.Text = "대기 중지 중";
+            DockerStartupDetailText.Text = "진행 중인 Docker 상태 확인을 중지하고 있습니다.";
+            _dockerStartupCts?.Cancel();
+        }
+
+        private void DockerStartupStart_Click(object sender, RoutedEventArgs e)
+        {
+            _dockerStartupPromptCompletion?.TrySetResult(true);
+        }
+
+        private void DockerStartupOffline_Click(object sender, RoutedEventArgs e)
+        {
+            _dockerStartupPromptCompletion?.TrySetResult(false);
         }
 
         // --- 좌표 변환 헬퍼 ---
@@ -382,8 +741,8 @@ namespace DockerDiagram
         {
             Point worldCenter = GetViewportWorldCenter();
 
-            double x = Math.Round((worldCenter.X - (itemWidth / 2.0)) / 10.0) * 10.0;
-            double y = Math.Round((worldCenter.Y - (itemHeight / 2.0)) / 10.0) * 10.0;
+            double x = DiagramMetrics.SnapToGrid(worldCenter.X - (itemWidth / 2.0));
+            double y = DiagramMetrics.SnapToGrid(worldCenter.Y - (itemHeight / 2.0));
 
             if (DataContext is MainViewModel viewModel && viewModel.ActiveSheet is SheetViewModel sheet)
             {
@@ -437,6 +796,39 @@ namespace DockerDiagram
 
         private bool CancelAreaDrawingMode()
         {
+            if (_isSelectionMoving)
+            {
+                foreach (var pair in _selectionMoveBeforeNodes)
+                {
+                    pair.Key.X = pair.Value.X;
+                    pair.Key.Y = pair.Value.Y;
+                    pair.Key.Width = pair.Value.Width;
+                    pair.Key.Height = pair.Value.Height;
+                }
+
+                foreach (var pair in _selectionMoveBeforeGroups)
+                {
+                    pair.Key.X = pair.Value.X;
+                    pair.Key.Y = pair.Value.Y;
+                    pair.Key.Width = pair.Value.Width;
+                    pair.Key.Height = pair.Value.Height;
+                }
+
+                _selectionMoveCaptureElement?.ReleaseMouseCapture();
+                ResetSelectionMoveState();
+                return true;
+            }
+
+            if (_isMarqueeSelecting)
+            {
+                if (ViewportCanvas.IsMouseCaptured)
+                    ViewportCanvas.ReleaseMouseCapture();
+                MultiSelectionRect.Visibility = Visibility.Collapsed;
+                _isMarqueeSelecting = false;
+                _marqueeClickFallbackItem = null;
+                return true;
+            }
+
             if (!_isGroupingMode && !_isNetworkDrawingMode)
                 return false;
 
@@ -464,7 +856,7 @@ namespace DockerDiagram
         /// WPF 시각적 트리(Visual Tree)를 거슬러 올라가며 조건(Predicate)을 만족하는 특정 타입의 부모 요소를 찾습니다.
         /// 마우스 클릭 이벤트에서 클릭된 UI 조각(HitTest 결과)이 어떤 뷰모델 객체에 속하는지 역추적할 때 사용됩니다.
         /// </summary>
-        private T? FindParent<T>(DependencyObject? child, Func<T, bool> predicate) where T : DependencyObject
+        private static T? FindParent<T>(DependencyObject? child, Func<T, bool> predicate) where T : DependencyObject
         {
             while (child != null)
             {
@@ -478,7 +870,7 @@ namespace DockerDiagram
         /// 사용자의 마우스 좌표가 대상 사각형(Rect)의 4개 면 중 어느 면에 가장 가까운지 수학적으로 계산합니다.
         /// 연결선을 아무렇게나 놓았을 때 가장 자연스러운 포트(상/하/좌/우)를 자동 결정하기 위해 사용됩니다.
         /// </summary>
-        private PortDirection GetClosestDirection(Point mouse, Rect rect)
+        private static PortDirection GetClosestDirection(Point mouse, Rect rect)
         {
             double distLeft = Math.Abs(mouse.X - rect.Left);
             double distRight = Math.Abs(mouse.X - rect.Right);
@@ -495,7 +887,7 @@ namespace DockerDiagram
         /// 특정 그룹 안에 들어있는 자식 노드들을 모두 감싸는 최소한의 경계 영역(Bounding Box)을 계산합니다.
         /// 사용자가 그룹 상자를 드래그하여 크기를 줄일 때, 자식 노드들을 침범하며 작아지지 못하게 막는 경계선으로 활용됩니다.
         /// </summary>
-        private Rect GetGroupContentBounds(GroupViewModel group)
+        private static Rect GetGroupContentBounds(GroupViewModel group)
         {
             if (group.ContainedNodes.Count == 0) return Rect.Empty;
 

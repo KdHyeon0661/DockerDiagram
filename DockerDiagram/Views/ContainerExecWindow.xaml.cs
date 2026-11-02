@@ -1,9 +1,9 @@
-using DockerDiagram.ViewModels;
-using DockerDiagram.Models;
-using System.Threading.Tasks;
 using System;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
+using DockerDiagram.Models;
+using DockerDiagram.ViewModels;
 
 namespace DockerDiagram.Views
 {
@@ -24,7 +24,7 @@ namespace DockerDiagram.Views
             CommandBox.Text = "pwd && ls -la";
             CommandBox.Focus();
             CommandBox.SelectAll();
-            StatusText.Text = "Ready";
+            StatusText.Text = "준비";
         }
 
         private async void RunButton_Click(object sender, RoutedEventArgs e)
@@ -32,23 +32,23 @@ namespace DockerDiagram.Views
             var command = CommandBox.Text.Trim();
             if (string.IsNullOrWhiteSpace(command))
             {
-                StatusText.Text = "Command is required.";
+                StatusText.Text = "명령을 입력해 주세요.";
                 return;
             }
 
             try
             {
                 RunButton.IsEnabled = false;
-                StatusText.Text = "Running...";
+                StatusText.Text = "실행 중...";
 
                 var startedAt = DateTime.Now;
                 var result = await _executeCommand(command);
                 var elapsed = DateTime.Now - startedAt;
 
                 var output = new StringBuilder();
-                output.AppendLine($"> {command}");
-                output.AppendLine($"Exit code: {result.ExitCode}");
-                output.AppendLine($"Elapsed: {elapsed.TotalSeconds:0.00}s");
+                output.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"> {command}");
+                output.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Exit code: {result.ExitCode}");
+                output.AppendLine(System.Globalization.CultureInfo.InvariantCulture, $"Elapsed: {elapsed.TotalSeconds:0.00}s");
 
                 if (!string.IsNullOrWhiteSpace(result.Stdout))
                 {
@@ -71,12 +71,12 @@ namespace DockerDiagram.Views
                 }
 
                 OutputBox.Text = output.ToString();
-                StatusText.Text = result.IsSuccess ? "Completed" : "Completed with error";
+                StatusText.Text = result.IsSuccess ? "완료" : "오류와 함께 완료";
             }
             catch (Exception ex)
             {
                 OutputBox.Text = ex.ToString();
-                StatusText.Text = "Failed";
+                StatusText.Text = "실패";
             }
             finally
             {
@@ -95,7 +95,7 @@ namespace DockerDiagram.Views
         private void ClearButton_Click(object sender, RoutedEventArgs e)
         {
             OutputBox.Clear();
-            StatusText.Text = "Ready";
+            StatusText.Text = "준비";
         }
 
         private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();

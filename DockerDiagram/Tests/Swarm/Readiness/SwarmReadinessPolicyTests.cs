@@ -6,7 +6,7 @@ namespace DockerDiagram.Tests;
 public sealed class SwarmReadinessPolicyTests
 {
     [Fact]
-    public void UnreachableEngine_IsBlockedWithoutInventingClusterState()
+    public void UnreachableEngineIsBlockedWithoutInventingClusterState()
     {
         IReadOnlyList<SwarmReadinessCheck> checks = SwarmReadinessPolicy.Evaluate(
             false,
@@ -21,7 +21,7 @@ public sealed class SwarmReadinessPolicyTests
     }
 
     [Fact]
-    public void HealthyThreeManagerCluster_PassesReadinessPolicy()
+    public void HealthyThreeManagerClusterPassesReadinessPolicy()
     {
         SwarmClusterState cluster = SwarmClusterState.Create(
             "active",
@@ -53,7 +53,7 @@ public sealed class SwarmReadinessPolicyTests
     }
 
     [Fact]
-    public void EvenManagerCount_IsWarning()
+    public void EvenManagerCountIsWarning()
     {
         SwarmClusterState cluster = SwarmClusterState.Create("active", true, nodeId: "one");
         IReadOnlyList<SwarmReadinessCheck> checks = SwarmReadinessPolicy.Evaluate(
@@ -72,7 +72,24 @@ public sealed class SwarmReadinessPolicyTests
     }
 
     [Fact]
-    public void LostManagerMajority_IsBlocked()
+    public void SingleManagerAndNodeWarnsThatFailoverCannotBeVerified()
+    {
+        SwarmClusterState cluster = SwarmClusterState.Create("active", true, nodeId: "one");
+        IReadOnlyList<SwarmReadinessCheck> checks = SwarmReadinessPolicy.Evaluate(
+            true,
+            new DockerCliProbeResult(true, "29.8.0", string.Empty),
+            cluster,
+            new[] { Manager("one", "leader", "29.8.0") },
+            serviceCount: 0);
+
+        Assert.Contains(checks, check =>
+            check.Name == "Manager count" && check.Severity == SwarmReadinessSeverity.Warning);
+        Assert.Contains(checks, check =>
+            check.Name == "Failure recovery" && check.Severity == SwarmReadinessSeverity.Warning);
+    }
+
+    [Fact]
+    public void LostManagerMajorityIsBlocked()
     {
         SwarmClusterState cluster = SwarmClusterState.Create("active", true, nodeId: "one");
         var nodes = new[]
@@ -95,7 +112,7 @@ public sealed class SwarmReadinessPolicyTests
     }
 
     [Fact]
-    public void MissingDockerCli_IsWarningBecauseApiInspectionStillWorks()
+    public void MissingDockerCliIsWarningBecauseApiInspectionStillWorks()
     {
         SwarmClusterState cluster = SwarmClusterState.Create("active", false, nodeId: "worker");
 
@@ -113,7 +130,7 @@ public sealed class SwarmReadinessPolicyTests
     }
 
     [Fact]
-    public void MixedEngineVersions_AreVisibleAsWarning()
+    public void MixedEngineVersionsAreVisibleAsWarning()
     {
         SwarmClusterState cluster = SwarmClusterState.Create("active", true, nodeId: "one");
         IReadOnlyList<SwarmReadinessCheck> checks = SwarmReadinessPolicy.Evaluate(
@@ -129,6 +146,40 @@ public sealed class SwarmReadinessPolicyTests
 
         Assert.Contains(checks, check =>
             check.Name == "Engine versions" && check.Severity == SwarmReadinessSeverity.Warning);
+    }
+
+    [Fact]
+    public void MissingIngressNetworkIsVisibleAsWarningWithoutBlockingHostPublishing()
+    {
+        SwarmClusterState cluster = SwarmClusterState.Create("active", true, nodeId: "one");
+
+        IReadOnlyList<SwarmReadinessCheck> checks = SwarmReadinessPolicy.Evaluate(
+            true,
+            new DockerCliProbeResult(true, "29.8.0", string.Empty),
+            cluster,
+            new[] { Manager("one", "leader", "27.5.1") },
+            serviceCount: 0,
+            ingressNetworkAvailable: false);
+
+        Assert.Contains(checks, check =>
+            check.Name == "Routing mesh ingress" && check.Severity == SwarmReadinessSeverity.Warning);
+    }
+
+    [Fact]
+    public void AvailableIngressNetworkPassesNetworkingReadiness()
+    {
+        SwarmClusterState cluster = SwarmClusterState.Create("active", true, nodeId: "one");
+
+        IReadOnlyList<SwarmReadinessCheck> checks = SwarmReadinessPolicy.Evaluate(
+            true,
+            new DockerCliProbeResult(true, "29.8.0", string.Empty),
+            cluster,
+            new[] { Manager("one", "leader", "27.5.1") },
+            serviceCount: 0,
+            ingressNetworkAvailable: true);
+
+        Assert.Contains(checks, check =>
+            check.Name == "Routing mesh ingress" && check.Severity == SwarmReadinessSeverity.Pass);
     }
 
     private static DockerSwarmNode Manager(

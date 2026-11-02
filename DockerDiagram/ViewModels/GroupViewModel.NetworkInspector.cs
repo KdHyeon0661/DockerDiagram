@@ -1,9 +1,10 @@
-﻿using DockerDiagram.Models;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
+using DockerDiagram.Common;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
@@ -16,13 +17,11 @@ namespace DockerDiagram.ViewModels
         private string _networkGatewaySummary = "-";
         private bool _networkIngress;
 
-        public ObservableCollection<NetworkEndpointSummary> NetworkConnectedContainers { get; } = new();
+        public ObservableCollection<NetworkEndpointSummary> NetworkConnectedContainers { get; } = [];
 
         public bool IsBuiltInDockerNetwork =>
             Type == GroupType.Network &&
-            (string.Equals(DockerNetworkName, "bridge", StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(DockerNetworkName, "host", StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(DockerNetworkName, "none", StringComparison.OrdinalIgnoreCase));
+            DockerNetworkSafety.IsProtected(DockerNetworkName, NetworkIngress);
 
         public string NetworkScope
         {
@@ -112,6 +111,7 @@ namespace DockerDiagram.ViewModels
                 OnPropertyChanged(nameof(IsBuiltInDockerNetwork));
 
                 NetworkConnectedContainers.Clear();
+                var runtimeDiagramNodes = new HashSet<NodeViewModel>(ReferenceEqualityComparer.Instance);
                 if (network.Containers != null)
                 {
                     foreach (var endpoint in network.Containers
@@ -119,9 +119,11 @@ namespace DockerDiagram.ViewModels
                     {
                         string containerId = endpoint.Key ?? string.Empty;
                         string containerName = string.IsNullOrWhiteSpace(endpoint.Value?.Name)
-                            ? ShortId(containerId)
+                            ? ShortContainerId(containerId)
                             : endpoint.Value.Name;
                         var diagramNode = FindContainerNode(containerId, containerName);
+                        if (diagramNode != null)
+                            runtimeDiagramNodes.Add(diagramNode);
 
                         NetworkConnectedContainers.Add(new NetworkEndpointSummary(
                             containerName,
@@ -131,16 +133,50 @@ namespace DockerDiagram.ViewModels
                     }
                 }
 
+                SynchronizeRuntimeContainerMembership(runtimeDiagramNodes);
+
                 OnPropertyChanged(nameof(HasNetworkConnectedContainers));
                 OnPropertyChanged(nameof(NetworkConnectedContainerCount));
             }
             catch (Exception ex)
             {
+                AppLog.WarningThrottled(
+                    $"network-inspect-{inspectKey}",
+                    $"네트워크 '{Title}' 상세 정보 새로 고침 실패",
+                    ex);
                 NetworkDetailsStatus = $"Unable to refresh network details: {ex.Message}";
             }
             finally
             {
                 IsNetworkDetailsLoading = false;
+            }
+        }
+
+        private void SynchronizeRuntimeContainerMembership(
+            IReadOnlySet<NodeViewModel> runtimeDiagramNodes)
+        {
+            if (IsDraft ||
+                RuntimeKind == RuntimeKind.DockerSwarm ||
+                ResourceKind == RuntimeResourceKind.SwarmOverlayNetwork)
+                return;
+
+            foreach (NodeViewModel node in runtimeDiagramNodes)
+            {
+                if (!ContainedNodes.Contains(node))
+                    ContainedNodes.Add(node);
+            }
+
+            foreach (NodeViewModel node in ContainedNodes
+                         .Where(node =>
+                             node.Type == NodeType.Container &&
+                             !node.IsSwarmService &&
+                             !node.IsKubernetesResource &&
+                             !node.IsDraft &&
+                             !node.IsCreating &&
+                             !runtimeDiagramNodes.Contains(node))
+                         .ToList())
+            {
+                ContainedNodes.Remove(node);
             }
         }
 
@@ -168,7 +204,7 @@ namespace DockerDiagram.ViewModels
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .Select(value => value!.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList() ?? new List<string>();
+                .ToList() ?? [];
 
             return distinctValues.Count switch
             {
@@ -194,8 +230,11 @@ namespace DockerDiagram.ViewModels
             return "unknown";
         }
 
-        private static string ShortId(string id) =>
-            string.IsNullOrWhiteSpace(id) ? "Unknown container" : id[..Math.Min(12, id.Length)];
+        private static string ShortContainerId(string id)
+        {
+            string shortened = DockerIdFormatter.Shorten(id);
+            return string.IsNullOrWhiteSpace(shortened) ? "Unknown container" : shortened;
+        }
 
         public sealed class NetworkEndpointSummary
         {

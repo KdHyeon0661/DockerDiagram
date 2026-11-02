@@ -1,6 +1,6 @@
+using System.Windows;
 using DockerDiagram.Contracts;
 using DockerDiagram.ViewModels;
-using System.Windows;
 
 namespace DockerDiagram
 {

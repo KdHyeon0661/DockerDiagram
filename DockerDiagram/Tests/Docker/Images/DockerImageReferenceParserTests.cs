@@ -10,7 +10,7 @@ public sealed class DockerImageReferenceParserTests
     [InlineData("registry.example:5000/team/api:2", "latest", "registry.example:5000/team/api", "2")]
     [InlineData("registry.example:5000/team/api", "stable", "registry.example:5000/team/api", "stable")]
     [InlineData("  alpine:3.20  ", "latest", "alpine", "3.20")]
-    public void Split_HandlesDockerRepositoryAndTagForms(
+    public void SplitHandlesDockerRepositoryAndTagForms(
         string reference,
         string defaultTag,
         string expectedRepository,

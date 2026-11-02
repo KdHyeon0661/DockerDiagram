@@ -1,9 +1,9 @@
-using Docker.DotNet.Models;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using Docker.DotNet.Models;
 
 namespace DockerDiagram.ApplicationServices
 {
@@ -55,7 +55,7 @@ namespace DockerDiagram.ApplicationServices
         }
 
         private static void AddIfChanged(
-            ICollection<string> lines,
+            List<string> lines,
             string instruction,
             string? value,
             string? baseValue)
@@ -70,7 +70,7 @@ namespace DockerDiagram.ApplicationServices
         }
 
         private static void AddEnvironment(
-            ICollection<string> lines,
+            List<string> lines,
             IList<string>? environment,
             IList<string>? baseEnvironment)
         {
@@ -119,7 +119,7 @@ namespace DockerDiagram.ApplicationServices
         }
 
         private static void AddLabels(
-            ICollection<string> lines,
+            List<string> lines,
             IDictionary<string, string>? labels,
             IDictionary<string, string>? baseLabels)
         {
@@ -142,7 +142,7 @@ namespace DockerDiagram.ApplicationServices
         }
 
         private static void AddExposedPorts(
-            ICollection<string> lines,
+            List<string> lines,
             IDictionary<string, EmptyStruct>? ports,
             IDictionary<string, EmptyStruct>? basePorts)
         {
@@ -159,7 +159,7 @@ namespace DockerDiagram.ApplicationServices
         }
 
         private static void AddVolumes(
-            ICollection<string> lines,
+            List<string> lines,
             ContainerInspectResponse container,
             Config? baseConfig)
         {
@@ -187,7 +187,7 @@ namespace DockerDiagram.ApplicationServices
                 lines.Add($"VOLUME {ToJsonArray(new[] { path })}");
         }
 
-        private static void AddHealthcheck(ICollection<string> lines, HealthConfig? healthcheck)
+        private static void AddHealthcheck(List<string> lines, HealthConfig? healthcheck)
         {
             if (healthcheck?.Test == null || healthcheck.Test.Count == 0)
                 return;

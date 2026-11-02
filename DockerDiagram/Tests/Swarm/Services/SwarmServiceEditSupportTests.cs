@@ -6,8 +6,13 @@ namespace DockerDiagram.Tests;
 
 public sealed class SwarmServiceEditSupportTests
 {
+
+    private static readonly string[] FormRoundTripPreservesHiddenCommandNetworkAndVolumeOptionsExpectedValues = new[] { "web" };
+    private static readonly string[] FormRoundTripUsesEditedCommandWhenExecutableChangesExpectedValues = new[] { "/new" };
+    private static readonly string[] ReaderMapsCompleteInspectResponseExpectedValues = new[] { "/app/start", "--safe" };
+
     [Fact]
-    public void Reader_MapsCompleteInspectResponse()
+    public void ReaderMapsCompleteInspectResponse()
     {
         JObject inspect = JObject.Parse("""
         {
@@ -74,7 +79,7 @@ public sealed class SwarmServiceEditSupportTests
         Assert.Equal("service-123", result.ServiceId);
         Assert.Equal(17UL, result.Version);
         Assert.Equal(3UL, result.Spec.Replicas);
-        Assert.Equal(new[] { "/app/start", "--safe" }, result.Spec.Command);
+        Assert.Equal(ReaderMapsCompleteInspectResponseExpectedValues, result.Spec.Command);
         Assert.Equal(TimeSpan.FromSeconds(2.5), result.Spec.RestartPolicy.Delay);
         Assert.Equal(SwarmUpdateFailureAction.Rollback, result.Spec.UpdatePolicy.FailureAction);
         Assert.Equal(SwarmUpdateOrder.StartFirst, result.Spec.UpdatePolicy.Order);
@@ -86,7 +91,7 @@ public sealed class SwarmServiceEditSupportTests
     }
 
     [Fact]
-    public void Reader_GlobalMode_UsesNullReplicasAndDefaults()
+    public void ReaderGlobalModeUsesNullReplicasAndDefaults()
     {
         JObject inspect = JObject.Parse("""
         {
@@ -108,7 +113,7 @@ public sealed class SwarmServiceEditSupportTests
     }
 
     [Fact]
-    public void Reader_RequiresVersionForOptimisticConcurrency()
+    public void ReaderRequiresVersionForOptimisticConcurrency()
     {
         JObject inspect = JObject.Parse("""
         {
@@ -125,7 +130,7 @@ public sealed class SwarmServiceEditSupportTests
     }
 
     [Fact]
-    public void FormRoundTrip_PreservesHiddenCommandNetworkAndVolumeOptions()
+    public void FormRoundTripPreservesHiddenCommandNetworkAndVolumeOptions()
     {
         var original = new SwarmServiceSpecOptions
         {
@@ -137,7 +142,7 @@ public sealed class SwarmServiceEditSupportTests
             {
                 new SwarmNetworkAttachmentOptions(
                     "frontend",
-                    new[] { "web" },
+                    FormRoundTripPreservesHiddenCommandNetworkAndVolumeOptionsExpectedValues,
                     new Dictionary<string, string> { ["encrypted"] = "true" })
             },
             Mounts = new[]
@@ -165,7 +170,7 @@ public sealed class SwarmServiceEditSupportTests
     }
 
     [Fact]
-    public void FormRoundTrip_UsesEditedCommandWhenExecutableChanges()
+    public void FormRoundTripUsesEditedCommandWhenExecutableChanges()
     {
         var original = new SwarmServiceSpecOptions
         {
@@ -182,6 +187,6 @@ public sealed class SwarmServiceEditSupportTests
 
         SwarmServiceSpecOptions result = SwarmServiceEditFormatter.PreserveHiddenSettings(original, edited);
 
-        Assert.Equal(new[] { "/new" }, result.Command);
+        Assert.Equal(FormRoundTripUsesEditedCommandWhenExecutableChangesExpectedValues, result.Command);
     }
 }

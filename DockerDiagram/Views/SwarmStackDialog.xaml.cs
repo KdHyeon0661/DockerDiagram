@@ -1,23 +1,27 @@
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.Models;
-using Microsoft.Win32;
 using System.IO;
 using System.Windows;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Contracts;
+using DockerDiagram.Models;
+using Microsoft.Win32;
 
 namespace DockerDiagram.Views
 {
     public partial class SwarmStackDialog : Window
     {
         private const string SampleYaml = "services:\n  web:\n    image: nginx:alpine\n    deploy:\n      replicas: 1\n";
+        private readonly IDialogService _dialogService;
         private readonly HashSet<string> _reservedStackNames;
 
         public bool DeployRequested { get; private set; }
         public SwarmStackDeploymentOptions Options { get; private set; } = new();
 
         public SwarmStackDialog(
+            IDialogService dialogService,
             SwarmStackSheetState state,
             IEnumerable<string>? reservedStackNames = null)
         {
+            _dialogService = dialogService ?? throw new ArgumentNullException(nameof(dialogService));
             ArgumentNullException.ThrowIfNull(state);
             _reservedStackNames = new HashSet<string>(
                 reservedStackNames ?? Array.Empty<string>(),
@@ -26,7 +30,9 @@ namespace DockerDiagram.Views
             StackNameTextBox.Text = state.StackName;
             SourcePathTextBox.Text = state.SourcePath;
             YamlTextBox.Text = string.IsNullOrWhiteSpace(state.Yaml) ? SampleYaml : state.Yaml;
-            StateText.Text = $"State: {state.DeployState}  {state.RuntimeSummary}";
+            PruneCheckBox.IsChecked = state.Prune;
+            RegistryAuthCheckBox.IsChecked = state.WithRegistryAuth;
+            StateText.Text = $"상태: {state.DeployState}  {state.RuntimeSummary}";
             UpdatePreview();
         }
 
@@ -47,7 +53,7 @@ namespace DockerDiagram.Views
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.GetBaseException().Message, "YAML 읽기 실패", MessageBoxButton.OK, MessageBoxImage.Error);
+                _dialogService.ShowError(ex.GetBaseException().Message, "YAML 읽기 실패");
             }
         }
 
@@ -97,7 +103,7 @@ namespace DockerDiagram.Views
             }
             catch (ArgumentException ex)
             {
-                MessageBox.Show(this, ex.Message, "Swarm Stack", MessageBoxButton.OK, MessageBoxImage.Warning);
+                _dialogService.ShowInfo(ex.Message, "Swarm Stack");
                 return false;
             }
 

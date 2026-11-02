@@ -1,60 +1,191 @@
-﻿using DockerDiagram.ApplicationServices;
-using DockerDiagram.Contracts;
-using DockerDiagram.Common;
-using DockerDiagram.Models;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
-    public sealed class EnvironmentVariableDisplayItem
+    public sealed class ConfigurationDisplayItem
     {
-        public required string Key { get; init; }
+        public required string Name { get; init; }
         public required string Value { get; init; }
+    }
+
+    public sealed class EnvironmentVariableDisplayItem : ViewModelBase
+    {
+        private string _key = string.Empty;
+        private string _value = string.Empty;
+        private bool _isValueVisible;
+        public Action? Changed { get; set; }
+        public string Key
+        {
+            get => _key;
+            set
+            {
+                if (!SetProperty(ref _key, value)) return;
+                OnPropertyChanged(nameof(IsSecret));
+                OnPropertyChanged(nameof(IsValueVisible));
+                OnPropertyChanged(nameof(DisplayValue));
+                OnPropertyChanged(nameof(RevealButtonText));
+                Changed?.Invoke();
+            }
+        }
+        public string Value
+        {
+            get => _value;
+            set
+            {
+                if (!SetProperty(ref _value, value)) return;
+                OnPropertyChanged(nameof(DisplayValue));
+                Changed?.Invoke();
+            }
+        }
+        public bool IsSecret => Key.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+                                Key.Contains("passwd", StringComparison.OrdinalIgnoreCase) ||
+                                Key.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+                                Key.Contains("secret", StringComparison.OrdinalIgnoreCase) ||
+                                Key.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+                                Key.EndsWith("_KEY", StringComparison.OrdinalIgnoreCase);
+        public bool IsValueVisible
+        {
+            get => !IsSecret || _isValueVisible;
+            set
+            {
+                if (SetProperty(ref _isValueVisible, value))
+                {
+                    OnPropertyChanged(nameof(DisplayValue));
+                    OnPropertyChanged(nameof(RevealButtonText));
+                }
+            }
+        }
+        public string DisplayValue => IsValueVisible ? Value : new string('•', Math.Clamp(Value.Length, 6, 20));
+        public string RevealButtonText => IsValueVisible ? "숨기기" : "보기";
         public string CopyText => $"{Key}={Value}";
     }
 
-    public sealed class PortBindingDisplayItem
+    public sealed class PortBindingDisplayItem : ViewModelBase
     {
-        public required string HostIp { get; init; }
-        public required string HostPort { get; init; }
-        public required string ContainerPort { get; init; }
-        public required string Protocol { get; init; }
+        private string _hostIp = "0.0.0.0";
+        private string _hostPort = string.Empty;
+        private string _containerPort = string.Empty;
+        private string _protocol = "tcp";
+        public Action? Changed { get; set; }
+        public string HostIp { get => _hostIp; set { if (SetProperty(ref _hostIp, value)) Changed?.Invoke(); } }
+        public string HostPort { get => _hostPort; set { if (SetProperty(ref _hostPort, value)) Changed?.Invoke(); } }
+        public string ContainerPort { get => _containerPort; set { if (SetProperty(ref _containerPort, value)) Changed?.Invoke(); } }
+        public string Protocol { get => _protocol; set { if (SetProperty(ref _protocol, value)) Changed?.Invoke(); } }
         public string CopyText => $"{HostIp}:{HostPort} -> {ContainerPort}/{Protocol}";
     }
 
-    public sealed class MountDisplayItem
+    public sealed class MountDisplayItem : ViewModelBase
     {
-        public required string Source { get; init; }
-        public required string Target { get; init; }
-        public required string Mode { get; init; }
+        private MountKind _kind = MountKind.Volume;
+        private string _source = string.Empty;
+        private string _target = string.Empty;
+        private string _mode = "rw";
+        private string _bindPropagation = "rprivate";
+        private bool _volumeNoCopy;
+        private long _tmpfsSizeBytes;
+        private string _tmpfsMode = "1777";
+        public Action? Changed { get; set; }
+        public MountKind Kind { get => _kind; set { if (SetProperty(ref _kind, value)) Changed?.Invoke(); } }
+        public string Source { get => _source; set { if (SetProperty(ref _source, value)) Changed?.Invoke(); } }
+        public string Target { get => _target; set { if (SetProperty(ref _target, value)) Changed?.Invoke(); } }
+        public string Mode { get => _mode; set { if (SetProperty(ref _mode, value)) Changed?.Invoke(); } }
+        public string BindPropagation { get => _bindPropagation; set { if (SetProperty(ref _bindPropagation, value)) Changed?.Invoke(); } }
+        public bool VolumeNoCopy { get => _volumeNoCopy; set { if (SetProperty(ref _volumeNoCopy, value)) Changed?.Invoke(); } }
+        public long TmpfsSizeBytes { get => _tmpfsSizeBytes; set { if (SetProperty(ref _tmpfsSizeBytes, value)) Changed?.Invoke(); } }
+        public string TmpfsMode { get => _tmpfsMode; set { if (SetProperty(ref _tmpfsMode, value)) Changed?.Invoke(); } }
     }
 
     /// <summary>
     /// 컨테이너 제어, 로그, 터미널, 파일 전송 및 리소스 변경 명령을 제공합니다.
     /// </summary>
-    public sealed partial class ContainerOperationsViewModel : ViewModelBase
+    public sealed partial class ContainerOperationsViewModel : ViewModelBase, IDisposable
     {
+        private static readonly JsonSerializerOptions InspectJsonOptions = new()
+        {
+            WriteIndented = true,
+            ReferenceHandler = ReferenceHandler.IgnoreCycles
+        };
+
         private readonly NodeViewModel _node;
         private readonly IContainerService _containerService;
         private readonly IDialogService _dialogService;
         private CancellationTokenSource? _logStreamCts;
-        private List<Docker.DotNet.Models.MountPoint> _cachedMounts = new();
+        private List<Docker.DotNet.Models.MountPoint> _cachedMounts = [];
         private bool _isTransferBusy;
         private string _transferStatus = "경로를 입력하거나 선택하세요.";
+        private bool _hasPendingConfigurationChanges;
+        private bool _hasPendingStorageChanges;
+        private string _recreateStatus = "변경사항이 없습니다.";
+        private string _uploadHostPath = string.Empty;
+        private string _uploadContainerPath = string.Empty;
+        private string _downloadContainerPath = string.Empty;
+        private string _downloadHostFolder = string.Empty;
+        private CancellationTokenSource? _transferCts;
 
-        public ObservableCollection<EnvironmentVariableDisplayItem> EnvironmentItems { get; } = new();
-        public ObservableCollection<PortBindingDisplayItem> PortItems { get; } = new();
-        public ObservableCollection<MountDisplayItem> NamedVolumeItems { get; } = new();
-        public ObservableCollection<MountDisplayItem> BindMountItems { get; } = new();
+        public void Dispose()
+        {
+            StopLogStream();
+            _transferCts?.Cancel();
+            _transferCts?.Dispose();
+            _transferCts = null;
+            GC.SuppressFinalize(this);
+        }
+
+        public ObservableCollection<EnvironmentVariableDisplayItem> EnvironmentItems { get; } = [];
+        public ObservableCollection<PortBindingDisplayItem> PortItems { get; } = [];
+        public ObservableCollection<MountDisplayItem> NamedVolumeItems { get; } = [];
+        public ObservableCollection<MountDisplayItem> BindMountItems { get; } = [];
+        public ObservableCollection<MountDisplayItem> TmpfsMountItems { get; } = [];
+        public ObservableCollection<ConfigurationDisplayItem> GeneralConfigurationItems { get; } = [];
+        public ObservableCollection<EnvironmentVariableDisplayItem> LabelItems { get; } = [];
+
+        public bool HasPendingConfigurationChanges
+        {
+            get => _hasPendingConfigurationChanges;
+            private set
+            {
+                if (SetProperty(ref _hasPendingConfigurationChanges, value))
+                {
+                    OnPropertyChanged(nameof(HasPendingRecreateChanges));
+                    RaiseRecreateCommandStates();
+                }
+            }
+        }
+
+        public bool HasPendingStorageChanges
+        {
+            get => _hasPendingStorageChanges;
+            private set
+            {
+                if (SetProperty(ref _hasPendingStorageChanges, value))
+                {
+                    OnPropertyChanged(nameof(HasPendingRecreateChanges));
+                    RaiseRecreateCommandStates();
+                }
+            }
+        }
+
+        public bool HasPendingRecreateChanges =>
+            HasPendingConfigurationChanges || HasPendingStorageChanges;
+
+        public string RecreateStatus
+        {
+            get => _recreateStatus;
+            private set => SetProperty(ref _recreateStatus, value);
+        }
 
         public bool IsTransferBusy
         {
@@ -67,6 +198,11 @@ namespace DockerDiagram.ViewModels
             get => _transferStatus;
             private set => SetProperty(ref _transferStatus, value);
         }
+
+        public string UploadHostPath { get => _uploadHostPath; set { if (SetProperty(ref _uploadHostPath, value)) RaiseDetailTransferCommandStates(); } }
+        public string UploadContainerPath { get => _uploadContainerPath; set { if (SetProperty(ref _uploadContainerPath, value)) RaiseDetailTransferCommandStates(); } }
+        public string DownloadContainerPath { get => _downloadContainerPath; set { if (SetProperty(ref _downloadContainerPath, value)) RaiseDetailTransferCommandStates(); } }
+        public string DownloadHostFolder { get => _downloadHostFolder; set { if (SetProperty(ref _downloadHostFolder, value)) RaiseDetailTransferCommandStates(); } }
 
         public ContainerOperationsViewModel(
             NodeViewModel node,
@@ -101,6 +237,11 @@ namespace DockerDiagram.ViewModels
             UpdateResourcesCommand = new AsyncRelayCommand(
                 ExecuteUpdateResourcesAsync,
                 _ => IsConnectedContainer);
+            ResetResourcesCommand = new AsyncRelayCommand(
+                ResetResourceLimitsAsync,
+                _ => IsConnectedContainer && _node.Monitoring.HasPendingLimitChanges,
+                _node.Monitoring,
+                nameof(ContainerMonitoringViewModel.HasPendingLimitChanges));
             RenameContainerCommand = new AsyncRelayCommand(
                 _ => RenameContainerAsync(),
                 _ => IsConnectedContainer);
@@ -129,7 +270,31 @@ namespace DockerDiagram.ViewModels
                 _ => CanCopyFromContainer());
             BrowseHostFileCommand = new RelayCommand(_ => BrowseHostFile());
             BrowseHostFolderCommand = new RelayCommand(_ => BrowseHostFolder());
+            BrowseUploadFileCommand = new RelayCommand(_ => BrowseUploadFile());
+            BrowseUploadFolderCommand = new RelayCommand(_ => BrowseUploadFolder());
+            BrowseDownloadFolderCommand = new RelayCommand(_ => BrowseDownloadFolder());
+            DetailUploadCommand = new AsyncRelayCommand(_ => DetailUploadAsync(), _ => CanDetailUpload());
+            DetailDownloadCommand = new AsyncRelayCommand(_ => DetailDownloadAsync(), _ => CanDetailDownload());
+            CancelTransferCommand = new RelayCommand(_ => CancelTransfer(), _ => IsTransferBusy);
             AddEnvAndRecreateCommand = new RelayCommand(_ => ShowRecreateNotice());
+            AddEnvironmentCommand = new RelayCommand(_ => AddEnvironmentDraft());
+            RemoveEnvironmentCommand = new RelayCommand(item => RemoveEnvironmentDraft(item as EnvironmentVariableDisplayItem));
+            ToggleEnvironmentSecretCommand = new RelayCommand(item => ToggleEnvironmentSecret(item as EnvironmentVariableDisplayItem));
+            AddPortCommand = new RelayCommand(_ => AddPortDraft());
+            RemovePortCommand = new RelayCommand(item => RemovePortDraft(item as PortBindingDisplayItem));
+            AddNamedVolumeCommand = new RelayCommand(_ => AddNamedVolumeDraft());
+            AddBindMountCommand = new RelayCommand(_ => AddBindMountDraft());
+            AddTmpfsMountCommand = new RelayCommand(_ => AddTmpfsMountDraft());
+            RemoveNamedVolumeCommand = new RelayCommand(item => RemoveNamedVolumeDraft(item as MountDisplayItem));
+            RemoveBindMountCommand = new RelayCommand(item => RemoveBindMountDraft(item as MountDisplayItem));
+            RemoveTmpfsMountCommand = new RelayCommand(item => RemoveTmpfsMountDraft(item as MountDisplayItem));
+            BrowseBindMountCommand = new RelayCommand(item => BrowseBindMount(item as MountDisplayItem));
+            ApplyRecreateChangesCommand = new AsyncRelayCommand(
+                ApplyRecreateChangesAsync,
+                _ => IsConnectedContainer && HasPendingRecreateChanges);
+            ResetRecreateChangesCommand = new AsyncRelayCommand(
+                ResetRecreateChangesAsync,
+                _ => IsConnectedContainer && HasPendingRecreateChanges);
             OnTransferPathChanged();
         }
 
@@ -145,7 +310,27 @@ namespace DockerDiagram.ViewModels
         public ICommand CopyFromContainerCommand { get; }
         public ICommand BrowseHostFileCommand { get; }
         public ICommand BrowseHostFolderCommand { get; }
+        public ICommand BrowseUploadFileCommand { get; }
+        public ICommand BrowseUploadFolderCommand { get; }
+        public ICommand BrowseDownloadFolderCommand { get; }
+        public AsyncRelayCommand DetailUploadCommand { get; }
+        public AsyncRelayCommand DetailDownloadCommand { get; }
+        public RelayCommand CancelTransferCommand { get; }
         public ICommand AddEnvAndRecreateCommand { get; }
+        public ICommand AddEnvironmentCommand { get; }
+        public ICommand RemoveEnvironmentCommand { get; }
+        public ICommand ToggleEnvironmentSecretCommand { get; }
+        public ICommand AddPortCommand { get; }
+        public ICommand RemovePortCommand { get; }
+        public ICommand AddNamedVolumeCommand { get; }
+        public ICommand AddBindMountCommand { get; }
+        public ICommand AddTmpfsMountCommand { get; }
+        public ICommand RemoveNamedVolumeCommand { get; }
+        public ICommand RemoveBindMountCommand { get; }
+        public ICommand RemoveTmpfsMountCommand { get; }
+        public ICommand BrowseBindMountCommand { get; }
+        public AsyncRelayCommand ApplyRecreateChangesCommand { get; }
+        public AsyncRelayCommand ResetRecreateChangesCommand { get; }
         public AsyncRelayCommand RenameContainerCommand { get; }
         public AsyncRelayCommand ExecContainerCommand { get; }
         public AsyncRelayCommand CommitContainerCommand { get; }
@@ -153,6 +338,7 @@ namespace DockerDiagram.ViewModels
         public AsyncRelayCommand ViewRawInspectCommand { get; }
         public AsyncRelayCommand ExtractDockerfileCommand { get; }
         public ICommand UpdateResourcesCommand { get; }
+        public AsyncRelayCommand ResetResourcesCommand { get; }
 
         private bool IsConnectedContainer =>
             _node.Type == NodeType.Container &&
@@ -193,6 +379,7 @@ namespace DockerDiagram.ViewModels
 
             if (UpdateResourcesCommand is AsyncRelayCommand updateResources)
                 updateResources.RaiseCanExecuteChanged();
+            ResetResourcesCommand.RaiseCanExecuteChanged();
             if (OpenDetailWindowCommand is AsyncRelayCommand openDetail)
                 openDetail.RaiseCanExecuteChanged();
             if (ExportLogsCommand is AsyncRelayCommand exportLogs)
@@ -200,6 +387,7 @@ namespace DockerDiagram.ViewModels
 
             ExtractDockerfileCommand.RaiseCanExecuteChanged();
             RaiseTransferCommandStates();
+            RaiseRecreateCommandStates();
         }
 
         public async Task<bool> ReconnectAsync()
@@ -216,7 +404,7 @@ namespace DockerDiagram.ViewModels
                 _dialogService.ShowInfo(
                     $"Docker에서 '{_node.Name}' 컨테이너를 찾지 못했습니다.",
                     "Reconnect");
-                _node.IsDockerConnected = false;
+                _node.ApplyObservedContainerState(connected: false, dockerState: null);
                 return false;
             }
 
@@ -224,8 +412,7 @@ namespace DockerDiagram.ViewModels
             _node.Name = match.Name;
             _node.ImageName = match.Image;
             _node.PortInfo = match.Ports;
-            _node.StatusColor = match.StateColor;
-            _node.IsDockerConnected = true;
+            _node.ApplyObservedContainerState(connected: true, dockerState: match.State);
             await _node.RefreshDetailsAsync();
             return true;
         }
@@ -340,11 +527,7 @@ namespace DockerDiagram.ViewModels
             try
             {
                 var payload = await _containerService.InspectContainerAsync(_node.ContainerId);
-                var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    ReferenceHandler = ReferenceHandler.IgnoreCycles
-                });
+                var json = JsonSerializer.Serialize(payload, InspectJsonOptions);
 
                 _dialogService.ShowRawInspectDialog(
                     _node,
@@ -462,10 +645,11 @@ namespace DockerDiagram.ViewModels
                             : info.Config.Image;
                         imageInfo = await imageService.InspectImageAsync(imageReference);
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         // The container can still be exported when its base image metadata
                         // is unavailable. In that case the generator keeps all visible values.
+                        AppLog.Warning("Dockerfile 추출 중 베이스 이미지 메타데이터 조회 실패", ex);
                     }
                 }
 

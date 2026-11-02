@@ -1,18 +1,17 @@
-using DockerDiagram.Infrastructure;
-using DockerDiagram.Diagram;
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.Contracts;
-using DockerDiagram.Common;
-using Docker.DotNet.Models;
-using DockerDiagram.Models;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using Docker.DotNet.Models;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
+using DockerDiagram.Infrastructure;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
 {
@@ -83,6 +82,10 @@ namespace DockerDiagram.ViewModels
         private IImageService _imageService => ActiveSheet?.DockerService ?? _defaultDockerService;
 
         private bool _disposed;
+        private readonly ApplicationLifetimeCoordinator _lifetime = new();
+        internal CancellationToken LifetimeToken => _lifetime.Token;
+        private readonly object _initializationSync = new();
+        private Task? _initializationTask;
 
         // =========================================================
         // 🚀 생성자 (앱 시작 시 초기화)
@@ -107,15 +110,28 @@ namespace DockerDiagram.ViewModels
                 History,
                 _dialogService);
 
-            // 2. 초기 탭 생성 및 자동 로드 지시
-            SheetManager.AddSheet();
-            _ = SheetManager.LoadLastFileIfExistsAsync();
+            // 2. 초기 탭 생성. 마지막 파일 복원은 MainWindow가 로드된 뒤 명시적으로 기다립니다.
+            SheetManager.AddSheet(markModified: false);
 
             _dockerSync = new DockerSyncCoordinator(
                 () => ActiveSheet?.DockerService ?? _defaultDockerService,
                 Explorer,
                 SheetManager,
                 _dialogService);
+            _lifetime.Register(SheetManager);
+            _lifetime.Register(_dockerSync);
+        }
+
+        /// <summary>
+        /// 시작 시 복원을 한 번만 수행합니다. 생성자에서 fire-and-forget으로 실행하지 않아
+        /// 사용자가 편집을 시작한 뒤 늦게 끝난 복원이 현재 작업을 덮어쓰는 일을 방지합니다.
+        /// </summary>
+        public Task InitializeAsync()
+        {
+            lock (_initializationSync)
+            {
+                return _initializationTask ??= SheetManager.LoadLastFileIfExistsAsync();
+            }
         }
 
         public Task OnDockerStartedAsync() => _dockerSync.OnDockerStartedAsync();
@@ -227,7 +243,10 @@ namespace DockerDiagram.ViewModels
                 foreach (GroupViewModel group in sheet.Groups.Where(group => !historyBefore.Groups.Contains(group)).ToList())
                     sheet.Groups.Remove(group);
                 foreach (NodeViewModel node in sheet.Nodes.Where(node => !historyBefore.Nodes.Contains(node)).ToList())
-                    sheet.Nodes.Remove(node);
+                {
+                    if (sheet.Nodes.Remove(node))
+                        node.Dispose();
+                }
 
                 _dialogService.ShowError($"Compose 프로젝트를 배치하지 못했습니다:\n{ex.Message}", "Compose 프로젝트 배치");
             }
@@ -309,7 +328,7 @@ namespace DockerDiagram.ViewModels
                 dependencyMap,
                 originX,
                 originY,
-                nodes.Where(node => node.Type == NodeType.Volume).ToList(),
+                nodes.Where(node => node.Type is NodeType.Volume or NodeType.HostPath).ToList(),
                 groups,
                 options);
 
@@ -342,7 +361,13 @@ namespace DockerDiagram.ViewModels
             try
             {
                 _dialogService.SetBusyCursor(true);
-                application = await deploymentService.ApplyAsync(template, options, sheet, x, y);
+                application = await deploymentService.ApplyAsync(
+                    template,
+                    options,
+                    sheet,
+                    x,
+                    y,
+                    LifetimeToken);
                 IsModified = true;
 
                 var historyApplication = application;
@@ -358,7 +383,13 @@ namespace DockerDiagram.ViewModels
                     },
                     redo: async () =>
                     {
-                        historyApplication = await deploymentService.ApplyAsync(template, options, sheet, x, y);
+                        historyApplication = await deploymentService.ApplyAsync(
+                            template,
+                            options,
+                            sheet,
+                            x,
+                            y,
+                            LifetimeToken);
                         IsModified = true;
                         if (ReferenceEquals(ActiveSheet, sheet))
                             await RefreshRuntimeResourcesAsync();
@@ -370,6 +401,10 @@ namespace DockerDiagram.ViewModels
                         ? $"'{template.Name}' 스택을 생성하고 실행했습니다."
                         : $"'{template.Name}' 스택을 다이어그램에 추가했습니다.",
                     "Stack Template");
+            }
+            catch (OperationCanceledException) when (LifetimeToken.IsCancellationRequested)
+            {
+                AppLog.Info($"Stack template 적용이 애플리케이션 종료로 취소되었습니다: {template.Name}");
             }
             catch (Exception ex)
             {
@@ -387,8 +422,8 @@ namespace DockerDiagram.ViewModels
         {
             if (_disposed) return;
             _disposed = true;
-            _dockerSync.Dispose();
-            SheetManager.Dispose();
+            _lifetime.Dispose();
+            GC.SuppressFinalize(this);
         }
 
         // =========================================================
@@ -397,8 +432,8 @@ namespace DockerDiagram.ViewModels
         // =========================================================
         // ↩️ Undo / Redo 히스토리 헬퍼
         // =========================================================
-        private DiagramHistoryService.DiagramState CaptureDiagramState(SheetViewModel sheet) =>
-            _diagramHistory.CaptureState(sheet);
+        private static DiagramHistoryService.DiagramState CaptureDiagramState(SheetViewModel sheet) =>
+            DiagramHistoryService.CaptureState(sheet);
 
         private void RecordAdditionsFromSnapshot(
             SheetViewModel sheet,
@@ -425,6 +460,23 @@ namespace DockerDiagram.ViewModels
             string description) =>
             _diagramHistory.RecordLayoutChange(sheet, beforeNodes, afterNodes, beforeGroups, afterGroups, description);
 
+        public void RecordSelectionMove(
+            SheetViewModel sheet,
+            IReadOnlyDictionary<NodeViewModel, Rect> beforeNodes,
+            IReadOnlyDictionary<NodeViewModel, Rect> afterNodes,
+            IReadOnlyDictionary<GroupViewModel, Rect> beforeGroups,
+            IReadOnlyDictionary<GroupViewModel, Rect> afterGroups,
+            IReadOnlyCollection<NodeViewModel> membershipNodes,
+            string description) =>
+            _diagramHistory.RecordSelectionMove(
+                sheet,
+                beforeNodes,
+                afterNodes,
+                beforeGroups,
+                afterGroups,
+                membershipNodes,
+                description);
+
         public IHistoryCommand CreateConnectorDeleteCommand(SheetViewModel sheet, ConnectorViewModel connector) =>
             _diagramHistory.CreateConnectorDeleteCommand(sheet, connector);
 
@@ -432,8 +484,14 @@ namespace DockerDiagram.ViewModels
             SheetViewModel sheet,
             NodeViewModel node,
             bool deleteDocker,
-            bool forceVolumeDelete = false) =>
-            _diagramHistory.CreateNodeDeleteCommand(sheet, node, deleteDocker, forceVolumeDelete);
+            bool forceVolumeDelete = false,
+            bool deleteExternalVolume = false) =>
+            _diagramHistory.CreateNodeDeleteCommand(
+                sheet,
+                node,
+                deleteDocker,
+                forceVolumeDelete,
+                deleteExternalVolume);
 
         public IHistoryCommand CreateGroupDeleteCommand(
             SheetViewModel sheet,

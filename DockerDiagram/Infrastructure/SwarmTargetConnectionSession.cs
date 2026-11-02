@@ -1,6 +1,6 @@
+using System;
 using DockerDiagram.Contracts;
 using DockerDiagram.Models;
-using System;
 
 namespace DockerDiagram.Infrastructure
 {

@@ -1,8 +1,8 @@
-﻿using DockerDiagram.Infrastructure;
-using DockerDiagram.Diagram;
-using DockerDiagram.Contracts;
-using System.Diagnostics;
 using System.Text.RegularExpressions;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
+using DockerDiagram.Infrastructure;
 using DockerDiagram.Models;
 using DockerDiagram.ViewModels;
 
@@ -18,10 +18,10 @@ namespace DockerDiagram.ApplicationServices
         public List<string> NetworkIds { get; } = [];
     }
 
-    public sealed class StackTemplateDeploymentService
+    public sealed partial class StackTemplateDeploymentService
     {
         private static readonly Regex PlaceholderRegex =
-            new(@"\$\{([A-Z0-9_]+)\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            MyRegex();
 
         private readonly IDockerService _dockerService;
         private readonly IDialogService _dialogService;
@@ -69,7 +69,7 @@ namespace DockerDiagram.ApplicationServices
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[StackTemplate] Container name scan failed: {ex.Message}");
+                AppLog.Warning("Stack template 컨테이너 이름 검사 실패", ex);
             }
 
             try
@@ -83,7 +83,7 @@ namespace DockerDiagram.ApplicationServices
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[StackTemplate] Volume name scan failed: {ex.Message}");
+                AppLog.Warning("Stack template 볼륨 이름 검사 실패", ex);
             }
 
             try
@@ -97,7 +97,7 @@ namespace DockerDiagram.ApplicationServices
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[StackTemplate] Network name scan failed: {ex.Message}");
+                AppLog.Warning("Stack template 네트워크 이름 검사 실패", ex);
             }
 
             for (int i = 1; i <= 999; i++)
@@ -125,8 +125,10 @@ namespace DockerDiagram.ApplicationServices
             StackTemplateDeploymentOptions options,
             SheetViewModel sheet,
             double originX,
-            double originY)
+            double originY,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var application = new StackTemplateApplication();
             var values = BuildValues(template, options);
             var networkDefinitions = template.Networks.Where(item => IsEnabled(item.Key, string.Empty, values)).ToList();
@@ -145,13 +147,14 @@ namespace DockerDiagram.ApplicationServices
                 item => Resolve(item.Name, values),
                 StringComparer.OrdinalIgnoreCase);
 
-            originX = Math.Round(originX / 10.0) * 10.0;
-            originY = Math.Round(originY / 10.0) * 10.0;
+            originX = DiagramMetrics.SnapToGrid(originX);
+            originY = DiagramMetrics.SnapToGrid(originY);
 
             try
             {
                 foreach (var network in networkDefinitions)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     string networkName = Resolve(network.Name, values);
                     string networkId;
 
@@ -193,6 +196,7 @@ namespace DockerDiagram.ApplicationServices
 
                 foreach (var volume in volumeDefinitions)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     string volumeName = volumeNamesByKey[volume.Key];
                     string driver = string.IsNullOrWhiteSpace(volume.Driver) ? "local" : volume.Driver;
 
@@ -208,22 +212,22 @@ namespace DockerDiagram.ApplicationServices
                         application.VolumeNames.Add(volumeName);
                     }
 
-                    var node = new NodeViewModel(_dockerService, _dockerService, _dialogService)
-                    {
-                        ParentSheet = sheet,
-                        Name = volumeName,
-                        DockerVolumeName = volumeName,
-                        ComposeProjectName = options.ProjectName,
-                        ComposeServiceName = volume.Key,
-                        Type = NodeType.Volume,
-                        Driver = driver,
-                        ImageName = driver,
-                        X = originX + volume.X,
-                        Y = originY + volume.Y,
-                        StatusColor = options.DeployToDocker ? "#E67E22" : "#808080",
-                        IsDockerConnected = options.DeployToDocker,
-                        DetailStatus = options.DeployToDocker ? "Created" : "Template plan"
-                    };
+                    NodeViewModel node = DiagramNodeFactory.CreateVolume(
+                        _dockerService,
+                        _dockerService,
+                        _dialogService,
+                        volumeName,
+                        originX + volume.X,
+                        originY + volume.Y,
+                        options.DeployToDocker);
+                    node.ParentSheet = sheet;
+                    node.DockerVolumeName = volumeName;
+                    node.ComposeProjectName = options.ProjectName;
+                    node.ComposeServiceName = volume.Key;
+                    node.Driver = driver;
+                    node.ImageName = driver;
+                    node.StatusColor = options.DeployToDocker ? StatusColors.Pending : StatusColors.Unknown;
+                    node.DetailStatus = options.DeployToDocker ? "Created" : "Template plan";
 
                     sheet.Nodes.Add(node);
                     volumeNodesByKey[volume.Key] = node;
@@ -233,6 +237,7 @@ namespace DockerDiagram.ApplicationServices
                 var creationOrder = GetContainerCreationOrder(containerDefinitions, template.Dependencies);
                 foreach (var container in containerDefinitions)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     string containerName = Resolve(container.Name, values);
                     string imageReference = Resolve(container.Image, values);
                     var ports = container.Ports.Select(port => Resolve(port, values)).Where(value => !string.IsNullOrWhiteSpace(value)).ToList();
@@ -241,31 +246,29 @@ namespace DockerDiagram.ApplicationServices
                         .Where(groupsByKey.ContainsKey)
                         .ToList();
 
-                    var node = new NodeViewModel(_dockerService, _dockerService, _dialogService)
-                    {
-                        ParentSheet = sheet,
-                        Name = options.DeployToDocker ? $"{containerName} (Queued...)" : containerName,
-                        ImageName = imageReference,
-                        ComposeProjectName = options.ProjectName,
-                        ComposeServiceName = container.Key,
-                        ComposeContainerNumber = 1,
-                        Type = NodeType.Container,
-                        X = originX + container.X,
-                        Y = originY + container.Y,
-                        PortBindings = ports,
-                        PortInfo = string.Join(", ", ports),
-                        EnvironmentVariables = environment,
-                        RestartPolicy = container.RestartPolicy,
-                        IsCreating = options.DeployToDocker,
-                        StatusColor = options.DeployToDocker ? "#FFC107" : "#808080",
-                        IsDockerConnected = false,
-                        IsRunning = false,
-                        DetailStatus = options.DeployToDocker ? "Queued" : "Template plan"
-                    };
+                    NodeViewModel node = DiagramNodeFactory.CreatePendingContainer(
+                        _dockerService,
+                        _dockerService,
+                        _dialogService,
+                        options.DeployToDocker ? $"{containerName} (Queued...)" : containerName,
+                        imageReference,
+                        originX + container.X,
+                        originY + container.Y);
+                    node.ParentSheet = sheet;
+                    node.ComposeProjectName = options.ProjectName;
+                    node.ComposeServiceName = container.Key;
+                    node.ComposeContainerNumber = 1;
+                    node.PortBindings = ports;
+                    node.PortInfo = string.Join(", ", ports);
+                    node.EnvironmentVariables = environment;
+                    node.RestartPolicy = container.RestartPolicy;
+                    node.DetailStatus = options.DeployToDocker ? "Queued" : "Template plan";
+                    if (!options.DeployToDocker)
+                        node.SetLifecycleState(RuntimeLifecycleState.Unknown, "Template plan");
 
                     sheet.Nodes.Add(node);
                     if (options.DeployToDocker)
-                        node.SetCreationProgress("Queued");
+                        node.SetCreationProgress(NodeOperationPhase.Preparing, "Queued");
                     containerNodesByKey[container.Key] = node;
                     application.Nodes.Add(node);
 
@@ -320,6 +323,7 @@ namespace DockerDiagram.ApplicationServices
                     var pulledImages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var container in creationOrder)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         string containerName = Resolve(container.Name, values);
                         string imageReference = Resolve(container.Image, values);
                         var (image, tag) = SplitImageReference(imageReference);
@@ -351,26 +355,58 @@ namespace DockerDiagram.ApplicationServices
                         if (pulledImages.Add(imageReference))
                         {
                             node.Name = $"{containerName} (Pulling...)";
-                            node.StatusColor = "#0D6EFD";
-                            node.SetCreationProgress($"Pulling image ({application.ContainerIds.Count + 1}/{creationOrder.Count})");
+                            node.StatusColor = StatusColors.Progress;
+                            node.SetCreationProgress(
+                                NodeOperationPhase.Pulling,
+                                $"Pulling image ({application.ContainerIds.Count + 1}/{creationOrder.Count})");
 
                             var tracker = new DockerPullProgressTracker();
                             var progress = new Progress<Docker.DotNet.Models.JSONMessage>(message =>
                             {
                                 var snapshot = tracker.Update(message);
                                 node.SetCreationProgress(
-                                    $"Pulling image ({application.ContainerIds.Count + 1}/{creationOrder.Count}) - {snapshot.Message}",
-                                    snapshot.Percent);
-                                node.StatusColor = snapshot.Percent.HasValue ? "#0D6EFD" : "#FFC107";
+                                    NodeOperationPhase.Pulling,
+                                    $"{snapshot.Message} ({application.ContainerIds.Count + 1}/{creationOrder.Count})",
+                                    snapshot.DisplayPercent,
+                                    snapshot.DetailMessage);
+                                node.StatusColor = snapshot.DisplayPercent.HasValue ? StatusColors.Progress : StatusColors.InProgress;
                             });
 
-                            await _dockerService.PullImageWithProgressAsync(image, tag, progress);
-                            node.SetCreationProgress($"Image pull complete ({application.ContainerIds.Count + 1}/{creationOrder.Count})", 100);
+                            await _dockerService.PullImageWithProgressAsync(
+                                image,
+                                tag,
+                                progress,
+                                cancellationToken: cancellationToken);
+                            node.SetCreationProgress(
+                                NodeOperationPhase.Pulling,
+                                $"이미지 다운로드 완료 ({application.ContainerIds.Count + 1}/{creationOrder.Count})",
+                                100,
+                                $"{imageReference} 이미지의 필요한 레이어가 준비되었습니다.");
                         }
 
                         node.Name = $"{containerName} (Creating...)";
-                        node.StatusColor = "#FFC107";
-                        node.SetCreationProgress($"Creating container ({application.ContainerIds.Count + 1}/{creationOrder.Count})");
+                        node.StatusColor = StatusColors.InProgress;
+                        node.SetCreationProgress(
+                            NodeOperationPhase.Creating,
+                            $"컨테이너 생성 준비 중 ({application.ContainerIds.Count + 1}/{creationOrder.Count})",
+                            detail: $"{containerName} 컨테이너 설정을 준비합니다.");
+                        var creationProgress = new Progress<ContainerCreationProgress>(stage =>
+                        {
+                            node.SetCreationProgress(
+                                stage.Phase switch
+                                {
+                                    ContainerCreationPhase.Preparing => NodeOperationPhase.Preparing,
+                                    ContainerCreationPhase.Creating => NodeOperationPhase.Creating,
+                                    ContainerCreationPhase.Starting => NodeOperationPhase.Starting,
+                                    ContainerCreationPhase.Started => NodeOperationPhase.Synchronizing,
+                                    _ => NodeOperationPhase.Creating
+                                },
+                                $"{stage.Message} ({application.ContainerIds.Count + 1}/{creationOrder.Count})",
+                                detail: stage.Detail);
+                            node.StatusColor = stage.Phase == ContainerCreationPhase.Started
+                                ? StatusColors.Progress
+                                : StatusColors.InProgress;
+                        });
                         string containerId = await _dockerService.CreateAndStartContainerAsync(
                             containerName,
                             image,
@@ -391,23 +427,23 @@ namespace DockerDiagram.ApplicationServices
                                 "container",
                                 template.Dependencies
                                     .Where(dependency => dependency.Source.Equals(container.Key, StringComparison.OrdinalIgnoreCase))
-                                    .Select(dependency => dependency.Target)));
+                                    .Select(dependency => dependency.Target)),
+                            creationProgress);
                         application.ContainerIds.Add(containerId);
 
                         node.Name = containerName;
                         node.ContainerId = containerId;
-                        node.IsCreating = false;
-                        node.IsDockerConnected = true;
-                        node.IsRunning = true;
-                        node.DetailStatus = "Running";
-                        node.StatusColor = "#28A745";
-                        node.CreationProgressValue = 100;
-                        node.CreationProgressMessage = "Created";
+                        node.SetDockerConnection(true);
+                        node.SetCreationProgress(
+                            NodeOperationPhase.Completed,
+                            "생성 완료",
+                            100,
+                            "이미지 다운로드와 컨테이너 생성·시작이 완료되었습니다.");
 
                         for (int networkIndex = 1; networkIndex < enabledNetworks.Count; networkIndex++)
                         {
                             node.DetailStatus = $"Connecting network {networkIndex + 1}/{enabledNetworks.Count}";
-                            node.StatusColor = "#0D6EFD";
+                            node.StatusColor = StatusColors.Progress;
                             GroupViewModel group = groupsByKey[enabledNetworks[networkIndex]];
                             await _dockerService.ConnectNetworkAsync(
                                 group.DockerNetworkName,
@@ -415,8 +451,7 @@ namespace DockerDiagram.ApplicationServices
                                 node.GetNetworkOptions(group.Title));
                         }
 
-                        node.DetailStatus = "Running";
-                        node.StatusColor = "#28A745";
+                        await node.RefreshDetailsAsync(refreshMonitoring: false);
                     }
                 }
 
@@ -438,10 +473,9 @@ namespace DockerDiagram.ApplicationServices
                     node.Name = node.Name.Replace(" (Queued...)", string.Empty)
                         .Replace(" (Pulling...)", string.Empty)
                         .Replace(" (Creating...)", string.Empty);
-                    node.IsCreating = false;
-                    node.IsRunning = false;
-                    node.DetailStatus = "Failed - rolling back";
-                    node.StatusColor = "#DC3545";
+                    node.SetLifecycleState(
+                        RuntimeLifecycleState.Failed,
+                        "Failed - rolling back");
                 }
 
                 await RemoveAsync(application, sheet, options.DeployToDocker);
@@ -461,7 +495,10 @@ namespace DockerDiagram.ApplicationServices
                 group.ContainedNodes.Clear();
 
             foreach (var node in application.Nodes.ToList())
-                sheet.Nodes.Remove(node);
+            {
+                if (sheet.Nodes.Remove(node))
+                    node.Dispose();
+            }
 
             foreach (var group in application.Groups.ToList())
                 sheet.Groups.Remove(group);
@@ -475,19 +512,19 @@ namespace DockerDiagram.ApplicationServices
             foreach (string containerId in application.ContainerIds.AsEnumerable().Reverse())
             {
                 try { await _dockerService.RemoveContainerAsync(containerId); }
-                catch (Exception ex) { Debug.WriteLine($"[StackTemplate] Container rollback failed: {ex.Message}"); }
+                catch (Exception ex) { AppLog.Warning($"Stack template 컨테이너 롤백 실패: {containerId}", ex); }
             }
 
             foreach (string volumeName in application.VolumeNames.AsEnumerable().Reverse())
             {
                 try { await _dockerService.RemoveVolumeAsync(volumeName); }
-                catch (Exception ex) { Debug.WriteLine($"[StackTemplate] Volume rollback failed: {ex.Message}"); }
+                catch (Exception ex) { AppLog.Warning($"Stack template 볼륨 롤백 실패: {volumeName}", ex); }
             }
 
             foreach (string networkId in application.NetworkIds.AsEnumerable().Reverse())
             {
                 try { await _dockerService.RemoveNetworkAsync(networkId); }
-                catch (Exception ex) { Debug.WriteLine($"[StackTemplate] Network rollback failed: {ex.Message}"); }
+                catch (Exception ex) { AppLog.Warning($"Stack template 네트워크 롤백 실패: {networkId}", ex); }
             }
 
             sheet.UpdateGroupLayering();
@@ -515,7 +552,7 @@ namespace DockerDiagram.ApplicationServices
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[StackTemplate] Docker port scan failed: {ex.Message}");
+                    AppLog.Warning("Stack template Docker 포트 검사 실패", ex);
                 }
             }
 
@@ -528,15 +565,14 @@ namespace DockerDiagram.ApplicationServices
                     continue;
                 }
 
-                string desired = desiredPort.ToString();
-                if (!usedPorts.Contains(desired))
+                string desired = desiredPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (usedPorts.Add(desired))
                 {
-                    usedPorts.Add(desired);
                     continue;
                 }
 
                 int availablePort = FindAvailablePort(desiredPort, usedPorts);
-                string adjusted = availablePort.ToString();
+                string adjusted = availablePort.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 values[variable.Key] = adjusted;
                 options.Variables[variable.Key] = adjusted;
                 usedPorts.Add(adjusted);
@@ -547,7 +583,7 @@ namespace DockerDiagram.ApplicationServices
             StackTemplateDefinition template,
             StackTemplateDeploymentOptions options,
             SheetViewModel sheet,
-            IReadOnlyDictionary<string, string> values,
+            Dictionary<string, string> values,
             IReadOnlyCollection<StackTemplateNetworkDefinition> networkDefinitions,
             IReadOnlyCollection<StackTemplateVolumeDefinition> volumeDefinitions,
             IReadOnlyCollection<StackTemplateContainerDefinition> containerDefinitions)
@@ -705,7 +741,7 @@ namespace DockerDiagram.ApplicationServices
         private static HashSet<string> GetPublishedDockerPorts(IEnumerable<DockerContainer> containers)
         {
             return containers
-                .SelectMany(container => Regex.Matches(container.Ports ?? string.Empty, @"(?<!\d)(\d+)->")
+                .SelectMany(container => PublishedPortRegex().Matches(container.Ports ?? string.Empty)
                     .Select(match => match.Groups[1].Value))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
@@ -727,17 +763,17 @@ namespace DockerDiagram.ApplicationServices
             return parts[^2];
         }
 
-        private static int FindAvailablePort(int preferredPort, ISet<string> usedPorts)
+        private static int FindAvailablePort(int preferredPort, HashSet<string> usedPorts)
         {
             for (int port = Math.Max(1, preferredPort); port <= 65535; port++)
             {
-                if (!usedPorts.Contains(port.ToString()))
+                if (!usedPorts.Contains(port.ToString(System.Globalization.CultureInfo.InvariantCulture)))
                     return port;
             }
 
             for (int port = 1024; port < Math.Max(1024, preferredPort); port++)
             {
-                if (!usedPorts.Contains(port.ToString()))
+                if (!usedPorts.Contains(port.ToString(System.Globalization.CultureInfo.InvariantCulture)))
                     return port;
             }
 
@@ -771,12 +807,12 @@ namespace DockerDiagram.ApplicationServices
         private static bool HasNameConflict(
             StackTemplateDefinition template,
             string projectName,
-            ISet<string> diagramContainerNames,
-            ISet<string> diagramVolumeNames,
-            ISet<string> diagramNetworkNames,
-            ISet<string> dockerContainerNames,
-            ISet<string> dockerVolumeNames,
-            ISet<string> dockerNetworkNames)
+            HashSet<string> diagramContainerNames,
+            HashSet<string> diagramVolumeNames,
+            HashSet<string> diagramNetworkNames,
+            HashSet<string> dockerContainerNames,
+            HashSet<string> dockerVolumeNames,
+            HashSet<string> dockerNetworkNames)
         {
             var values = BuildDefaultValues(template, projectName);
             var containerNames = template.Containers
@@ -837,7 +873,7 @@ namespace DockerDiagram.ApplicationServices
         private static bool IsEnabled(
             string key,
             string enabledWhen,
-            IReadOnlyDictionary<string, string> values)
+            Dictionary<string, string> values)
         {
             if (string.IsNullOrWhiteSpace(enabledWhen)) return true;
             return values.TryGetValue(enabledWhen, out string? value) &&
@@ -847,7 +883,8 @@ namespace DockerDiagram.ApplicationServices
 
         private static string NormalizeProjectName(string value)
         {
-            string normalized = Regex.Replace(value.Trim().ToLowerInvariant(), @"[^a-z0-9_.-]+", "-");
+            string normalized = InvalidProjectNameCharacterRegex()
+                .Replace(value.Trim().ToLowerInvariant(), "-");
             return normalized.Trim('-', '.');
         }
 
@@ -902,7 +939,7 @@ namespace DockerDiagram.ApplicationServices
         }
 
         private static List<StackTemplateContainerDefinition> GetContainerCreationOrder(
-            IReadOnlyCollection<StackTemplateContainerDefinition> containers,
+            List<StackTemplateContainerDefinition> containers,
             IReadOnlyCollection<StackTemplateDependencyDefinition> dependencies)
         {
             var byKey = containers.ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
@@ -943,5 +980,14 @@ namespace DockerDiagram.ApplicationServices
 
             return ordered;
         }
+
+        [GeneratedRegex(@"\$\{([A-Z0-9_]+)\}", RegexOptions.IgnoreCase | RegexOptions.Compiled, "ko-KR")]
+        private static partial Regex MyRegex();
+
+        [GeneratedRegex(@"(?<!\d)(\d+)->", RegexOptions.CultureInvariant)]
+        private static partial Regex PublishedPortRegex();
+
+        [GeneratedRegex(@"[^a-z0-9_.-]+", RegexOptions.CultureInvariant)]
+        private static partial Regex InvalidProjectNameCharacterRegex();
     }
 }

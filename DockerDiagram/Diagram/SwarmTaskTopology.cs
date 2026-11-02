@@ -32,7 +32,7 @@ namespace DockerDiagram.Diagram
         private static SwarmTaskPlacement CreatePlacement(
             string nodeKey,
             IEnumerable<DockerSwarmTask> groupedTasks,
-            IReadOnlyDictionary<string, DockerSwarmNode> nodesById)
+            Dictionary<string, DockerSwarmNode> nodesById)
         {
             DockerSwarmTask[] orderedTasks = groupedTasks
                 .OrderBy(task => task.Slot)

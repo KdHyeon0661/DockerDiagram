@@ -6,8 +6,11 @@ namespace DockerDiagram.Tests;
 
 public sealed class DockerApiResourceMutationTests
 {
+
+    private static readonly string[] NetworkLifecyclePreservesIpamAndEndpointOptionsExpectedValues = new[] { "api" };
+
     [Fact]
-    public async Task VolumeCreateAndRemove_ForwardIdentityDriverLabelsAndForce()
+    public async Task VolumeCreateAndRemoveForwardIdentityDriverLabelsAndForce()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("{\"Name\":\"physical-data\",\"Driver\":\"local\"}", 201),
@@ -36,12 +39,13 @@ public sealed class DockerApiResourceMutationTests
     }
 
     [Fact]
-    public async Task NetworkLifecycle_PreservesIpamAndEndpointOptions()
+    public async Task NetworkLifecyclePreservesIpamAndEndpointOptions()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("{\"Id\":\"network-1\",\"Warning\":\"\"}", 201),
             ScriptedDockerApiServer.Empty(),
             ScriptedDockerApiServer.Empty(),
+            ScriptedDockerApiServer.Json("{\"Id\":\"network-1\",\"Name\":\"backend\",\"Ingress\":false}"),
             ScriptedDockerApiServer.Empty(204));
         using var service = CreateService(server);
 
@@ -72,16 +76,18 @@ public sealed class DockerApiResourceMutationTests
         JObject connect = JObject.Parse(server.Requests[1].Body);
         Assert.Equal("container-1", connect.Value<string>("Container"));
         Assert.Equal("10.20.0.10", connect["EndpointConfig"]!["IPAMConfig"]!.Value<string>("IPv4Address"));
-        Assert.Equal(new[] { "api" }, connect["EndpointConfig"]!["Aliases"]!.Values<string>());
+        Assert.Equal(NetworkLifecyclePreservesIpamAndEndpointOptionsExpectedValues, connect["EndpointConfig"]!["Aliases"]!.Values<string>());
 
         JObject disconnect = JObject.Parse(server.Requests[2].Body);
         Assert.True(disconnect.Value<bool>("Force"));
-        Assert.Equal("DELETE", server.Requests[3].Method);
+        Assert.Equal("GET", server.Requests[3].Method);
         Assert.Equal("/networks/network-1", server.Requests[3].Target);
+        Assert.Equal("DELETE", server.Requests[4].Method);
+        Assert.Equal("/networks/network-1", server.Requests[4].Target);
     }
 
     [Fact]
-    public async Task OverlayNetworkCreate_ForwardsSwarmNetworkOptions()
+    public async Task OverlayNetworkCreateForwardsSwarmNetworkOptions()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("{\"Id\":\"overlay-1\",\"Warning\":\"\"}", 201));
@@ -118,7 +124,27 @@ public sealed class DockerApiResourceMutationTests
     }
 
     [Fact]
-    public async Task ImageTagAndDelete_ForwardRepositoryTagAndForce()
+    public async Task IngressNetworkCreateForwardsDockerManagedIngressFlag()
+    {
+        await using var server = new ScriptedDockerApiServer(
+            ScriptedDockerApiServer.Json("{\"Id\":\"ingress-1\",\"Warning\":\"\"}", 201));
+        using var service = CreateService(server);
+
+        await service.CreateNetworkAsync(new NetworkCreateOptions
+        {
+            Name = "ingress",
+            Driver = "overlay",
+            Ingress = true
+        });
+
+        JObject create = JObject.Parse(Assert.Single(server.Requests).Body);
+        Assert.Equal("ingress", create.Value<string>("Name"));
+        Assert.Equal("overlay", create.Value<string>("Driver"));
+        Assert.True(create.Value<bool>("Ingress"));
+    }
+
+    [Fact]
+    public async Task ImageTagAndDeleteForwardRepositoryTagAndForce()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Empty(201),

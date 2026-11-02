@@ -8,7 +8,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerApiSwarmTaskLogTests
 {
     [Fact]
-    public async Task LocalTaskLog_ResolvesTaskAndReadsBackingContainerLogs()
+    public async Task LocalTaskLogResolvesTaskAndReadsBackingContainerLogs()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(TaskList()),
@@ -28,7 +28,7 @@ public sealed class DockerApiSwarmTaskLogTests
     }
 
     [Fact]
-    public async Task RemoteTaskLog_StopsBeforeContainerRequestAndExplainsNodeBoundary()
+    public async Task RemoteTaskLogStopsBeforeContainerRequestAndExplainsNodeBoundary()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(TaskList(nodeId: "worker-1")),

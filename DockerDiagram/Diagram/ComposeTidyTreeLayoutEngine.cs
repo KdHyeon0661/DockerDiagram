@@ -213,8 +213,8 @@ namespace DockerDiagram.Diagram
         }
 
         private static void MergeContours(
-            IDictionary<int, double> targetLeft,
-            IDictionary<int, double> targetRight,
+            Dictionary<int, double> targetLeft,
+            Dictionary<int, double> targetRight,
             SubtreeLayout source,
             int depthOffset)
         {
@@ -239,8 +239,8 @@ namespace DockerDiagram.Diagram
         {
             public Dictionary<string, double> BreadthCenters { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
-            public Dictionary<int, double> LeftContour { get; } = new();
-            public Dictionary<int, double> RightContour { get; } = new();
+            public Dictionary<int, double> LeftContour { get; } = [];
+            public Dictionary<int, double> RightContour { get; } = [];
 
             public SubtreeLayout Shift(double delta)
             {

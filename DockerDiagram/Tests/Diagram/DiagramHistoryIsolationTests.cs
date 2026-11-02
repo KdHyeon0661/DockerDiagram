@@ -9,10 +9,13 @@ namespace DockerDiagram.Tests;
 
 public sealed class DiagramHistoryIsolationTests
 {
+
+    private static readonly string[] DockerHistoryUsesRecordedSheetServiceAndRecreatesFromInspectSnapshotExpectedValues = new[] { "important-data:/data:ro" };
+
     [Fact]
     public void SwitchingSheetsClearsGlobalHistoryToPreventCrossSheetReplay()
     {
-        IDockerService service = DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>();
+        using IDockerService service = DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>();
         IDialogService dialogService = DispatchProxy.Create<IDialogService, LenientDialogServiceProxy>();
         using var factory = new DockerServiceFactory(_ =>
             DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>());
@@ -31,10 +34,10 @@ public sealed class DiagramHistoryIsolationTests
     }
 
     [Fact]
-    public async Task DockerHistory_UsesRecordedSheetServiceAndRecreatesFromInspectSnapshot()
+    public async Task DockerHistoryUsesRecordedSheetServiceAndRecreatesFromInspectSnapshot()
     {
-        IDockerService firstService = DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>();
-        IDockerService secondService = DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>();
+        using IDockerService firstService = DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>();
+        using IDockerService secondService = DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>();
         var first = (HistoryDockerServiceProxy)(object)firstService;
         var second = (HistoryDockerServiceProxy)(object)secondService;
         IDialogService dialogService = DispatchProxy.Create<IDialogService, LenientDialogServiceProxy>();
@@ -70,16 +73,137 @@ public sealed class DiagramHistoryIsolationTests
         Assert.Equal(1, first.RecreateCount);
         Assert.Equal(0, second.RemoveCount);
         Assert.Equal(0, second.RecreateCount);
-        Assert.Equal(new[] { "important-data:/data:ro" }, first.LastRecreateBinds);
+        Assert.Equal(DockerHistoryUsesRecordedSheetServiceAndRecreatesFromInspectSnapshotExpectedValues, first.LastRecreateBinds);
         Assert.Equal("recreated-id", node.ContainerId);
         Assert.Contains(node, firstSheet.Nodes);
     }
+
+    [Fact]
+    public async Task ExplicitPermanentDeleteRemovesProtectedExistingVolume()
+    {
+        using IDockerService service = DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>();
+        var docker = (HistoryDockerServiceProxy)(object)service;
+        docker.Volumes.Add(new DockerVolume { Id = "existing-data", Name = "existing-data" });
+        IDialogService dialogService = DispatchProxy.Create<IDialogService, LenientDialogServiceProxy>();
+        using var factory = new DockerServiceFactory(_ =>
+            DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>());
+        using var main = new MainViewModel(service, dialogService, factory);
+        SheetViewModel sheet = main.ActiveSheet!;
+        var node = CreateExistingVolumeNode(service, dialogService, sheet, "existing-data");
+        sheet.Nodes.Add(node);
+
+        IHistoryCommand command = main.CreateNodeDeleteCommand(
+            sheet,
+            node,
+            deleteDocker: true,
+            deleteExternalVolume: true);
+
+        await command.RedoAsync();
+
+        Assert.Equal(1, docker.RemoveVolumeCount);
+        Assert.DoesNotContain(docker.Volumes, volume => volume.Name == "existing-data");
+        Assert.DoesNotContain(node, sheet.Nodes);
+    }
+
+    [Fact]
+    public async Task InspectorPermanentDeletePassesExplicitOverrideForExistingVolume()
+    {
+        using IDockerService service = DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>();
+        var docker = (HistoryDockerServiceProxy)(object)service;
+        docker.Volumes.Add(new DockerVolume { Id = "inspector-data", Name = "inspector-data" });
+        IDialogService dialogService = DispatchProxy.Create<IDialogService, PermanentDeleteDialogServiceProxy>();
+        var dialogs = (PermanentDeleteDialogServiceProxy)(object)dialogService;
+        using var factory = new DockerServiceFactory(_ =>
+            DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>());
+        using var main = new MainViewModel(service, dialogService, factory);
+        SheetViewModel sheet = main.ActiveSheet!;
+        var node = CreateExistingVolumeNode(service, dialogService, sheet, "inspector-data");
+        sheet.Nodes.Add(node);
+        main.Inspector.SelectedElement = node;
+
+        await main.Inspector.DeleteSelectedAsync();
+
+        Assert.Equal(1, dialogs.PermanentDeleteChoiceCount);
+        Assert.Equal(1, dialogs.ExternalVolumeConfirmationCount);
+        Assert.Equal(0, dialogs.ErrorCount);
+        Assert.Equal(1, docker.RemoveVolumeCount);
+        Assert.DoesNotContain(docker.Volumes, volume => volume.Name == "inspector-data");
+        Assert.DoesNotContain(node, sheet.Nodes);
+    }
+
+    [Fact]
+    public async Task AutomaticDeleteKeepsProtectedExistingVolume()
+    {
+        using IDockerService service = DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>();
+        var docker = (HistoryDockerServiceProxy)(object)service;
+        docker.Volumes.Add(new DockerVolume { Id = "shared-data", Name = "shared-data" });
+        IDialogService dialogService = DispatchProxy.Create<IDialogService, LenientDialogServiceProxy>();
+        using var factory = new DockerServiceFactory(_ =>
+            DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>());
+        using var main = new MainViewModel(service, dialogService, factory);
+        SheetViewModel sheet = main.ActiveSheet!;
+        var node = CreateExistingVolumeNode(service, dialogService, sheet, "shared-data");
+        sheet.Nodes.Add(node);
+
+        IHistoryCommand command = main.CreateNodeDeleteCommand(sheet, node, deleteDocker: true);
+
+        await command.RedoAsync();
+
+        Assert.Equal(0, docker.RemoveVolumeCount);
+        Assert.Contains(docker.Volumes, volume => volume.Name == "shared-data");
+        Assert.DoesNotContain(node, sheet.Nodes);
+    }
+
+    [Fact]
+    public async Task FailedVolumeRemovalKeepsDiagramNode()
+    {
+        using IDockerService service = DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>();
+        var docker = (HistoryDockerServiceProxy)(object)service;
+        docker.Volumes.Add(new DockerVolume { Id = "stubborn-data", Name = "stubborn-data" });
+        docker.KeepVolumeAfterRemove = true;
+        IDialogService dialogService = DispatchProxy.Create<IDialogService, LenientDialogServiceProxy>();
+        using var factory = new DockerServiceFactory(_ =>
+            DispatchProxy.Create<IDockerService, HistoryDockerServiceProxy>());
+        using var main = new MainViewModel(service, dialogService, factory);
+        SheetViewModel sheet = main.ActiveSheet!;
+        var node = CreateExistingVolumeNode(service, dialogService, sheet, "stubborn-data");
+        sheet.Nodes.Add(node);
+        IHistoryCommand command = main.CreateNodeDeleteCommand(
+            sheet,
+            node,
+            deleteDocker: true,
+            deleteExternalVolume: true);
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(command.RedoAsync);
+
+        Assert.Contains("삭제를 완료하지 않았습니다", exception.Message);
+        Assert.Equal(1, docker.RemoveVolumeCount);
+        Assert.Contains(node, sheet.Nodes);
+    }
+
+    private static NodeViewModel CreateExistingVolumeNode(
+        IDockerService service,
+        IDialogService dialogService,
+        SheetViewModel sheet,
+        string volumeName) =>
+        new(service, service, dialogService)
+        {
+            Name = volumeName,
+            DockerVolumeName = volumeName,
+            Type = NodeType.Volume,
+            VolumeExternal = true,
+            IsDockerConnected = true,
+            ParentSheet = sheet
+        };
 }
 
 public class HistoryDockerServiceProxy : DispatchProxy
 {
     public int RemoveCount { get; private set; }
+    public int RemoveVolumeCount { get; private set; }
     public int RecreateCount { get; private set; }
+    public bool KeepVolumeAfterRemove { get; set; }
+    public List<DockerVolume> Volumes { get; } = [];
     public IReadOnlyList<string> LastRecreateBinds { get; private set; } = Array.Empty<string>();
 
     private static ContainerInspectResponse CreateInspect() => new()
@@ -133,19 +257,87 @@ public class HistoryDockerServiceProxy : DispatchProxy
             case nameof(IContainerService.GetContainersAsync):
                 return Task.FromResult(new List<DockerContainer>());
             case nameof(IVolumeService.GetVolumesAsync):
-                return Task.FromResult(new List<DockerVolume>());
+                return Task.FromResult(Volumes.ToList());
+            case nameof(IVolumeService.InspectVolumeAsync):
+                return Task.FromResult(new VolumeResponse
+                {
+                    Name = (string)args![0]!,
+                    Driver = "local",
+                    Mountpoint = string.Empty,
+                    CreatedAt = string.Empty,
+                    Labels = new Dictionary<string, string>(),
+                    Options = new Dictionary<string, string>()
+                });
+            case nameof(IVolumeService.GetContainersUsingVolumeAsync):
+                return Task.FromResult(new List<string>());
+            case nameof(IVolumeService.GetVolumeUsageDetailsAsync):
+                return Task.FromResult(new List<VolumeUsageInfo>());
+            case nameof(IVolumeService.RemoveVolumeAsync):
+                RemoveVolumeCount++;
+                if (!KeepVolumeAfterRemove)
+                {
+                    string volumeName = (string)args![0]!;
+                    Volumes.RemoveAll(volume => string.Equals(
+                        volume.Name,
+                        volumeName,
+                        StringComparison.OrdinalIgnoreCase));
+                }
+                return Task.CompletedTask;
             case nameof(INetworkService.GetNetworksAsync):
                 return Task.FromResult(new List<DockerNetworkGroup>());
             case nameof(IImageService.GetImagesAsync):
                 return Task.FromResult(new List<DockerImage>());
             case nameof(ISystemService.PingAsync):
                 return Task.FromResult(true);
+            case nameof(ISystemService.GetSystemDiskUsageAsync):
+                return Task.FromResult(new SystemDiskUsage());
             case nameof(ISystemService.MonitorDockerEventsAsync):
                 return Task.Delay(Timeout.Infinite, (CancellationToken)args![1]!);
             case nameof(IDisposable.Dispose):
                 return null;
             default:
                 throw new NotSupportedException($"Unexpected Docker service call: {targetMethod?.Name}");
+        }
+    }
+}
+
+public class PermanentDeleteDialogServiceProxy : DispatchProxy
+{
+    public int PermanentDeleteChoiceCount { get; private set; }
+    public int ExternalVolumeConfirmationCount { get; private set; }
+    public int ErrorCount { get; private set; }
+
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+    {
+        switch (targetMethod?.Name)
+        {
+            case nameof(IDialogService.ShowYesNoCancel):
+                PermanentDeleteChoiceCount++;
+                return DialogChoice.Yes;
+            case nameof(IDialogService.ShowConfirm):
+                ExternalVolumeConfirmationCount++;
+                return true;
+            case nameof(IDialogService.ShowError):
+                ErrorCount++;
+                return null;
+            case nameof(IDialogService.InvokeOnUiThreadAsync):
+                if (args![0] is Action action)
+                {
+                    action();
+                    return Task.CompletedTask;
+                }
+                throw new NotSupportedException("Generic UI invocation is not used by this test.");
+            case nameof(IDialogService.BeginInvokeOnUiThread):
+                ((Action)args![0]!)();
+                return null;
+            case nameof(IDisposable.Dispose):
+                return null;
+            default:
+                Type returnType = targetMethod?.ReturnType ?? typeof(void);
+                if (returnType == typeof(void)) return null;
+                if (returnType == typeof(bool)) return true;
+                if (returnType == typeof(Task)) return Task.CompletedTask;
+                return returnType.IsValueType ? Activator.CreateInstance(returnType) : null;
         }
     }
 }

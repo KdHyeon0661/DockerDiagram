@@ -1,39 +1,41 @@
-<Window x:Class="DockerDiagram.Views.SwarmPlacementConstraintDialog"
+﻿<Window x:Class="DockerDiagram.Views.SwarmPlacementConstraintDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Swarm Placement Constraints" Height="500" Width="660"
+        Style="{StaticResource DialogWindowStyle}"
+        Title="Swarm 배치 제약 조건" Height="500" Width="660"
         MinHeight="430" MinWidth="580" WindowStartupLocation="CenterOwner"
-        Background="#F6F7FB" ShowInTaskbar="False">
+        Background="{StaticResource DialogWindowBackgroundBrush}" ShowInTaskbar="False">
+    <Window.Resources><ResourceDictionary><ResourceDictionary.MergedDictionaries><ResourceDictionary Source="Themes/DialogControlDefaults.xaml"/></ResourceDictionary.MergedDictionaries></ResourceDictionary></Window.Resources>
     <Grid Margin="22">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <StackPanel Margin="0,0,0,14">
-            <TextBlock Text="Service Placement Constraints" FontSize="24" FontWeight="Bold" Foreground="#17213A"/>
-            <TextBlock x:Name="DescriptionTextBlock" Foreground="#667085" Margin="0,5,0,0" TextWrapping="Wrap"/>
+        <TextBlock Text="Service 배치 제약 조건" Style="{StaticResource DialogTitleStyle}"/>
+            <TextBlock x:Name="DescriptionTextBlock" Style="{StaticResource DialogHintStyle}" Margin="0,5,0,0"/>
         </StackPanel>
-        <Border Grid.Row="1" Background="White" BorderBrush="#D7DAE2" BorderThickness="1" CornerRadius="4" Padding="18">
+        <Border Grid.Row="1" Style="{StaticResource DialogBodyCardStyle}" Padding="18">
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                <TextBlock Text="Constraints (one per line)" FontWeight="SemiBold" Foreground="#2B3140"/>
-                <TextBox x:Name="ConstraintsTextBox" Grid.Row="1" AcceptsReturn="True" FontFamily="Consolas"
+        <TextBlock Text="제약 조건 (한 줄에 하나)" FontWeight="SemiBold" Foreground="{StaticResource DialogTextBrush}"/>
+                <TextBox x:Name="ConstraintsTextBox" Grid.Row="1" Style="{StaticResource DialogCodeTextBoxStyle}"
                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                         Padding="8" Margin="0,6,0,12" BorderBrush="#C7CBD6"/>
+                         Padding="8" Margin="0,6,0,12" BorderBrush="{StaticResource DialogStrongBorderBrush}"/>
                 <StackPanel Grid.Row="2">
-                    <TextBlock Text="Examples: node.labels.zone==seoul  ·  node.role==worker  ·  node.hostname!=worker-3"
-                               Foreground="#667085" FontSize="11" TextWrapping="Wrap"/>
-                    <TextBlock Text="An empty list removes all placement constraints. Other ServiceSpec fields are preserved."
-                               Foreground="#B54708" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
+        <TextBlock Text="예시: node.labels.zone==seoul  ·  node.role==worker  ·  node.hostname!=worker-3"
+                               Foreground="{StaticResource DialogMutedTextBrush}" FontSize="11" TextWrapping="Wrap"/>
+        <TextBlock Text="목록을 비우면 모든 배치 제약 조건을 제거합니다. 다른 ServiceSpec 필드는 유지됩니다."
+                               Foreground="{StaticResource DialogWarningBrush}" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
             </Grid>
         </Border>
         <Grid Grid.Row="2" Margin="0,16,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <TextBlock x:Name="ValidationTextBlock" Foreground="#C62828" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,14,0"/>
+            <TextBlock x:Name="ValidationTextBlock" Foreground="{StaticResource DialogDangerBrush}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,14,0"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
-                <Button Content="Cancel" Width="92" Height="34" Margin="0,0,8,0" IsCancel="True"/>
-                <Button Content="Apply Constraints" Width="138" Height="34" IsDefault="True"
-                        Click="ApplyButton_Click" Background="#2563EB" Foreground="White" BorderBrush="#1D4ED8"/>
+        <Button Content="취소" Width="92" MinHeight="38" Margin="0,0,8,0" Style="{StaticResource DialogSecondaryButtonStyle}" IsCancel="True"/>
+        <Button Content="제약 조건 적용" Width="138" MinHeight="38" IsDefault="True"
+                        Click="ApplyButton_Click" Style="{StaticResource DialogSwarmButtonStyle}"/>
             </StackPanel>
         </Grid>
     </Grid>

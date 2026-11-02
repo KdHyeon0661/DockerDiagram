@@ -1,11 +1,11 @@
+using System.Globalization;
+using System.Net.Http;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using DockerDiagram.ApplicationServices;
 using DockerDiagram.Contracts;
 using DockerDiagram.Models;
 using Newtonsoft.Json.Linq;
-using System.Globalization;
-using System.Net.Http;
 
 namespace DockerDiagram.Infrastructure
 {
@@ -99,8 +99,7 @@ namespace DockerDiagram.Infrastructure
         {
             if (string.IsNullOrWhiteSpace(serviceId))
                 throw new ArgumentException("Swarm service ID가 비어 있습니다.", nameof(serviceId));
-            if (tailCount < 0)
-                throw new ArgumentOutOfRangeException(nameof(tailCount));
+            ArgumentOutOfRangeException.ThrowIfNegative(tailCount);
 
             try
             {
@@ -154,7 +153,10 @@ namespace DockerDiagram.Infrastructure
                     "현재 Manager 연결에서는 해당 node의 container 로그를 직접 읽을 수 없습니다. " +
                     "집계 Service Logs를 사용하거나 그 node에 직접 연결해 주세요.");
             cancellationToken.ThrowIfCancellationRequested();
-            return await GetContainerLogsAsync(task.ContainerId, tailCount);
+            return await GetContainerLogsAsync(
+                task.ContainerId,
+                tailCount,
+                cancellationToken);
         }
 
         private static DateTimeOffset? ParseDockerTimestamp(JToken? token)

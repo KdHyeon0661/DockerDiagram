@@ -146,7 +146,12 @@ internal sealed class ScriptedDockerApiServer : IAsyncDisposable
                 {
                     string headers = Encoding.ASCII.GetString(bytes, 0, headerEnd);
                     Match match = Regex.Match(headers, @"(?im)^Content-Length:\s*(\d+)\s*$");
-                    if (match.Success) contentLength = int.Parse(match.Groups[1].Value);
+                    if (match.Success)
+                    {
+                        contentLength = int.Parse(
+                            match.Groups[1].Value,
+                            System.Globalization.CultureInfo.InvariantCulture);
+                    }
                     chunked = Regex.IsMatch(
                         headers,
                         @"(?im)^Transfer-Encoding:\s*.*\bchunked\b.*$");

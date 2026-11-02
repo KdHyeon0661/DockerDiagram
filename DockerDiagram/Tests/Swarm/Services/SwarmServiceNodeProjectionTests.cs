@@ -5,8 +5,11 @@ namespace DockerDiagram.Tests;
 
 public sealed class SwarmServiceNodeProjectionTests
 {
+
+    private static readonly string[] InitialSummaryReplicatedWithPortsIncludesReplicaAndPortDataExpectedValues = new[] { "8080->80/tcp (ingress)" };
+
     [Fact]
-    public void InitialSummary_ReplicatedWithPorts_IncludesReplicaAndPortData()
+    public void InitialSummaryReplicatedWithPortsIncludesReplicaAndPortData()
     {
         var spec = new SwarmServiceSpecOptions
         {
@@ -20,11 +23,11 @@ public sealed class SwarmServiceNodeProjectionTests
         };
 
         Assert.Equal("0/3 · 8080->80/tcp (ingress)", SwarmServiceNodeProjection.InitialSummary(spec));
-        Assert.Equal(new[] { "8080->80/tcp (ingress)" }, SwarmServiceNodeProjection.PortBindings(spec));
+        Assert.Equal(InitialSummaryReplicatedWithPortsIncludesReplicaAndPortDataExpectedValues, SwarmServiceNodeProjection.PortBindings(spec));
     }
 
     [Fact]
-    public void InitialSummary_GlobalWithoutPorts_UsesGlobalMode()
+    public void InitialSummaryGlobalWithoutPortsUsesGlobalMode()
     {
         var spec = new SwarmServiceSpecOptions
         {
@@ -42,7 +45,7 @@ public sealed class SwarmServiceNodeProjectionTests
     [InlineData(SwarmRestartCondition.None, "none")]
     [InlineData(SwarmRestartCondition.OnFailure, "on-failure")]
     [InlineData(SwarmRestartCondition.Any, "any")]
-    public void RestartText_UsesDockerNames(SwarmRestartCondition condition, string expected)
+    public void RestartTextUsesDockerNames(SwarmRestartCondition condition, string expected)
     {
         Assert.Equal(expected, SwarmServiceNodeProjection.RestartText(new SwarmRestartPolicyOptions { Condition = condition }));
     }

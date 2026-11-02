@@ -15,7 +15,6 @@ namespace DockerDiagram.Diagram
     public static class OrthogonalRouter
     {
         private const double MARGIN = 20;   // 선이 노드에 너무 바짝 붙지 않고 떨어져서 시작하게 만드는 기본 거리
-        private const int GRID_SIZE = 10;   // 화면을 바둑판(격자) 모양으로 나눌 때의 칸 크기 (A* 탐색용)
         private const double COLLISION_PAD = 1.0; // 충돌 판정을 할 때 살짝 덧대는 여유 공간
 
         /// <summary>
@@ -26,14 +25,14 @@ namespace DockerDiagram.Diagram
                                                Rect sourceRect, Rect targetRect,
                                                bool isSourceGroup = false, bool isTargetGroup = false)
         {
-            PointCollection finalPath = new PointCollection();
+            PointCollection finalPath = [];
 
             // 1단계: 연산이 가벼운 기하학적 스마트 라우팅 먼저 시도 (틈새 관통, Z/L자, 크게 우회하기 등)
             // 🚀 플래그 전달
             var smartPath = TryGetSmartRoute(start, startDir, end, endDir, sourceRect, targetRect, isSourceGroup, isTargetGroup);
             if (smartPath != null)
             {
-                return new PointCollection(smartPath); // 스마트 라우팅 성공 시 바로 반환
+                return [.. smartPath]; // 스마트 라우팅 성공 시 바로 반환
             }
 
             // 2단계: 스마트 라우팅이 모두 실패했을 경우, 연산이 무거운 A* 알고리즘 준비
@@ -78,7 +77,7 @@ namespace DockerDiagram.Diagram
             }
 
             // 대각선 방지 및 불필요한 일직선상 중복 좌표들을 제거하여 반환
-            return new PointCollection(SimplifyPath(finalPath.ToList()));
+            return [.. SimplifyPath(finalPath.ToList())];
         }
 
         // =========================================================================
@@ -100,7 +99,7 @@ namespace DockerDiagram.Diagram
         /// </summary>
         private static List<Point> FindPathAStar(Point start, Point end, Rect obstacle1, Rect obstacle2, PortDirection startDir, bool isSourceGroup, bool isTargetGroup)
         {
-            if (GetManhattanDistance(start, end) < GRID_SIZE) return new List<Point> { start, end };
+            if (GetManhattanDistance(start, end) < DiagramMetrics.GridSize) return [start, end];
 
             Rect searchArea = new Rect(start, end);
             searchArea.Union(obstacle1);
@@ -179,7 +178,7 @@ namespace DockerDiagram.Diagram
                         if (block1.Contains(neighbor) || block2.Contains(neighbor)) continue;
                     }
 
-                    double moveCost = GRID_SIZE;
+                    double moveCost = DiagramMetrics.GridSize;
                     PortDirection newDir = GetDirection(current.Point, neighbor);
 
                     if (current.ArrivalDirection != PortDirection.None && current.ArrivalDirection != newDir)
@@ -218,7 +217,7 @@ namespace DockerDiagram.Diagram
                 }
             }
 
-            return new List<Point>();
+            return [];
         }
 
         private static List<Point> ReconstructPath(PathNode? node, Point actualEnd)
@@ -246,8 +245,8 @@ namespace DockerDiagram.Diagram
             Point eStub = GetShiftedPoint(end, endDir, MARGIN);
 
             var basicCandidates = new List<List<Point>>();
-            double ptMidX = Math.Round((sStub.X + eStub.X) / 2 / GRID_SIZE) * GRID_SIZE;
-            double ptMidY = Math.Round((sStub.Y + eStub.Y) / 2 / GRID_SIZE) * GRID_SIZE;
+            double ptMidX = DiagramMetrics.SnapToGrid((sStub.X + eStub.X) / 2);
+            double ptMidY = DiagramMetrics.SnapToGrid((sStub.Y + eStub.Y) / 2);
 
             var zShapeXMid = new List<Point> { start, sStub, new Point(ptMidX, sStub.Y), new Point(ptMidX, eStub.Y), eStub, end };
             var zShapeYMid = new List<Point> { start, sStub, new Point(sStub.X, ptMidY), new Point(eStub.X, ptMidY), eStub, end };
@@ -297,7 +296,7 @@ namespace DockerDiagram.Diagram
             if (hasHorzGap)
             {
                 double gapX = r1.Right < r2.Left ? (r1.Right + r2.Left) / 2 : (r2.Right + r1.Left) / 2;
-                gapX = Math.Round(gapX / GRID_SIZE) * GRID_SIZE;
+                gapX = DiagramMetrics.SnapToGrid(gapX);
 
                 Point sH = start;
                 if (startDir == PortDirection.Right && gapX >= start.X) sH.X = Math.Min(start.X + MARGIN, gapX);
@@ -309,14 +308,14 @@ namespace DockerDiagram.Diagram
                 else if (endDir == PortDirection.Right && gapX >= end.X) eH.X = Math.Min(end.X + MARGIN, gapX);
                 else eH = GetShiftedPoint(end, endDir, MARGIN);
 
-                gapCandidates.Add(new List<Point> { start, sH, new Point(gapX, sH.Y), new Point(gapX, eH.Y), eH, end });
+                gapCandidates.Add([start, sH, new Point(gapX, sH.Y), new Point(gapX, eH.Y), eH, end]);
             }
 
             bool hasVertGap = r1.Bottom < r2.Top || r2.Bottom < r1.Top;
             if (hasVertGap)
             {
                 double gapY = r1.Bottom < r2.Top ? (r1.Bottom + r2.Top) / 2 : (r2.Bottom + r1.Top) / 2;
-                gapY = Math.Round(gapY / GRID_SIZE) * GRID_SIZE;
+                gapY = DiagramMetrics.SnapToGrid(gapY);
 
                 Point sV = start;
                 if (startDir == PortDirection.Bottom && gapY >= start.Y) sV.Y = Math.Min(start.Y + MARGIN, gapY);
@@ -328,7 +327,7 @@ namespace DockerDiagram.Diagram
                 else if (endDir == PortDirection.Bottom && gapY >= end.Y) eV.Y = Math.Min(end.Y + MARGIN, gapY);
                 else eV = GetShiftedPoint(end, endDir, MARGIN);
 
-                gapCandidates.Add(new List<Point> { start, sV, new Point(sV.X, gapY), new Point(eV.X, gapY), eV, end });
+                gapCandidates.Add([start, sV, new Point(sV.X, gapY), new Point(eV.X, gapY), eV, end]);
             }
 
             var bestGap = gapCandidates
@@ -348,15 +347,15 @@ namespace DockerDiagram.Diagram
             double minLeft = Math.Min(Math.Min(r1.Left, r2.Left), Math.Min(sStub.X, eStub.X)) - MARGIN * 1.5;
             double maxRight = Math.Max(Math.Max(r1.Right, r2.Right), Math.Max(sStub.X, eStub.X)) + MARGIN * 1.5;
 
-            minTop = Math.Round(minTop / GRID_SIZE) * GRID_SIZE;
-            maxBottom = Math.Round(maxBottom / GRID_SIZE) * GRID_SIZE;
-            minLeft = Math.Round(minLeft / GRID_SIZE) * GRID_SIZE;
-            maxRight = Math.Round(maxRight / GRID_SIZE) * GRID_SIZE;
+            minTop = DiagramMetrics.SnapToGrid(minTop);
+            maxBottom = DiagramMetrics.SnapToGrid(maxBottom);
+            minLeft = DiagramMetrics.SnapToGrid(minLeft);
+            maxRight = DiagramMetrics.SnapToGrid(maxRight);
 
-            detourCandidates.Add(new List<Point> { start, sStub, new Point(sStub.X, minTop), new Point(eStub.X, minTop), eStub, end });
-            detourCandidates.Add(new List<Point> { start, sStub, new Point(sStub.X, maxBottom), new Point(eStub.X, maxBottom), eStub, end });
-            detourCandidates.Add(new List<Point> { start, sStub, new Point(minLeft, sStub.Y), new Point(minLeft, eStub.Y), eStub, end });
-            detourCandidates.Add(new List<Point> { start, sStub, new Point(maxRight, sStub.Y), new Point(maxRight, eStub.Y), eStub, end });
+            detourCandidates.Add([start, sStub, new Point(sStub.X, minTop), new Point(eStub.X, minTop), eStub, end]);
+            detourCandidates.Add([start, sStub, new Point(sStub.X, maxBottom), new Point(eStub.X, maxBottom), eStub, end]);
+            detourCandidates.Add([start, sStub, new Point(minLeft, sStub.Y), new Point(minLeft, eStub.Y), eStub, end]);
+            detourCandidates.Add([start, sStub, new Point(maxRight, sStub.Y), new Point(maxRight, eStub.Y), eStub, end]);
 
             var bestDetour = detourCandidates
                 .Where(p => IsValidPath(p, r1, r2, isSourceGroup, isTargetGroup))
@@ -441,7 +440,7 @@ namespace DockerDiagram.Diagram
 
         private static List<Point> SimplifyPath(List<Point> rawPath)
         {
-            if (rawPath == null || rawPath.Count < 2) return rawPath ?? new List<Point>();
+            if (rawPath == null || rawPath.Count < 2) return rawPath ?? [];
 
             var distinctPath = new List<Point>();
             foreach (var pt in rawPath)
@@ -498,10 +497,10 @@ namespace DockerDiagram.Diagram
 
         private static IEnumerable<Point> GetNeighbors(Point p)
         {
-            yield return new Point(p.X + GRID_SIZE, p.Y);
-            yield return new Point(p.X - GRID_SIZE, p.Y);
-            yield return new Point(p.X, p.Y + GRID_SIZE);
-            yield return new Point(p.X, p.Y - GRID_SIZE);
+            yield return new Point(p.X + DiagramMetrics.GridSize, p.Y);
+            yield return new Point(p.X - DiagramMetrics.GridSize, p.Y);
+            yield return new Point(p.X, p.Y + DiagramMetrics.GridSize);
+            yield return new Point(p.X, p.Y - DiagramMetrics.GridSize);
         }
 
         private static PortDirection GetDirection(Point from, Point to)
@@ -512,7 +511,8 @@ namespace DockerDiagram.Diagram
 
         private static double GetManhattanDistance(Point a, Point b) => Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y);
 
-        private static Point SnapToGrid(Point p) => new Point(Math.Round(p.X / GRID_SIZE) * GRID_SIZE, Math.Round(p.Y / GRID_SIZE) * GRID_SIZE);
+        private static Point SnapToGrid(Point p) =>
+            new(DiagramMetrics.SnapToGrid(p.X), DiagramMetrics.SnapToGrid(p.Y));
 
         private static Point GetShiftedPoint(Point p, PortDirection dir, double dist)
         {

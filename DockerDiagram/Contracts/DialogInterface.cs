@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 using DockerDiagram.Models;
@@ -28,6 +29,10 @@ namespace DockerDiagram.Contracts
         string? ShowOpenFolderDialog(string title, string? initialDirectory = null);
         string? ShowSaveFileDialog(string filter, string defaultExt, string defaultFileName, string title);
         bool TryShowPruneOptionsDialog(out DockerPruneOptions options);
+        void ShowPruneResult(
+            DockerPruneResult result,
+            string operationName,
+            IReadOnlyList<string>? failures = null);
         bool TryShowVolumeOptionsDialog(VolumeCreateOptions initialOptions, out VolumeCreateOptions options);
         void ShowContainerDetail(object dataContext);
         bool TryShowContainerRenameDialog(object ownerContext, string currentName, out string newName);

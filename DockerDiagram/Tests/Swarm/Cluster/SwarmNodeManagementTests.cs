@@ -10,13 +10,13 @@ namespace DockerDiagram.Tests
         [InlineData("active")]
         [InlineData("pause")]
         [InlineData("drain")]
-        public void UpdateOptions_Validate_AcceptsAvailability(string availability)
+        public void UpdateOptionsValidateAcceptsAvailability(string availability)
         {
             ValidUpdate(availability: availability).Validate();
         }
 
         [Fact]
-        public void UpdateOptions_Validate_RejectsInvalidRole()
+        public void UpdateOptionsValidateRejectsInvalidRole()
         {
             SwarmNodeUpdateOptions options = ValidUpdate(role: "leader");
 
@@ -24,7 +24,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void SafetyPolicy_BlocksLastManagerDemotion()
+        public void SafetyPolicyBlocksLastManagerDemotion()
         {
             SwarmNodeEditSnapshot current = Snapshot(role: "manager");
             SwarmNodeUpdateOptions desired = ValidUpdate(role: "worker");
@@ -34,7 +34,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void SafetyPolicy_AllowsManagerDemotionWhenAnotherManagerExists()
+        public void SafetyPolicyAllowsManagerDemotionWhenAnotherManagerExists()
         {
             SwarmNodeEditSnapshot current = Snapshot(role: "manager");
             SwarmNodeUpdateOptions desired = ValidUpdate(role: "worker");
@@ -43,7 +43,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void SafetyPolicy_BlocksDemotionWhenRemainingManagersLoseQuorum()
+        public void SafetyPolicyBlocksDemotionWhenRemainingManagersLoseQuorum()
         {
             SwarmNodeEditSnapshot current = Snapshot(role: "manager");
             SwarmNodeUpdateOptions desired = ValidUpdate(role: "worker");
@@ -59,7 +59,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void SafetyPolicy_AllowsDemotionWhenRemainingManagersKeepQuorum()
+        public void SafetyPolicyAllowsDemotionWhenRemainingManagersKeepQuorum()
         {
             SwarmNodeEditSnapshot current = Snapshot(role: "manager");
             SwarmNodeUpdateOptions desired = ValidUpdate(role: "worker");
@@ -74,7 +74,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void SafetyPolicy_BlocksLocalNodeRemoval()
+        public void SafetyPolicyBlocksLocalNodeRemoval()
         {
             SwarmNodeEditSnapshot current = Snapshot(isLocal: true, status: "down");
 
@@ -83,7 +83,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void SafetyPolicy_BlocksManagerRemoval()
+        public void SafetyPolicyBlocksManagerRemoval()
         {
             SwarmNodeEditSnapshot current = Snapshot(role: "manager", status: "down");
 
@@ -92,7 +92,7 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void SafetyPolicy_RequiresForceForReadyWorker()
+        public void SafetyPolicyRequiresForceForReadyWorker()
         {
             SwarmNodeEditSnapshot current = Snapshot(status: "ready");
 
@@ -102,13 +102,13 @@ namespace DockerDiagram.Tests
         }
 
         [Fact]
-        public void SafetyPolicy_AllowsDownWorkerRemovalWithoutForce()
+        public void SafetyPolicyAllowsDownWorkerRemovalWithoutForce()
         {
             SwarmNodeSafetyPolicy.ValidateRemoval(Snapshot(status: "down"), force: false);
         }
 
         [Fact]
-        public void SafetyPolicy_WarnsForDrainAndManagerPromotion()
+        public void SafetyPolicyWarnsForDrainAndManagerPromotion()
         {
             SwarmNodeEditSnapshot current = Snapshot(role: "worker", availability: "active");
             SwarmNodeUpdateOptions desired = ValidUpdate(role: "manager", availability: "drain");

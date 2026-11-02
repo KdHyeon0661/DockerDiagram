@@ -7,7 +7,7 @@ namespace DockerDiagram.ApplicationServices
     {
         private readonly object _gate = new();
         private readonly Func<Task> _operation;
-        private readonly List<TaskCompletionSource> _pendingRequests = new();
+        private readonly List<TaskCompletionSource> _pendingRequests = [];
         private Task? _runner;
         private bool _disposed;
 

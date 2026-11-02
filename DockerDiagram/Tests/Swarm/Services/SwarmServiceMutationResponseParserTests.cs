@@ -4,25 +4,28 @@ namespace DockerDiagram.Tests;
 
 public sealed class SwarmServiceMutationResponseParserTests
 {
+
+    private static readonly string[] ParseCreateReadsIdAndNonEmptyWarningsExpectedValues = new[] { "first warning" };
+
     [Fact]
-    public void ParseCreate_ReadsIdAndNonEmptyWarnings()
+    public void ParseCreateReadsIdAndNonEmptyWarnings()
     {
         SwarmServiceCreateApiResponse result = SwarmServiceMutationResponseParser.ParseCreate(
             """{ "ID": " service-123 ", "Warnings": [" first warning ", "", null] }""");
 
         Assert.Equal("service-123", result.ServiceId);
-        Assert.Equal(new[] { "first warning" }, result.Warnings);
+        Assert.Equal(ParseCreateReadsIdAndNonEmptyWarningsExpectedValues, result.Warnings);
     }
 
     [Fact]
-    public void ParseCreate_RejectsMissingId()
+    public void ParseCreateRejectsMissingId()
     {
         Assert.Throws<InvalidOperationException>(() =>
             SwarmServiceMutationResponseParser.ParseCreate("""{ "Warnings": [] }"""));
     }
 
     [Fact]
-    public void ParseUpdateWarnings_AllowsEmptyResponse()
+    public void ParseUpdateWarningsAllowsEmptyResponse()
     {
         Assert.Empty(SwarmServiceMutationResponseParser.ParseUpdateWarnings(string.Empty));
     }
@@ -30,7 +33,7 @@ public sealed class SwarmServiceMutationResponseParserTests
     [Theory]
     [InlineData("""{ "ID": "service-123", "Warnings": null }""")]
     [InlineData("""{ "ID": "service-123" }""")]
-    public void ParseCreate_TreatsMissingOrNullWarningsAsEmpty(string response)
+    public void ParseCreateTreatsMissingOrNullWarningsAsEmpty(string response)
     {
         SwarmServiceCreateApiResponse result =
             SwarmServiceMutationResponseParser.ParseCreate(response);
@@ -40,7 +43,7 @@ public sealed class SwarmServiceMutationResponseParserTests
     }
 
     [Fact]
-    public void VersionConflictException_RecordsExpectedAndActualVersions()
+    public void VersionConflictExceptionRecordsExpectedAndActualVersions()
     {
         var exception = new DockerDiagram.Models.SwarmServiceVersionConflictException("service-1", 7, 8);
 

@@ -45,12 +45,18 @@ namespace DockerDiagram.ViewModels
                 snapshot.Spec,
                 editedOptions.Spec);
             desired.Validate();
+            if (SwarmIngressNetworkSupport.RequiresIngress(desired) &&
+                !await EnsureSwarmIngressNetworkAsync())
+            {
+                return false;
+            }
 
             string previousStatus = DetailStatus;
             string previousColor = StatusColor;
+            RuntimeLifecycleState previousLifecycleState = LifecycleState;
             BindingState = RuntimeBindingState.Applying;
-            IsCreating = true;
-            SetCreationProgress("Updating Swarm service...");
+            SetLifecycleState(RuntimeLifecycleState.Creating);
+            SetCreationProgress(NodeOperationPhase.Updating, "Updating Swarm service...");
             RaiseSwarmCommandStates();
 
             try
@@ -65,8 +71,8 @@ namespace DockerDiagram.ViewModels
 
                 ApplyEditedSummary(desired);
                 BindingState = RuntimeBindingState.Bound;
-                IsCreating = false;
-                SetCreationProgress("Swarm service updated", 100);
+                EndCreating();
+                SetCreationProgress(NodeOperationPhase.Completed, "Swarm service updated", 100);
                 await RefreshSwarmServiceAsync();
                 BindingState = RuntimeBindingState.Bound;
                 NotifyModified();
@@ -80,7 +86,7 @@ namespace DockerDiagram.ViewModels
             }
             catch (SwarmServiceVersionConflictException ex)
             {
-                RestoreAfterEditFailure(previousStatus, previousColor);
+                RestoreAfterEditFailure(previousStatus, previousColor, previousLifecycleState);
                 await RefreshSwarmServiceAsync();
                 _dialogService.ShowError(
                     $"다른 작업에서 service가 먼저 변경되었습니다. 최신 상태를 불러왔으므로 다시 편집해 주세요.\n\n{ex.Message}",
@@ -89,7 +95,7 @@ namespace DockerDiagram.ViewModels
             }
             catch (Exception ex)
             {
-                RestoreAfterEditFailure(previousStatus, previousColor);
+                RestoreAfterEditFailure(previousStatus, previousColor, previousLifecycleState);
                 _dialogService.ShowError($"Swarm service 수정 실패:\n{ex.GetBaseException().Message}", "Edit Swarm Service");
                 return false;
             }
@@ -108,16 +114,84 @@ namespace DockerDiagram.ViewModels
             RestartPolicy = SwarmServiceNodeProjection.RestartText(spec.RestartPolicy);
         }
 
-        private void RestoreAfterEditFailure(string previousStatus, string previousColor)
+        private void RestoreAfterEditFailure(
+            string previousStatus,
+            string previousColor,
+            RuntimeLifecycleState previousLifecycleState)
         {
             BindingState = RuntimeBindingState.Bound;
-            IsCreating = false;
-            CreationProgressMessage = "Update failed";
-            CreationProgressValue = 0;
-            IsCreationProgressIndeterminate = false;
+            SetLifecycleState(previousLifecycleState, previousStatus);
+            SetCreationProgress(
+                NodeOperationPhase.Failed,
+                "Update failed",
+                0,
+                previousStatus,
+                previousStatus);
             DetailStatus = previousStatus;
             StatusColor = previousColor;
             RaiseSwarmCommandStates();
+        }
+
+        private async Task<bool> EnsureSwarmIngressNetworkAsync()
+        {
+            if (_containerService is not INetworkService networkService)
+            {
+                _dialogService.ShowError(
+                    "현재 연결에서는 Swarm ingress 네트워크 상태를 확인할 수 없습니다.",
+                    "Ingress Check Failed");
+                return false;
+            }
+
+            List<DockerNetworkGroup> networks;
+            try
+            {
+                networks = await networkService.GetNetworksAsync();
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError(
+                    $"Swarm ingress 네트워크 상태를 확인할 수 없어 service를 수정하지 않았습니다.\n\n{ex.GetBaseException().Message}",
+                    "Ingress Check Failed");
+                return false;
+            }
+
+            if (SwarmIngressNetworkSupport.HasIngressNetwork(networks))
+                return true;
+
+            if (!_dialogService.ShowConfirm(
+                    "이 변경은 ingress publish mode를 사용하지만 Docker가 관리하는 ingress 네트워크가 없습니다.\n\n" +
+                    "지금 routing mesh용 ingress 네트워크를 다시 생성할까요?\n" +
+                    "아니오를 선택하면 service는 수정되지 않습니다. 대신 포트 publish mode를 Host로 변경할 수 있습니다.",
+                    "Repair Swarm Ingress"))
+            {
+                return false;
+            }
+
+            try
+            {
+                await networkService.CreateNetworkAsync(new NetworkCreateOptions
+                {
+                    Name = "ingress",
+                    Driver = "overlay",
+                    Ingress = true
+                });
+                networks = await networkService.GetNetworksAsync();
+                if (!SwarmIngressNetworkSupport.HasIngressNetwork(networks))
+                    throw new InvalidOperationException("Docker API가 ingress 네트워크 생성을 완료하지 못했습니다.");
+
+                _dialogService.ShowInfo(
+                    "Swarm routing mesh용 ingress 네트워크를 복구했습니다. service 변경을 계속합니다.",
+                    "Ingress Repaired");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _dialogService.ShowError(
+                    $"ingress 네트워크 복구에 실패하여 service를 수정하지 않았습니다.\n" +
+                    $"포트 publish mode를 Host로 바꾸거나 Docker Swarm 상태를 점검하세요.\n\n{ex.GetBaseException().Message}",
+                    "Ingress Repair Failed");
+                return false;
+            }
         }
     }
 }

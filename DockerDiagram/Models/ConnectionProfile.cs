@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace DockerDiagram.Models
 {
@@ -27,7 +28,13 @@ namespace DockerDiagram.Models
         // =====================================
         // [Docker CLI context 직접 연결 전용 데이터]
         // =====================================
+        public string? DockerContextName { get; set; } // 원본 Docker CLI context 이름
         public string? DockerEndpoint { get; set; } // npipe://, unix://, tcp:// 등 Docker context의 endpoint
+        public bool DockerTlsEnabled { get; set; }
+        public bool DockerTlsSkipVerify { get; set; }
+        public string? DockerTlsCaPath { get; set; }
+        public string? DockerTlsCertPath { get; set; }
+        public string? DockerTlsKeyPath { get; set; }
     }
 
     public class DockerContextInfo
@@ -37,9 +44,13 @@ namespace DockerDiagram.Models
         public string DockerEndpoint { get; set; } = "";
         public string Error { get; set; } = "";
         public bool IsCurrent { get; set; }
+        public bool TlsEnabled { get; set; }
+        public bool TlsSkipVerify { get; set; }
+        public string TlsPath { get; set; } = "";
+        public List<string> TlsFiles { get; set; } = [];
 
         public bool IsDefault => string.Equals(Name, "default", System.StringComparison.OrdinalIgnoreCase);
         public string CurrentText => IsCurrent ? "*" : "";
-        public string StatusText => string.IsNullOrWhiteSpace(Error) ? "Ready" : Error;
+        public string StatusText => string.IsNullOrWhiteSpace(Error) ? "준비" : Error;
     }
 }

@@ -8,7 +8,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerEventMonitoringTests
 {
     [Fact]
-    public async Task MonitorEvents_ForwardsDockerEventAndRequestsCoreResourceFilters()
+    public async Task MonitorEventsForwardsDockerEventAndRequestsCoreResourceFilters()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json("""

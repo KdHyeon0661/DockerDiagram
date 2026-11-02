@@ -1,5 +1,6 @@
-using DockerDiagram.Models;
 using System.Globalization;
+using DockerDiagram.Common;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.ApplicationServices
 {
@@ -87,35 +88,39 @@ namespace DockerDiagram.ApplicationServices
             };
         }
 
-        private static IReadOnlyList<string> SplitCommand(string text)
+        private static string[] SplitCommand(string text)
         {
             string value = text.Trim();
             return value.Length == 0 ? Array.Empty<string>() : new[] { value };
         }
 
-        private static IReadOnlyList<string> Lines(string text) =>
+        private static readonly string[] separator = new[] { "\r\n", "\n" };
+
+        private static string[] Lines(string text) =>
             (text ?? string.Empty)
-                .Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Split(separator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Where(line => line.Length > 0)
                 .ToArray();
 
-        private static IReadOnlyDictionary<string, string> ParseLabels(string text)
+        private static Dictionary<string, string> ParseLabels(string text)
         {
-            var result = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (string line in Lines(text))
+            if (KeyValueTextParser.TryParse(
+                    text,
+                    out Dictionary<string, string> result,
+                    out KeyValueTextError? error,
+                    comparer: StringComparer.Ordinal,
+                    requireSeparator: false,
+                    rejectDuplicateKeys: true))
             {
-                int separator = line.IndexOf('=');
-                string key = separator < 0 ? line.Trim() : line[..separator].Trim();
-                string value = separator < 0 ? string.Empty : line[(separator + 1)..].Trim();
-                if (key.Length == 0)
-                    throw new ArgumentException($"Label key가 비어 있습니다: {line}");
-                if (!result.TryAdd(key, value))
-                    throw new ArgumentException($"중복된 label key입니다: {key}");
+                return result;
             }
-            return result;
+
+            throw error!.Kind == KeyValueTextErrorKind.DuplicateKey
+                ? new ArgumentException($"중복된 label key입니다: {error.Key}")
+                : new ArgumentException($"Label key가 비어 있습니다: {error.Entry}");
         }
 
-        private static IReadOnlyList<SwarmPublishedPortOptions> ParsePorts(string text)
+        private static List<SwarmPublishedPortOptions> ParsePorts(string text)
         {
             var result = new List<SwarmPublishedPortOptions>();
             foreach (string line in Lines(text))
@@ -143,7 +148,7 @@ namespace DockerDiagram.ApplicationServices
             return result;
         }
 
-        private static IReadOnlyList<SwarmNetworkAttachmentOptions> ParseNetworks(string text)
+        private static List<SwarmNetworkAttachmentOptions> ParseNetworks(string text)
         {
             var result = new List<SwarmNetworkAttachmentOptions>();
             foreach (string line in Lines(text))
@@ -158,7 +163,7 @@ namespace DockerDiagram.ApplicationServices
             return result;
         }
 
-        private static IReadOnlyList<SwarmMountOptions> ParseMounts(string text)
+        private static List<SwarmMountOptions> ParseMounts(string text)
         {
             var result = new List<SwarmMountOptions>();
             foreach (string line in Lines(text))

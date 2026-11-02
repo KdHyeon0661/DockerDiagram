@@ -1,5 +1,5 @@
-using DockerDiagram.Models;
 using System.Windows;
+using DockerDiagram.Models;
 
 namespace DockerDiagram
 {
@@ -13,7 +13,7 @@ namespace DockerDiagram
                 return;
             }
 
-            var readinessWindow = new Views.SwarmReadinessWindow(sheet.DockerService)
+            using var readinessWindow = new Views.SwarmReadinessWindow(sheet.DockerService)
             {
                 Owner = this
             };

@@ -26,7 +26,7 @@ namespace DockerDiagram.Diagram
             IReadOnlyDictionary<string, int> rankByNode,
             IReadOnlyList<IReadOnlyList<string>> ranks,
             IReadOnlyList<IReadOnlyList<string>> connectedComponents,
-            IReadOnlyList<IReadOnlyList<string>> stronglyConnectedComponents,
+            IReadOnlyList<string>[] stronglyConnectedComponents,
             IReadOnlyDictionary<string, int> connectedComponentByNode,
             IReadOnlyDictionary<string, int> stronglyConnectedComponentByNode,
             IReadOnlySet<string> cycleNodeIds)
@@ -118,7 +118,7 @@ namespace DockerDiagram.Diagram
             var connectedComponents = FindConnectedComponents(orderedNodeIds, parents, children, orderIndex);
             var stronglyConnectedComponents = FindStronglyConnectedComponents(orderedNodeIds, children, orderIndex);
             var stronglyConnectedComponentByNode = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            for (int componentIndex = 0; componentIndex < stronglyConnectedComponents.Count; componentIndex++)
+            for (int componentIndex = 0; componentIndex < stronglyConnectedComponents.Length; componentIndex++)
             {
                 foreach (string nodeId in stronglyConnectedComponents[componentIndex])
                     stronglyConnectedComponentByNode[nodeId] = componentIndex;
@@ -195,7 +195,7 @@ namespace DockerDiagram.Diagram
             int nodeCount,
             int connectedComponentCount,
             IReadOnlyDictionary<string, List<string>> parents,
-            IReadOnlySet<string> cycleNodeIds)
+            HashSet<string> cycleNodeIds)
         {
             if (nodeCount == 0) return ComposeLayoutGraphKind.Empty;
             if (cycleNodeIds.Count > 0) return ComposeLayoutGraphKind.Cyclic;
@@ -207,11 +207,11 @@ namespace DockerDiagram.Diagram
                 : ComposeLayoutGraphKind.Forest;
         }
 
-        private static IReadOnlyList<IReadOnlyList<string>> FindConnectedComponents(
+        private static List<IReadOnlyList<string>> FindConnectedComponents(
             IReadOnlyList<string> orderedNodeIds,
-            IReadOnlyDictionary<string, List<string>> parents,
-            IReadOnlyDictionary<string, List<string>> children,
-            IReadOnlyDictionary<string, int> orderIndex)
+            Dictionary<string, List<string>> parents,
+            Dictionary<string, List<string>> children,
+            Dictionary<string, int> orderIndex)
         {
             var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var components = new List<IReadOnlyList<string>>();
@@ -242,10 +242,10 @@ namespace DockerDiagram.Diagram
             return components;
         }
 
-        private static IReadOnlyList<IReadOnlyList<string>> FindStronglyConnectedComponents(
+        private static IReadOnlyList<string>[] FindStronglyConnectedComponents(
             IReadOnlyList<string> orderedNodeIds,
-            IReadOnlyDictionary<string, List<string>> children,
-            IReadOnlyDictionary<string, int> orderIndex)
+            Dictionary<string, List<string>> children,
+            Dictionary<string, int> orderIndex)
         {
             int nextIndex = 0;
             var indexByNode = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -264,14 +264,14 @@ namespace DockerDiagram.Diagram
 
                 foreach (string childId in children[nodeId])
                 {
-                    if (!indexByNode.ContainsKey(childId))
+                    if (!indexByNode.TryGetValue(childId, out int childIndex))
                     {
                         StrongConnect(childId);
                         lowLinkByNode[nodeId] = Math.Min(lowLinkByNode[nodeId], lowLinkByNode[childId]);
                     }
                     else if (onStack.Contains(childId))
                     {
-                        lowLinkByNode[nodeId] = Math.Min(lowLinkByNode[nodeId], indexByNode[childId]);
+                        lowLinkByNode[nodeId] = Math.Min(lowLinkByNode[nodeId], childIndex);
                     }
                 }
 
@@ -304,11 +304,11 @@ namespace DockerDiagram.Diagram
         private static Dictionary<string, int> CalculateRanks(
             IReadOnlyList<string> orderedNodeIds,
             IReadOnlyList<ComposeLayoutEdge> edges,
-            IReadOnlyList<IReadOnlyList<string>> stronglyConnectedComponents,
-            IReadOnlyDictionary<string, int> stronglyConnectedComponentByNode,
-            IReadOnlyDictionary<string, int> orderIndex)
+            IReadOnlyList<string>[] stronglyConnectedComponents,
+            Dictionary<string, int> stronglyConnectedComponentByNode,
+            Dictionary<string, int> orderIndex)
         {
-            int componentCount = stronglyConnectedComponents.Count;
+            int componentCount = stronglyConnectedComponents.Length;
             var componentRanks = new int[componentCount];
             var componentInDegree = new int[componentCount];
             var componentChildren = Enumerable.Range(0, componentCount)

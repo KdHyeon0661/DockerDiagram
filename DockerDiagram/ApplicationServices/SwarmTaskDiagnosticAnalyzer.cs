@@ -1,3 +1,4 @@
+using DockerDiagram.Common;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ApplicationServices
@@ -91,12 +92,12 @@ namespace DockerDiagram.ApplicationServices
             text.Contains("unsupported platform", StringComparison.Ordinal);
 
         private static string ColorFor(SwarmTaskFailureCategory category, bool historical) =>
-            historical ? "#7A858D" : category switch
+            historical ? StatusColors.Historical : category switch
             {
-                SwarmTaskFailureCategory.Healthy or SwarmTaskFailureCategory.Completed => "#28A745",
-                SwarmTaskFailureCategory.Starting or SwarmTaskFailureCategory.SchedulingPending => "#E6A700",
-                SwarmTaskFailureCategory.Unknown or SwarmTaskFailureCategory.Historical or SwarmTaskFailureCategory.Removed => "#7A858D",
-                _ => "#DC3545"
+                SwarmTaskFailureCategory.Healthy or SwarmTaskFailureCategory.Completed => StatusColors.Running,
+                SwarmTaskFailureCategory.Starting or SwarmTaskFailureCategory.SchedulingPending => StatusColors.Warning,
+                SwarmTaskFailureCategory.Unknown or SwarmTaskFailureCategory.Historical or SwarmTaskFailureCategory.Removed => StatusColors.Historical,
+                _ => StatusColors.Failed
             };
     }
 }

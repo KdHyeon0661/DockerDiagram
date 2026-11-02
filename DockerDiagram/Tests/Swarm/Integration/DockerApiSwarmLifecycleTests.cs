@@ -6,8 +6,12 @@ namespace DockerDiagram.Tests;
 
 public sealed class DockerApiSwarmLifecycleTests
 {
+
+    private static readonly string[] JoinNormalizesManagersAndDoesNotExposeTokenOutsideRequestBodyExpectedValues1 = new[] { " 10.0.0.2:2377 ", "10.0.0.2:2377" };
+    private static readonly string[] JoinNormalizesManagersAndDoesNotExposeTokenOutsideRequestBodyExpectedValues2 = new[] { "10.0.0.2:2377" };
+
     [Fact]
-    public async Task StateQuery_MapsDockerInfoResponse()
+    public async Task StateQueryMapsDockerInfoResponse()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(ManagerInfo()));
@@ -22,7 +26,7 @@ public sealed class DockerApiSwarmLifecycleTests
     }
 
     [Fact]
-    public async Task Initialize_RequiresInactiveStateAndPostsValidatedOptions()
+    public async Task InitializeRequiresInactiveStateAndPostsValidatedOptions()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(InactiveInfo()),
@@ -49,7 +53,7 @@ public sealed class DockerApiSwarmLifecycleTests
     }
 
     [Fact]
-    public async Task Join_NormalizesManagersAndDoesNotExposeTokenOutsideRequestBody()
+    public async Task JoinNormalizesManagersAndDoesNotExposeTokenOutsideRequestBody()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(InactiveInfo()),
@@ -58,7 +62,7 @@ public sealed class DockerApiSwarmLifecycleTests
 
         await service.JoinSwarmAsync(new SwarmJoinOptions
         {
-            RemoteManagerAddresses = new[] { " 10.0.0.2:2377 ", "10.0.0.2:2377" },
+            RemoteManagerAddresses = JoinNormalizesManagersAndDoesNotExposeTokenOutsideRequestBodyExpectedValues1,
             JoinToken = " SWMTKN-secret ",
             ListenAddress = "0.0.0.0:2377",
             AdvertiseAddress = "10.0.0.3:2377"
@@ -66,13 +70,13 @@ public sealed class DockerApiSwarmLifecycleTests
 
         Assert.Equal(("POST", "/swarm/join"), RequestIdentity(server.Requests[1]));
         JObject body = JObject.Parse(server.Requests[1].Body);
-        Assert.Equal(new[] { "10.0.0.2:2377" }, body["RemoteAddrs"]!.Values<string>());
+        Assert.Equal(JoinNormalizesManagersAndDoesNotExposeTokenOutsideRequestBodyExpectedValues2, body["RemoteAddrs"]!.Values<string>());
         Assert.Equal("SWMTKN-secret", body.Value<string>("JoinToken"));
         Assert.DoesNotContain("SWMTKN-secret", service.CurrentProfile.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task ManagerTokenQuery_RequiresManagerAndMapsBothTokens()
+    public async Task ManagerTokenQueryRequiresManagerAndMapsBothTokens()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(ManagerInfo()),
@@ -95,7 +99,7 @@ public sealed class DockerApiSwarmLifecycleTests
     }
 
     [Fact]
-    public async Task WorkerLeave_UsesNonForcedDockerRequest()
+    public async Task WorkerLeaveUsesNonForcedDockerRequest()
     {
         await using var server = new ScriptedDockerApiServer(
             ScriptedDockerApiServer.Json(WorkerInfo()),
@@ -111,7 +115,7 @@ public sealed class DockerApiSwarmLifecycleTests
     }
 
     [Fact]
-    public async Task PreCanceledInitialize_DoesNotReachDocker()
+    public async Task PreCanceledInitializeDoesNotReachDocker()
     {
         await using var server = new ScriptedDockerApiServer();
         using var service = CreateService(server);

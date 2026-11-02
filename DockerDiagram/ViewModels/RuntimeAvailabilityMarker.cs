@@ -1,3 +1,4 @@
+using DockerDiagram.Common;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
@@ -17,9 +18,10 @@ namespace DockerDiagram.ViewModels
 
             foreach (NodeViewModel node in runtimeNodes)
             {
-                node.IsDockerConnected = false;
-                node.IsRunning = false;
-                node.StatusColor = "#808080";
+                node.ApplyRuntimeState(
+                    RuntimeConnectionState.Disconnected,
+                    RuntimeLifecycleState.Unknown);
+                node.StatusColor = StatusColors.Unknown;
                 node.NotifyRuntimeAvailabilityChanged();
             }
 

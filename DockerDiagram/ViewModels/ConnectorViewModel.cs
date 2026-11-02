@@ -1,12 +1,12 @@
-using DockerDiagram.Diagram;
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.Contracts;
-using DockerDiagram.Common;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Media;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Diagram;
 using DockerDiagram.Models;
 
 namespace DockerDiagram.ViewModels
@@ -20,9 +20,9 @@ namespace DockerDiagram.ViewModels
         #region Fields & Services
         private readonly IDialogService _dialogService;
 
-        private PointCollection _points = new PointCollection();
-        private PointCollection _arrowPoints = new PointCollection();
-        private PointCollection _sourceArrowPoints = new PointCollection();
+        private PointCollection _points = [];
+        private PointCollection _arrowPoints = [];
+        private PointCollection _sourceArrowPoints = [];
         private int _zIndex = 50;
         private bool _isSelected;
         private bool _isBidirectional;
@@ -32,6 +32,9 @@ namespace DockerDiagram.ViewModels
 
         private RelationType _relationType;
         private string? _mountPath;
+        private MountKind _mountKind = MountKind.Volume;
+        private bool _mountReadOnly;
+        private string _mountOptions = string.Empty;
         private string? _ipAddress;
         private string _publishedPort = string.Empty;
         private string _targetPort = string.Empty;
@@ -142,6 +145,8 @@ namespace DockerDiagram.ViewModels
                     OnPropertyChanged(nameof(HasTargetDisplayLabel));
                     OnPropertyChanged(nameof(CanReverseDirection));
                     OnPropertyChanged(nameof(CanChangeDirectionMode));
+                    OnPropertyChanged(nameof(RelationTypeDisplayName));
+                    OnPropertyChanged(nameof(CanEditDataLabels));
                     NotifyPublishedPortValidationChanged();
                     NotifySwarmReferenceValidationChanged();
                     OnModified?.Invoke(this, EventArgs.Empty);
@@ -154,8 +159,73 @@ namespace DockerDiagram.ViewModels
             get => _mountPath;
             set
             {
-                if (SetProperty(ref _mountPath, value)) OnModified?.Invoke(this, EventArgs.Empty);
+                if (SetProperty(ref _mountPath, value))
+                {
+                    OnPropertyChanged(nameof(TargetDisplayLabel));
+                    OnPropertyChanged(nameof(HasTargetDisplayLabel));
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
             }
+        }
+
+        public MountKind MountKind
+        {
+            get => _mountKind;
+            set
+            {
+                if (SetProperty(ref _mountKind, value))
+                {
+                    OnPropertyChanged(nameof(SourceDisplayLabel));
+                    OnPropertyChanged(nameof(HasSourceDisplayLabel));
+                    OnPropertyChanged(nameof(StrokeColor));
+                    OnPropertyChanged(nameof(MountKindDisplayName));
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public bool MountReadOnly
+        {
+            get => _mountReadOnly;
+            set
+            {
+                if (SetProperty(ref _mountReadOnly, value))
+                {
+                    OnPropertyChanged(nameof(SourceDisplayLabel));
+                    OnPropertyChanged(nameof(HasSourceDisplayLabel));
+                    OnPropertyChanged(nameof(MountAccessModeDisplayName));
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public string MountOptions
+        {
+            get => _mountOptions;
+            set
+            {
+                if (SetProperty(ref _mountOptions, value ?? string.Empty))
+                {
+                    OnPropertyChanged(nameof(MountAdditionalOptions));
+                    OnModified?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public string MountAccessModeDisplayName => MountReadOnly ? "읽기 전용 (ro)" : "읽기/쓰기 (rw)";
+
+        public string MountAdditionalOptions
+        {
+            get
+            {
+                string[] options = MountOptions
+                    .Split(['·', ',', ';'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                    .Where(option => !string.Equals(option, "rw", StringComparison.OrdinalIgnoreCase) &&
+                                     !string.Equals(option, "ro", StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                return string.Join(", ", options);
+            }
+            set => MountOptions = value?.Trim() ?? string.Empty;
         }
 
         public string? IpAddress
@@ -381,20 +451,52 @@ namespace DockerDiagram.ViewModels
         private bool IsSwarmDataReference =>
             RelationType is RelationType.SwarmSecretReference or RelationType.SwarmConfigReference;
 
-        public string SourceDisplayLabel => RelationType == RelationType.SwarmPublishedPort
-            ? $"public {(string.IsNullOrWhiteSpace(PublishedPort) ? "auto" : PublishedPort)} ({PublishMode})"
-            : IsSwarmDataReference
-                ? $"target {SwarmReferenceTarget}"
-            : SourceDataLabel;
-        public string TargetDisplayLabel => RelationType == RelationType.SwarmPublishedPort
-            ? (string.IsNullOrWhiteSpace(TargetPort) ? Protocol : $"{TargetPort}/{Protocol}")
-            : TargetDataLabel;
+        // 마운트 종류와 컨테이너 경로는 연결선 위에 반복 표시하지 않고
+        // 연결선 편집기와 컨테이너 상세 화면에서 확인합니다.
+        public string SourceDisplayLabel => RelationType == RelationType.VolumeMount
+            ? string.Empty
+            : RelationType == RelationType.SwarmPublishedPort
+                ? $"public {(string.IsNullOrWhiteSpace(PublishedPort) ? "auto" : PublishedPort)} ({PublishMode})"
+                : IsSwarmDataReference
+                    ? $"target {SwarmReferenceTarget}"
+                    : SourceDataLabel;
+        public string TargetDisplayLabel => RelationType == RelationType.VolumeMount
+            ? string.Empty
+            : RelationType == RelationType.SwarmPublishedPort
+                ? (string.IsNullOrWhiteSpace(TargetPort) ? Protocol : $"{TargetPort}/{Protocol}")
+                : TargetDataLabel;
         public bool HasSourceDisplayLabel => !string.IsNullOrWhiteSpace(SourceDisplayLabel);
         public bool HasTargetDisplayLabel => !string.IsNullOrWhiteSpace(TargetDisplayLabel);
         public bool CanReverseDirection => RelationType is not RelationType.SwarmPublishedPort
             and not RelationType.SwarmSecretReference
-            and not RelationType.SwarmConfigReference;
+            and not RelationType.SwarmConfigReference
+            and not RelationType.KubernetesOwner
+            and not RelationType.KubernetesSelector
+            and not RelationType.KubernetesVolumeClaim;
         public bool CanChangeDirectionMode => CanReverseDirection;
+        public bool CanEditDataLabels =>
+            RelationType is RelationType.Dependency or RelationType.NetworkAttach;
+
+        public string RelationTypeDisplayName => RelationType switch
+        {
+            RelationType.Dependency => "실행 의존성",
+            RelationType.VolumeMount => "스토리지 마운트",
+            RelationType.NetworkAttach => "네트워크 연결",
+            RelationType.SwarmPublishedPort => "Swarm 공개 포트",
+            RelationType.SwarmSecretReference => "Swarm Secret 참조",
+            RelationType.SwarmConfigReference => "Swarm Config 참조",
+            RelationType.KubernetesOwner => "Kubernetes 소유 관계",
+            RelationType.KubernetesSelector => "Kubernetes Selector",
+            RelationType.KubernetesVolumeClaim => "Kubernetes PVC 마운트",
+            _ => RelationType.ToString()
+        };
+
+        public string MountKindDisplayName => MountKind switch
+        {
+            MountKind.Bind => "바인드 마운트",
+            MountKind.Tmpfs => "tmpfs",
+            _ => "이름 있는 볼륨"
+        };
 
         private void NotifyPublishedPortValidationChanged()
         {
@@ -411,6 +513,8 @@ namespace DockerDiagram.ViewModels
         public string StrokeColor => RelationType switch
         {
             RelationType.KubernetesVolumeClaim => "#E65100",
+            RelationType.VolumeMount when MountKind == MountKind.Bind => "#2563EB",
+            RelationType.VolumeMount when MountKind == MountKind.Tmpfs => "#7C3AED",
             RelationType.VolumeMount or RelationType.NetworkAttach => "#111111",
             RelationType.SwarmPublishedPort => "#287BAE",
             RelationType.SwarmSecretReference => "#C08A00",
@@ -574,15 +678,15 @@ namespace DockerDiagram.ViewModels
         {
             if (Points == null || Points.Count < 2)
             {
-                ArrowPoints = new PointCollection();
-                SourceArrowPoints = new PointCollection();
+                ArrowPoints = [];
+                SourceArrowPoints = [];
                 return;
             }
 
             ArrowPoints = CreateArrowHead(Points[^1], Points[^2]);
             SourceArrowPoints = IsBidirectional
                 ? CreateArrowHead(Points[0], Points[1])
-                : new PointCollection();
+                : [];
         }
 
         private static PointCollection CreateArrowHead(Point tip, Point adjacentPoint)
@@ -599,12 +703,12 @@ namespace DockerDiagram.ViewModels
             Point basePoint = tip - (direction * arrowLength);
             Vector perpendicular = new Vector(-direction.Y, direction.X);
 
-            return new PointCollection
-            {
+            return
+            [
                 tip,
                 basePoint + (perpendicular * arrowWidth),
                 basePoint - (perpendicular * arrowWidth)
-            };
+            ];
         }
         #endregion
 

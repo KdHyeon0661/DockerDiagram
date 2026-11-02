@@ -1,6 +1,6 @@
-﻿using DockerDiagram.Contracts;
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using System.Windows;
+using DockerDiagram.Contracts;
 
 namespace DockerDiagram.Views
 {
@@ -49,8 +49,8 @@ namespace DockerDiagram.Views
 
             // 1. 리눅스 스타일 절대 경로: /app/data
             // 2. 윈도우 스타일 절대 경로: C:\app\data (대소문자 무관)
-            bool isLinuxStyle = MountPath.StartsWith("/");
-            bool isWindowsStyle = Regex.IsMatch(MountPath, @"^[a-zA-Z]:[\\/]");
+            bool isLinuxStyle = MountPath.StartsWith('/');
+            bool isWindowsStyle = MyRegex().IsMatch(MountPath);
 
             if (!isLinuxStyle && !isWindowsStyle)
             {
@@ -60,7 +60,7 @@ namespace DockerDiagram.Views
             }
 
             if (!string.IsNullOrWhiteSpace(VolumeOwner) &&
-                !Regex.IsMatch(VolumeOwner, @"^[a-zA-Z0-9_.-]+(?::[a-zA-Z0-9_.-]+)?$"))
+                !VolumeOwnerRegex().IsMatch(VolumeOwner))
             {
                 _dialogService.ShowError(
                     "소유자는 user 또는 user:group 형식만 사용할 수 있습니다.",
@@ -71,5 +71,11 @@ namespace DockerDiagram.Views
 
             DialogResult = true;
         }
+
+        [GeneratedRegex(@"^[a-zA-Z]:[\\/]")]
+        private static partial Regex MyRegex();
+
+        [GeneratedRegex(@"^[a-zA-Z0-9_.-]+(?::[a-zA-Z0-9_.-]+)?$")]
+        private static partial Regex VolumeOwnerRegex();
     }
 }

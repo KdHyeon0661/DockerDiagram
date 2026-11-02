@@ -1,9 +1,9 @@
-using DockerDiagram.Models;
-using DockerDiagram.ViewModels;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using DockerDiagram.Models;
+using DockerDiagram.ViewModels;
 
 namespace DockerDiagram.Diagram
 {
@@ -185,9 +185,9 @@ namespace DockerDiagram.Diagram
                 .ToDictionary(item => item.id, item => item.index, StringComparer.OrdinalIgnoreCase);
 
             IReadOnlyCollection<NodeViewModel> volumeNodes =
-                scopedVolumes ?? sheet.Nodes.Where(node => node.Type == NodeType.Volume).ToList();
+                scopedVolumes ?? sheet.Nodes.Where(IsStorageNode).ToList();
             var volumeIdByNode = BuildUniqueIds(
-                volumeNodes.Where(node => node.Type == NodeType.Volume),
+                volumeNodes.Where(IsStorageNode),
                 node => node.Id,
                 "volume");
             var volumeOwners = volumeIdByNode.Values.ToDictionary(
@@ -310,6 +310,9 @@ namespace DockerDiagram.Diagram
                 diagnostics.ToArray());
         }
 
+        private static bool IsStorageNode(NodeViewModel node) =>
+            node.Type is NodeType.Volume or NodeType.HostPath;
+
         public static ComposeNetworkRelationKind ClassifyNetworkRelation(
             IEnumerable<string> leftMemberIds,
             IEnumerable<string> rightMemberIds)
@@ -336,10 +339,10 @@ namespace DockerDiagram.Diagram
             return BuildDisplayDependencyEdges(serviceIds, dependsOnByService, diagnostics: null);
         }
 
-        private static IReadOnlyList<ComposeLayoutEdge> BuildDisplayDependencyEdges(
+        private static List<ComposeLayoutEdge> BuildDisplayDependencyEdges(
             IEnumerable<string> serviceIds,
             IReadOnlyDictionary<string, List<string>> dependsOnByService,
-            ICollection<string>? diagnostics)
+            List<string>? diagnostics)
         {
             var serviceIdSet = new HashSet<string>(
                 serviceIds.Where(id => !string.IsNullOrWhiteSpace(id)),

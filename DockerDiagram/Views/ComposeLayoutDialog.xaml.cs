@@ -1,5 +1,5 @@
-using DockerDiagram.Models;
 using System.Windows;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.Views
 {

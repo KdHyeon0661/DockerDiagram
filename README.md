@@ -15,7 +15,10 @@
 - 컨테이너/볼륨/네트워크 raw inspect JSON 보기
 - Docker events 기반 실시간 동기화와 보조 polling
 - Docker Engine `system/df` 기반 디스크 사용량 보기
-- Docker Compose import/export와 네트워크/볼륨 옵션 보존
+- Docker Compose import/export, 자동 배치와 선택적 `compose up` 배포
+- Docker Swarm 초기화·참여·이탈, 노드·서비스·overlay network·secret·config 관리
+- Swarm stack 배포·제거, readiness 점검과 task 진단
+- Kubernetes 리소스 조회·시각화와 기본 관리 작업
 - `.vdm` 프로젝트 저장/불러오기
 
 ## 시각적 Docker 다이어그램
@@ -135,6 +138,30 @@ Docker Compose YAML을 가져오거나 내보낼 수 있습니다.
 
 Compose 배포는 `IComposeService` 뒤로 격리되어 있습니다. 기본 구현은 Docker Compose CLI 플러그인을 사용합니다. `docker compose up`은 Docker Engine API의 단일 기능이 아니라 Compose 플러그인이 여러 Engine API 호출로 풀어 실행하는 기능이기 때문입니다.
 
+## Docker Swarm 지원
+
+- Swarm 초기화, join token 확인, manager/worker 참여와 이탈
+- node role, availability와 label 관리
+- replicated/global service 생성·편집·삭제
+- replica, image, command, environment, restart, update/rollback 설정
+- published port의 ingress/host mode와 TCP/UDP 설정
+- overlay network, secret, config와 service 참조 관리
+- placement constraint, volume mount와 service topology 편집
+- stack YAML 검증, 환경 변수 해석, 배포·제거와 상태 동기화
+- manager readiness, quorum, ingress와 task 실패 진단
+
+실제 다중 노드의 네트워크·스토리지·장애 동작은 연결된 Swarm 환경 구성에 영향을 받습니다.
+
+## Kubernetes 지원
+
+- 현재 context의 Node, Pod, Deployment, ReplicaSet와 Service 조회
+- ConfigMap, Secret, Ingress와 PersistentVolumeClaim 조회
+- owner reference, selector와 volume claim 관계 시각화
+- YAML·describe·로그 확인, scale, restart와 delete
+- manifest apply와 port forwarding
+
+Kubernetes 기능은 접근 가능한 클러스터와 올바른 `kubectl` current context가 필요합니다.
+
 ## 시스템 도구
 
 전역 Docker 관리 기능은 다음을 지원합니다.
@@ -148,11 +175,25 @@ Compose 배포는 `IComposeService` 뒤로 격리되어 있습니다. 기본 구
 - Docker events 기반 동기화
 - raw inspect viewer
 
+## 기술 구성
+
+| 구분 | 기술 |
+|---|---|
+| UI | WPF, XAML |
+| 실행 환경 | .NET 10 for Windows |
+| 설계 | MVVM 기반 View·ViewModel·Service 분리 |
+| Docker 연동 | Docker.DotNet, Docker Engine API, 필요한 범위의 Docker CLI |
+| YAML | YamlDotNet |
+| 차트 | OxyPlot.Wpf |
+| 테스트 | xUnit, Docker API 통합 테스트, 선택적 live Docker 테스트 |
+
 ## 요구 사항
 
 - Windows 10 또는 Windows 11
 - Docker Desktop 또는 접근 가능한 Docker Engine
 - Compose 배포 기능 사용 시 Docker Compose CLI 플러그인
+- Swarm stack 기능 사용 시 Docker CLI와 manager 연결
+- Kubernetes 기능 사용 시 `kubectl`과 접근 가능한 cluster context
 - .NET SDK 10
 - Visual Studio의 .NET Desktop Development workload 또는 .NET CLI
 
@@ -168,17 +209,20 @@ Compose 배포는 `IComposeService` 뒤로 격리되어 있습니다. 기본 구
 
 ### Visual Studio
 
-1. `DockerDiagram.csproj`를 엽니다.
+1. `DockerDiagram.slnx`를 엽니다.
 2. NuGet 패키지를 복원합니다.
 3. F5로 빌드 및 실행합니다.
 
 ### CLI
 
-```bash
-dotnet restore
-dotnet build
-dotnet run
+```powershell
+dotnet restore DockerDiagram.slnx
+dotnet build DockerDiagram.slnx -c Release --no-restore
+dotnet test DockerDiagram/Tests/DockerDiagram.Tests.csproj -c Release --no-build
+dotnet run --project DockerDiagram/DockerDiagram.csproj
 ```
+
+실제 Docker Engine에 임시 리소스를 생성하는 live 테스트는 `DOCKERDIAGRAM_RUN_LIVE_TESTS=1`을 설정한 경우에만 실행됩니다.
 
 ## 빠른 사용 방법
 
@@ -214,45 +258,22 @@ DockerDiagram은 다이어그램을 `.vdm` 파일로 저장합니다.
 
 ```text
 DockerDiagram/
-├─ DockerDiagram.csproj
-├─ App.xaml / App.xaml.cs
-├─ MainWindow.xaml / MainWindow.xaml.cs
-├─ Helpers/
-│  ├─ DockerApiService.cs
-│  ├─ DockerInterface.cs
-│  ├─ DockerContextService.cs
-│  ├─ DockerComposeCliService.cs
-│  ├─ ComposeImportService.cs
-│  ├─ ComposeExportService.cs
-│  ├─ FileService.cs
-│  ├─ DialogService.cs
-│  ├─ SshTunnelManager.cs
-│  └─ OrthogonalRouter.cs
-├─ Models/
-│  ├─ SaveData.cs
-│  ├─ DockerContainer.cs
-│  ├─ DockerImage.cs
-│  ├─ NetworkCreateOptions.cs
-│  ├─ VolumeCreateOptions.cs
-│  └─ ...
-├─ ViewModels/
-│  ├─ MainViewModel.cs
-│  ├─ SheetManagerViewModel.cs
-│  ├─ SheetViewModel.cs
-│  ├─ NodeViewModel.cs
-│  ├─ ConnectorViewModel.cs
-│  ├─ GroupViewModel.cs
-│  ├─ ResourceExplorerViewModel.cs
-│  ├─ InspectorViewModel.cs
-│  └─ ToolboxViewModel.cs
-└─ Views/
-   ├─ ContainerDialog.xaml
-   ├─ VolumeDialog.xaml
-   ├─ NetworkDialog.xaml
-   ├─ ImageManagerWindow.xaml
-   ├─ SystemDiskUsageWindow.xaml
-   ├─ RawInspectWindow.xaml
-   └─ ...
+├─ .github/workflows/          # GitHub Actions 빌드·테스트
+├─ Directory.Build.props       # 공통 분석기·빌드 설정
+├─ DockerDiagram.slnx
+└─ DockerDiagram/
+   ├─ ApplicationServices/     # 유스케이스와 작업 흐름
+   ├─ Common/                  # 명령, 로깅 등 공통 기반
+   ├─ Contracts/               # Docker·UI·Compose 경계 인터페이스
+   ├─ Diagram/                 # 배치, 라우팅과 관계 계산
+   ├─ Infrastructure/          # Docker API, CLI, SSH 구현
+   ├─ Models/                  # 저장·리소스·런타임 모델
+   ├─ ViewModels/              # 화면 상태와 사용자 명령
+   ├─ Views/                   # WPF 창, 컨트롤과 테마
+   ├─ Templates/BuiltIn/       # 내장 stack template
+   ├─ Tests/                   # Docker·Swarm·영속성 테스트
+   ├─ scripts/                 # Release readiness 점검
+   └─ DockerDiagram.csproj
 ```
 
 ## 구조 메모
@@ -264,7 +285,8 @@ DockerDiagram/
 - Docker Engine 통신은 서비스 인터페이스를 통해 분리합니다.
 - Compose 배포는 `IComposeService` 뒤로 격리합니다.
 - Docker API 호출은 가능한 경우 Docker.DotNet을 사용합니다.
-- Engine API로 직접 대응하기 어려운 기능만 전용 인프라 서비스 안에서 CLI를 사용합니다.
+- Engine API로 직접 대응하기 어려운 Compose, Swarm stack, context, 대화형 terminal 기능만 전용 인프라 서비스 안에서 CLI를 사용합니다.
+- 런타임 변경이 실패하면 시각 상태를 성공으로 확정하지 않고 가능한 작업은 롤백합니다.
 
 ## 문제 해결
 
@@ -280,6 +302,17 @@ DockerDiagram/
 - `docker compose version`이 동작하는지 확인합니다.
 - Docker Compose CLI 플러그인이 설치되어 있는지 확인합니다.
 - 현재 선택한 연결 프로필이 대상 Docker Engine에 접근 가능한지 확인합니다.
+
+### Swarm stack 배포가 실패할 때
+
+- 현재 연결이 Swarm manager인지 확인합니다.
+- 각 service가 registry에서 pull 가능한 `image:`를 사용하는지 확인합니다.
+- 로컬 bind mount와 volume 데이터는 노드별 경로와 저장 상태가 다를 수 있습니다.
+
+### Kubernetes 작업이 실패할 때
+
+- `kubectl config current-context`와 cluster 접근 권한을 확인합니다.
+- 대상 namespace와 resource 이름을 확인합니다.
 
 ### SSH 연결이 실패할 때
 
@@ -297,9 +330,7 @@ DockerDiagram/
 - Docker Compose 프로젝트 라이프사이클 대시보드
 - registry login/logout 관리
 - Buildx / BuildKit cache 관리
-- Docker Swarm 지원
-- Kubernetes 연동
-- Docker secrets/configs
+- 실제 다중 노드 Swarm 및 Kubernetes 장애 시나리오 자동화
 - 더 정밀한 볼륨 크기 분석
 
 ## 라이선스

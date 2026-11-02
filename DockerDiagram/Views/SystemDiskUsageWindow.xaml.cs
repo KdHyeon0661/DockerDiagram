@@ -1,8 +1,8 @@
-using DockerDiagram.Contracts;
-using DockerDiagram.Common;
-using DockerDiagram.Models;
 using System.Threading.Tasks;
 using System.Windows;
+using DockerDiagram.Common;
+using DockerDiagram.Contracts;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.Views
 {
@@ -36,7 +36,7 @@ namespace DockerDiagram.Views
             }
             catch (System.Exception ex)
             {
-                _dialogService.ShowError($"Disk usage 조회 실패: {ex.Message}", "Docker Disk Usage");
+                _dialogService.ShowError($"디스크 사용량 조회 실패: {ex.Message}", "Docker 디스크 사용량");
             }
             finally
             {

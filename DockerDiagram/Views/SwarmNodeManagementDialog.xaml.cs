@@ -1,7 +1,8 @@
-using DockerDiagram.Models;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using DockerDiagram.Common;
+using DockerDiagram.Models;
 
 namespace DockerDiagram.Views
 {
@@ -24,8 +25,8 @@ namespace DockerDiagram.Views
             HostnameTextBlock.Text = snapshot.Hostname;
             NodeIdTextBlock.Text = snapshot.NodeId;
             NodeIdTextBlock.ToolTip = snapshot.NodeId;
-            StatusBadgeTextBlock.Text = DisplayName(snapshot.Status, "Unknown");
-            RoleBadgeTextBlock.Text = DisplayName(snapshot.Role, "Unknown role");
+            StatusBadgeTextBlock.Text = DisplayName(snapshot.Status, "알 수 없음");
+            RoleBadgeTextBlock.Text = DisplayName(snapshot.Role, "알 수 없는 역할");
             ManagerStatusBadgeTextBlock.Text = DisplayName(snapshot.ManagerStatus, string.Empty);
             ManagerStatusBadge.Visibility = string.IsNullOrWhiteSpace(snapshot.ManagerStatus)
                 ? Visibility.Collapsed
@@ -50,17 +51,16 @@ namespace DockerDiagram.Views
             ClearValidation();
             try
             {
-                var labels = new Dictionary<string, string>(StringComparer.Ordinal);
-                foreach (string line in LabelsTextBox.Text.Split(
-                             new[] { "\r\n", "\n" },
-                             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                if (!KeyValueTextParser.TryParse(
+                        LabelsTextBox.Text,
+                        out Dictionary<string, string> labels,
+                        out KeyValueTextError? labelError,
+                        comparer: StringComparer.Ordinal,
+                        rejectDuplicateKeys: true))
                 {
-                    int separator = line.IndexOf('=');
-                    if (separator <= 0)
-                        throw new ArgumentException($"Label은 key=value 형식이어야 합니다: {line}");
-                    string key = line[..separator].Trim();
-                    if (!labels.TryAdd(key, line[(separator + 1)..].Trim()))
-                        throw new ArgumentException($"중복된 label key입니다: {key}");
+                    throw labelError!.Kind == KeyValueTextErrorKind.DuplicateKey
+                        ? new ArgumentException($"중복된 label key입니다: {labelError.Key}")
+                        : new ArgumentException($"Label은 key=value 형식이어야 합니다: {labelError.Entry}");
                 }
 
                 var options = new SwarmNodeUpdateOptions
@@ -148,7 +148,7 @@ namespace DockerDiagram.Views
                 ? "Use Swarm Leave to remove the node used by the current connection."
                 : isManager
                     ? "Demote this Manager to Worker and apply the change before removing it."
-                    : "Remove this Worker from the Swarm.";
+                    : "이 Worker를 Swarm에서 제거합니다.";
         }
 
         private void ShowValidation(string message)

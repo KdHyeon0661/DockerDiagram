@@ -1,7 +1,7 @@
+using System.Globalization;
 using DockerDiagram.Infrastructure;
 using DockerDiagram.Models;
 using Newtonsoft.Json.Linq;
-using System.Globalization;
 
 namespace DockerDiagram.ApplicationServices
 {
@@ -26,8 +26,8 @@ namespace DockerDiagram.ApplicationServices
                 ?? throw new InvalidOperationException("Swarm service inspect 응답에 Version.Index가 없습니다.");
             JObject spec = root["Spec"] as JObject
                 ?? throw new InvalidOperationException("Swarm service inspect 응답에 Spec이 없습니다.");
-            JObject taskTemplate = spec["TaskTemplate"] as JObject ?? new JObject();
-            JObject container = taskTemplate["ContainerSpec"] as JObject ?? new JObject();
+            JObject taskTemplate = spec["TaskTemplate"] as JObject ?? [];
+            JObject container = taskTemplate["ContainerSpec"] as JObject ?? [];
             SwarmServiceModeKind mode = SwarmServiceSpecMapper.ReadCurrentMode(spec);
 
             var result = new SwarmServiceSpecOptions
@@ -62,12 +62,12 @@ namespace DockerDiagram.ApplicationServices
             return value;
         }
 
-        private static IReadOnlyList<string> ReadStrings(JToken? token) =>
+        private static string[] ReadStrings(JToken? token) =>
             token is JArray values
                 ? values.Values<string>().OfType<string>().Where(value => !string.IsNullOrWhiteSpace(value)).ToArray()
                 : Array.Empty<string>();
 
-        private static IReadOnlyDictionary<string, string> ReadStringMap(JToken? token)
+        private static Dictionary<string, string> ReadStringMap(JToken? token)
         {
             if (token is not JObject map) return new Dictionary<string, string>();
             return map.Properties().ToDictionary(
@@ -76,7 +76,7 @@ namespace DockerDiagram.ApplicationServices
                 StringComparer.Ordinal);
         }
 
-        private static IReadOnlyList<SwarmMountOptions> ReadMounts(JToken? token)
+        private static SwarmMountOptions[] ReadMounts(JToken? token)
         {
             if (token is not JArray mounts) return Array.Empty<SwarmMountOptions>();
             return mounts.OfType<JObject>().Select(mount =>
@@ -94,7 +94,7 @@ namespace DockerDiagram.ApplicationServices
             }).ToArray();
         }
 
-        private static IReadOnlyList<SwarmNetworkAttachmentOptions> ReadNetworks(JToken? token)
+        private static SwarmNetworkAttachmentOptions[] ReadNetworks(JToken? token)
         {
             if (token is not JArray networks) return Array.Empty<SwarmNetworkAttachmentOptions>();
             return networks.OfType<JObject>().Select(network => new SwarmNetworkAttachmentOptions(
@@ -103,7 +103,7 @@ namespace DockerDiagram.ApplicationServices
                 ReadStringMap(network["DriverOpts"]))).ToArray();
         }
 
-        private static IReadOnlyList<SwarmPublishedPortOptions> ReadPorts(JToken? token)
+        private static SwarmPublishedPortOptions[] ReadPorts(JToken? token)
         {
             if (token is not JArray ports) return Array.Empty<SwarmPublishedPortOptions>();
             return ports.OfType<JObject>().Select(port => new SwarmPublishedPortOptions(
@@ -168,7 +168,7 @@ namespace DockerDiagram.ApplicationServices
                 Image = spec.Image,
                 Mode = DockerValue(spec.Mode),
                 Replicas = spec.Replicas?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
-                Command = spec.Command.FirstOrDefault() ?? string.Empty,
+                Command = spec.Command.Count > 0 ? spec.Command[0] : string.Empty,
                 Arguments = JoinLines(spec.Arguments),
                 EnvironmentVariables = JoinLines(spec.EnvironmentVariables),
                 Labels = JoinLines(spec.Labels.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => $"{pair.Key}={pair.Value}")),

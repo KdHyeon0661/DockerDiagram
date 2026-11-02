@@ -9,22 +9,25 @@ namespace DockerDiagram.Tests;
 
 public sealed class CreationContextTests
 {
+
+    private static readonly string[] ParseDockerRunCommandAcceptsOnlyDockerRunExpectedValues = new[] { "docker", "run", "--name", "web", "nginx:latest" };
+
     [Fact]
-    public void ParseDockerRunCommand_AcceptsOnlyDockerRun()
+    public void ParseDockerRunCommandAcceptsOnlyDockerRun()
     {
         List<string> tokens = MainViewModel.ParseDockerRunCommand(
             "docker run --name web nginx:latest");
 
-        Assert.Equal(new[] { "docker", "run", "--name", "web", "nginx:latest" }, tokens);
+        Assert.Equal(ParseDockerRunCommandAcceptsOnlyDockerRunExpectedValues, tokens);
         Assert.Throws<InvalidOperationException>(() =>
             MainViewModel.ParseDockerRunCommand("cmd.exe /c echo unsafe"));
     }
 
     [Fact]
-    public async Task CreateContainer_PinsInitiatingSheetAndServiceAcrossAwait()
+    public async Task CreateContainerPinsInitiatingSheetAndServiceAcrossAwait()
     {
-        IDockerService firstService = DispatchProxy.Create<IDockerService, CreationDockerServiceProxy>();
-        IDockerService secondService = DispatchProxy.Create<IDockerService, CreationDockerServiceProxy>();
+        using IDockerService firstService = DispatchProxy.Create<IDockerService, CreationDockerServiceProxy>();
+        using IDockerService secondService = DispatchProxy.Create<IDockerService, CreationDockerServiceProxy>();
         var first = (CreationDockerServiceProxy)(object)firstService;
         var second = (CreationDockerServiceProxy)(object)secondService;
         first.BlockNextContainerQuery();
@@ -51,7 +54,7 @@ public sealed class CreationContextTests
             "latest",
             new List<string>(),
             new List<string>(),
-            new List<string>(),
+            Array.Empty<ContainerMountSpec>(),
             "no",
             0,
             0,
@@ -70,9 +73,9 @@ public sealed class CreationContextTests
     }
 
     [Fact]
-    public async Task CreateContainer_MarksPreExistingNamedVolumeAsExternalReference()
+    public async Task CreateContainerMarksPreExistingNamedVolumeAsExternalReference()
     {
-        IDockerService service = DispatchProxy.Create<IDockerService, CreationDockerServiceProxy>();
+        using IDockerService service = DispatchProxy.Create<IDockerService, CreationDockerServiceProxy>();
         var proxy = (CreationDockerServiceProxy)(object)service;
         proxy.Volumes.Add(new DockerVolume { Name = "important-data", Id = "volume-id" });
 
@@ -87,7 +90,15 @@ public sealed class CreationContextTests
             "latest",
             new List<string>(),
             new List<string>(),
-            new List<string> { "important-data:/data" },
+            new[]
+            {
+                new ContainerMountSpec
+                {
+                    Kind = MountKind.Volume,
+                    Source = "important-data",
+                    Target = "/data"
+                }
+            },
             "no",
             0,
             0,
@@ -96,6 +107,69 @@ public sealed class CreationContextTests
 
         NodeViewModel volume = Assert.Single(main.ActiveSheet!.Nodes, node => node.Type == NodeType.Volume);
         Assert.Equal("important-data", volume.EffectiveVolumeName);
+        Assert.True(volume.VolumeExternal);
+    }
+
+    [Fact]
+    public async Task CreateContainerDoesNotOverwriteOwnershipOfVolumeAlreadyOnSheet()
+    {
+        using IDockerService service = DispatchProxy.Create<IDockerService, CreationDockerServiceProxy>();
+        IDialogService dialogService = DispatchProxy.Create<IDialogService, LenientDialogServiceProxy>();
+        using var factory = new DockerServiceFactory(_ =>
+            DispatchProxy.Create<IDockerService, CreationDockerServiceProxy>());
+        using var main = new MainViewModel(service, dialogService, factory);
+        var existingVolume = new NodeViewModel(service, service, dialogService)
+        {
+            Type = NodeType.Volume,
+            Name = "app-data",
+            DockerVolumeName = "app-data",
+            VolumeExternal = false,
+            ParentSheet = main.ActiveSheet
+        };
+        main.ActiveSheet!.Nodes.Add(existingVolume);
+
+        await main.CreateNewContainerNodeAsync(
+            "worker",
+            "nginx",
+            "latest",
+            [],
+            [],
+            [new ContainerMountSpec { Kind = MountKind.Volume, Source = "app-data", Target = "/data" }],
+            "no",
+            0,
+            0,
+            100,
+            100);
+
+        Assert.False(existingVolume.VolumeExternal);
+        Assert.Same(existingVolume, Assert.Single(main.ActiveSheet.Nodes, node => node.Type == NodeType.Volume));
+    }
+
+    [Fact]
+    public async Task CreateContainerUsesConservativeOwnershipWhenVolumeInventoryFails()
+    {
+        using IDockerService service = DispatchProxy.Create<IDockerService, CreationDockerServiceProxy>();
+        var proxy = (CreationDockerServiceProxy)(object)service;
+        proxy.ThrowOnVolumeQuery = true;
+        IDialogService dialogService = DispatchProxy.Create<IDialogService, LenientDialogServiceProxy>();
+        using var factory = new DockerServiceFactory(_ =>
+            DispatchProxy.Create<IDockerService, CreationDockerServiceProxy>());
+        using var main = new MainViewModel(service, dialogService, factory);
+
+        await main.CreateNewContainerNodeAsync(
+            "worker",
+            "nginx",
+            "latest",
+            [],
+            [],
+            [new ContainerMountSpec { Kind = MountKind.Volume, Source = "uncertain-data", Target = "/data" }],
+            "no",
+            0,
+            0,
+            100,
+            100);
+
+        NodeViewModel volume = Assert.Single(main.ActiveSheet!.Nodes, node => node.Type == NodeType.Volume);
         Assert.True(volume.VolumeExternal);
     }
 }
@@ -107,6 +181,7 @@ public class CreationDockerServiceProxy : DispatchProxy
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public List<DockerVolume> Volumes { get; } = new();
+    public bool ThrowOnVolumeQuery { get; set; }
     public int CreateContainerCount { get; private set; }
     public Task ContainerQueryStarted => _containerQueryStarted.Task;
 
@@ -136,6 +211,8 @@ public class CreationDockerServiceProxy : DispatchProxy
                 }
                 return Task.FromResult(new List<DockerContainer>());
             case nameof(IVolumeService.GetVolumesAsync):
+                if (ThrowOnVolumeQuery)
+                    throw new InvalidOperationException("volume inventory unavailable");
                 return Task.FromResult(Volumes.ToList());
             case nameof(INetworkService.GetNetworksAsync):
                 return Task.FromResult(new List<DockerNetworkGroup>());

@@ -5,7 +5,7 @@ namespace DockerDiagram.Tests;
 public sealed class DockerResourceOptionsTests
 {
     [Fact]
-    public void VolumeOptions_UseExplicitDockerNameAndDefaultDriver()
+    public void VolumeOptionsUseExplicitDockerNameAndDefaultDriver()
     {
         VolumeCreateOptions options = VolumeCreateOptions.Basic("diagram-name", string.Empty);
         options.DockerVolumeName = "existing-volume";
@@ -15,7 +15,7 @@ public sealed class DockerResourceOptionsTests
     }
 
     [Fact]
-    public void NetworkOptions_DetectEveryIpamSource()
+    public void NetworkOptionsDetectEveryIpamSource()
     {
         Assert.True(new NetworkCreateOptions { Subnet = "10.20.0.0/16" }.HasIpam);
         Assert.True(new NetworkCreateOptions { Gateway = "10.20.0.1" }.HasIpam);
@@ -28,7 +28,7 @@ public sealed class DockerResourceOptionsTests
     }
 
     [Fact]
-    public void PruneSummary_ReportsCountsSpaceAndDeletedIdentities()
+    public void PruneSummaryReportsCountsSpaceAndDeletedIdentities()
     {
         var result = new DockerPruneResult
         {
@@ -38,12 +38,26 @@ public sealed class DockerResourceOptionsTests
                 new() { Untagged = "example/api:old" }
             },
             VolumesDeleted = new List<string> { "cache" },
+            BuildCacheDeleted = new List<string> { "build-cache" },
             SpaceReclaimed = 1024
         };
 
         Assert.Contains("Containers: 1", result.Summary, StringComparison.Ordinal);
         Assert.Contains("Images: 1", result.Summary, StringComparison.Ordinal);
+        Assert.Contains("Build Cache: 1", result.Summary, StringComparison.Ordinal);
         Assert.Contains("1 KB", result.Summary, StringComparison.Ordinal);
         Assert.Contains("- example/api:old", result.Summary, StringComparison.Ordinal);
+        Assert.Contains("- build-cache", result.Summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PruneSafetyDetectsOrchestratorManagedContainers()
+    {
+        Assert.True(DockerPruneSafety.IsOrchestratorManaged(
+            new Dictionary<string, string> { ["com.docker.swarm.task.id"] = "task-1" }));
+        Assert.True(DockerPruneSafety.IsOrchestratorManaged(
+            new Dictionary<string, string> { ["io.kubernetes.pod.name"] = "api-0" }));
+        Assert.False(DockerPruneSafety.IsOrchestratorManaged(
+            new Dictionary<string, string> { ["com.docker.compose.project"] = "portfolio" }));
     }
 }

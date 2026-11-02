@@ -6,7 +6,7 @@ namespace DockerDiagram.Diagram
 {
     public sealed class KubernetesRelationshipService
     {
-        public void RefreshRelationships(SheetViewModel sheet)
+        public static void RefreshRelationships(SheetViewModel sheet)
         {
             if (sheet.RuntimeKind != RuntimeKind.Kubernetes)
                 return;
@@ -32,7 +32,7 @@ namespace DockerDiagram.Diagram
                 node.RefreshConnections();
         }
 
-        private void AddOwnerRelationships(
+        private static void AddOwnerRelationships(
             SheetViewModel sheet,
             KubernetesNodeMetadata source,
             IReadOnlyCollection<KubernetesNodeMetadata> all)
@@ -54,7 +54,7 @@ namespace DockerDiagram.Diagram
             }
         }
 
-        private void AddServiceSelectorRelationships(
+        private static void AddServiceSelectorRelationships(
             SheetViewModel sheet,
             KubernetesNodeMetadata source,
             IReadOnlyCollection<KubernetesNodeMetadata> all)
@@ -84,7 +84,7 @@ namespace DockerDiagram.Diagram
             }
         }
 
-        private void AddPersistentVolumeClaimRelationships(
+        private static void AddPersistentVolumeClaimRelationships(
             SheetViewModel sheet,
             KubernetesNodeMetadata source,
             IReadOnlyCollection<KubernetesNodeMetadata> all)

@@ -54,7 +54,7 @@ namespace DockerDiagram.Models
         internal static void ValidateDataPathPort(uint port)
         {
             if (port != 0 && (port < 1024 || port > 49151))
-                throw new ArgumentOutOfRangeException(nameof(DataPathPort), "Data path port는 0(기본값) 또는 1024~49151 범위여야 합니다.");
+                throw new ArgumentOutOfRangeException(nameof(port), "Data path port는 0(기본값) 또는 1024~49151 범위여야 합니다.");
         }
 
         internal static void ValidateAvailability(string availability)
@@ -64,7 +64,7 @@ namespace DockerDiagram.Models
                 !normalized.Equals("pause", StringComparison.OrdinalIgnoreCase) &&
                 !normalized.Equals("drain", StringComparison.OrdinalIgnoreCase))
             {
-                throw new ArgumentException("Availability는 active, pause, drain 중 하나여야 합니다.", nameof(Availability));
+                throw new ArgumentException("Availability는 active, pause, drain 중 하나여야 합니다.", nameof(availability));
             }
         }
     }

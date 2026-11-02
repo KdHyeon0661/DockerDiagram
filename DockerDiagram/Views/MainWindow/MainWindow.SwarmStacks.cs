@@ -1,10 +1,11 @@
-using DockerDiagram.ApplicationServices;
-using DockerDiagram.Infrastructure;
-using DockerDiagram.Models;
-using DockerDiagram.ViewModels;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using DockerDiagram.ApplicationServices;
+using DockerDiagram.Common;
+using DockerDiagram.Infrastructure;
+using DockerDiagram.Models;
+using DockerDiagram.ViewModels;
 
 namespace DockerDiagram
 {
@@ -33,9 +34,8 @@ namespace DockerDiagram
             private const string MenuMarker = "DockerDiagram.SwarmStack.Menu";
             private readonly MainWindow _window;
             private readonly DockerCliSwarmStackService _deploymentService = new();
-            private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(90);
-            private readonly SwarmStackSheetSynchronizer _synchronizer = new();
-            private readonly CancellationTokenSource _lifetimeCancellation = new();
+            private static readonly TimeSpan OperationTimeout = SwarmOperationTiming.UiOperationTimeout;
+            private readonly ApplicationLifetimeCoordinator _lifetime = new();
             private bool _refreshing;
             private bool _disposed;
 
@@ -45,6 +45,12 @@ namespace DockerDiagram
                 _window.ViewModel.Explorer.PropertyChanged += Explorer_PropertyChanged;
                 _window.ViewModel.SheetManager.PropertyChanged += SheetManager_PropertyChanged;
                 _window.Closed += Window_Closed;
+                _lifetime.Register(() =>
+                {
+                    _window.ViewModel.Explorer.PropertyChanged -= Explorer_PropertyChanged;
+                    _window.ViewModel.SheetManager.PropertyChanged -= SheetManager_PropertyChanged;
+                    _window.Closed -= Window_Closed;
+                });
                 _ = RefreshActiveStackAsync();
             }
 
@@ -61,7 +67,7 @@ namespace DockerDiagram
                     DeployState = SwarmStackDeployState.Draft,
                     RuntimeSummary = "Draft stack"
                 };
-                var dialog = new Views.SwarmStackDialog(draftState, reservedNames) { Owner = _window };
+                var dialog = new Views.SwarmStackDialog(_window._dialogService, draftState, reservedNames) { Owner = _window };
                 if (dialog.ShowDialog() != true) return;
 
                 _window.ViewModel.SheetManager.AddSwarmStackSheet();
@@ -115,7 +121,7 @@ namespace DockerDiagram
                 IReadOnlyList<string> reservedNames = workspace == null
                     ? Array.Empty<string>()
                     : GetReservedStackNames(workspace, sheet);
-                var dialog = new Views.SwarmStackDialog(state, reservedNames) { Owner = _window };
+                var dialog = new Views.SwarmStackDialog(_window._dialogService, state, reservedNames) { Owner = _window };
                 if (dialog.ShowDialog() != true) return;
 
                 ApplyOptions(sheet, state, dialog.Options);
@@ -138,10 +144,46 @@ namespace DockerDiagram
                 SwarmStackSheetState state,
                 SwarmStackDeploymentOptions options)
             {
+                SwarmStackPreflightReport preflight;
+                _window._dialogService.SetBusyCursor(true);
+                try
+                {
+                    preflight = await RunPreflightAsync(sheet, options);
+                }
+                catch (OperationCanceledException)
+                {
+                    _window._dialogService.ShowError(
+                        "Swarm Manager 및 노드 상태를 10초 안에 확인하지 못했습니다.",
+                        "Deploy Swarm Stack");
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _window._dialogService.ShowError(
+                        $"Swarm 배포 전 점검에 실패했습니다.\n{ex.GetBaseException().Message}",
+                        "Deploy Swarm Stack");
+                    return;
+                }
+                finally
+                {
+                    _window._dialogService.SetBusyCursor(false);
+                }
+
+                if (preflight.BlockingIssues.Count > 0)
+                {
+                    _window._dialogService.ShowError(
+                        "배포할 수 없는 항목이 있습니다.\n\n" + FormatIssues(preflight.BlockingIssues),
+                        "Deploy Swarm Stack");
+                    return;
+                }
+
                 string preview = SwarmStackCommandBuilder.Preview(
                     SwarmStackCommandBuilder.BuildDeployArguments(options, "<temporary-stack.yml>"));
+                string warnings = preflight.Warnings.Count == 0
+                    ? string.Empty
+                    : "\n\n확인이 필요한 항목:\n" + FormatIssues(preflight.Warnings);
                 if (!_window._dialogService.ShowConfirm(
-                        $"다음 Stack을 현재 Swarm Manager에 배포하시겠습니까?\n\n{preview}",
+                        $"다음 Stack을 현재 Swarm Manager에 배포하시겠습니까?\n\n{preview}{warnings}",
                         "Deploy Swarm Stack"))
                 {
                     return;
@@ -175,7 +217,7 @@ namespace DockerDiagram
                     state.LastDeployedAt = DateTimeOffset.Now;
                     state.DeployState = SwarmStackDeployState.Deploying;
                     await _window.ViewModel.RefreshRuntimeResourcesAsync().WaitAsync(operation.Token);
-                    SwarmStackRuntimeSnapshot snapshot = await _synchronizer.WaitForDeploymentAsync(
+                    SwarmStackRuntimeSnapshot snapshot = await SwarmStackSheetSynchronizer.WaitForDeploymentAsync(
                         sheet,
                         state,
                         operation.Token);
@@ -190,7 +232,7 @@ namespace DockerDiagram
                         $"'{state.StackName}' Stack 배포가 승인되었습니다.\n{state.RuntimeSummary}",
                         "Deploy Swarm Stack");
                 }
-                catch (OperationCanceledException) when (!_lifetimeCancellation.IsCancellationRequested)
+                catch (OperationCanceledException) when (!_lifetime.IsCancellationRequested)
                 {
                     state.DeployState = SwarmStackDeployState.Error;
                     state.LastError = $"Stack 배포가 {OperationTimeout.TotalSeconds:0}초 안에 완료되지 않아 중단되었습니다.";
@@ -219,6 +261,60 @@ namespace DockerDiagram
                     _window.ViewModel.IsModified = true;
                 }
             }
+
+            private async Task<SwarmStackPreflightReport> RunPreflightAsync(
+                SheetViewModel sheet,
+                SwarmStackDeploymentOptions options)
+            {
+                using CancellationTokenSource timeout =
+                    CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+                timeout.CancelAfter(SwarmOperationTiming.ReadinessQueryTimeout);
+
+                SwarmClusterState cluster = await sheet.DockerService
+                    .GetSwarmStateAsync(timeout.Token)
+                    .WaitAsync(timeout.Token);
+                if (!cluster.IsManager)
+                {
+                    return new SwarmStackPreflightReport([
+                        new SwarmStackPreflightIssue(
+                            SwarmStackPreflightSeverity.Blocked,
+                            $"Stack 배포는 Swarm Manager 연결에서만 가능합니다. 현재 상태: {cluster.Membership}")
+                    ]);
+                }
+
+                int? nodeCount = null;
+                string nodeInventoryWarning = string.Empty;
+                try
+                {
+                    nodeCount = (await sheet.DockerService
+                            .GetSwarmNodesAsync()
+                            .WaitAsync(timeout.Token))
+                        .Count;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    nodeInventoryWarning =
+                        "노드 목록을 확인하지 못해 bind/local volume의 다중 노드 위험을 자동 판정할 수 없습니다. " +
+                        ex.GetBaseException().Message;
+                }
+
+                SwarmStackPreflightReport report = SwarmStackPreflightAnalyzer.Analyze(options.Yaml, nodeCount);
+                if (string.IsNullOrWhiteSpace(nodeInventoryWarning)) return report;
+
+                return new SwarmStackPreflightReport(
+                    report.Issues
+                        .Append(new SwarmStackPreflightIssue(
+                            SwarmStackPreflightSeverity.Warning,
+                            nodeInventoryWarning))
+                        .ToArray());
+            }
+
+            private static string FormatIssues(IEnumerable<SwarmStackPreflightIssue> issues) =>
+                string.Join(Environment.NewLine, issues.Select(issue => $"• {issue.Message}"));
 
             private async Task RemoveAsync(SheetViewModel sheet)
             {
@@ -258,7 +354,7 @@ namespace DockerDiagram
                         $"'{state.StackName}' Stack 제거가 승인되었습니다. 서비스 제거 상태는 주기적으로 갱신됩니다.",
                         "Remove Swarm Stack");
                 }
-                catch (OperationCanceledException) when (!_lifetimeCancellation.IsCancellationRequested)
+                catch (OperationCanceledException) when (!_lifetime.IsCancellationRequested)
                 {
                     state.DeployState = SwarmStackDeployState.Error;
                     state.LastError = $"Stack 제거가 {OperationTimeout.TotalSeconds:0}초 안에 완료되지 않아 중단되었습니다.";
@@ -292,7 +388,7 @@ namespace DockerDiagram
                 try
                 {
                     using CancellationTokenSource operation = CreateOperationCancellation();
-                    SwarmStackRuntimeSnapshot snapshot = await _synchronizer.SynchronizeAsync(
+                    SwarmStackRuntimeSnapshot snapshot = await SwarmStackSheetSynchronizer.SynchronizeAsync(
                         sheet,
                         state,
                         operation.Token);
@@ -301,8 +397,11 @@ namespace DockerDiagram
                     if (showResult)
                         _window._dialogService.ShowInfo(snapshot.Summary, $"Stack: {state.StackName}");
                 }
-                catch (OperationCanceledException) when (!_lifetimeCancellation.IsCancellationRequested)
+                catch (OperationCanceledException) when (!_lifetime.IsCancellationRequested)
                 {
+                    AppLog.WarningThrottled(
+                        $"swarm-stack-refresh-timeout-{state.StackName}",
+                        $"Swarm stack '{state.StackName}' 상태 조회 시간 초과");
                     if (showResult)
                         _window._dialogService.ShowError(
                             $"Stack 상태 조회가 {OperationTimeout.TotalSeconds:0}초 안에 완료되지 않았습니다.",
@@ -313,6 +412,10 @@ namespace DockerDiagram
                 }
                 catch (Exception ex)
                 {
+                    AppLog.WarningThrottled(
+                        $"swarm-stack-refresh-{state.StackName}",
+                        $"Swarm stack '{state.StackName}' 상태 새로 고침 실패",
+                        ex);
                     if (showResult)
                         _window._dialogService.ShowError(ex.GetBaseException().Message, "Refresh Swarm Stack");
                 }
@@ -361,7 +464,7 @@ namespace DockerDiagram
                 }
             }
 
-            private static IReadOnlyList<string> GetReservedStackNames(
+            private static string[] GetReservedStackNames(
                 ConnectionWorkspaceViewModel workspace,
                 SheetViewModel? excludedSheet = null) =>
                 workspace.Sheets
@@ -373,7 +476,7 @@ namespace DockerDiagram
 
             private CancellationTokenSource CreateOperationCancellation()
             {
-                var operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token);
+                var operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
                 operation.CancelAfter(OperationTimeout);
                 return operation;
             }
@@ -386,6 +489,8 @@ namespace DockerDiagram
                 state.StackName = options.StackName;
                 state.SourcePath = options.SourcePath;
                 state.Yaml = options.Yaml;
+                state.Prune = options.Prune;
+                state.WithRegistryAuth = options.WithRegistryAuth;
                 sheet.Title = options.StackName;
             }
 
@@ -395,11 +500,7 @@ namespace DockerDiagram
             {
                 if (_disposed) return;
                 _disposed = true;
-                _lifetimeCancellation.Cancel();
-                _window.ViewModel.Explorer.PropertyChanged -= Explorer_PropertyChanged;
-                _window.ViewModel.SheetManager.PropertyChanged -= SheetManager_PropertyChanged;
-                _window.Closed -= Window_Closed;
-                _lifetimeCancellation.Dispose();
+                _lifetime.Dispose();
             }
         }
     }
